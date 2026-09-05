@@ -1,0 +1,1 @@
+"""Domain artifact contracts."""

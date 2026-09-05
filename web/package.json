@@ -1,0 +1,26 @@
+{
+  "name": "annotation-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "lucide-vue-next": "latest",
+    "pinia": "latest",
+    "vite": "^5.4.14",
+    "vue": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "autoprefixer": "latest",
+    "postcss": "latest",
+    "tailwindcss": "latest",
+    "typescript": "latest",
+    "vitest": "^1.6.1"
+  }
+}
