@@ -20,12 +20,14 @@ class SourceDocument(ArtifactBase):
 
 
 class SourceBlock(ArtifactBase):
+    source_ref: str
     document_id: str
     page_number: int = Field(ge=1)
     block_index: int = Field(ge=0)
     text: str
     text_hash: str
     parser_version: str
+    bbox: tuple[float, float, float, float]
 
 
 class KnowledgeUnit(ArtifactBase):

@@ -5,6 +5,7 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 storage/
+books/*.pdf
 web/node_modules/
 web/dist/
 .DS_Store
