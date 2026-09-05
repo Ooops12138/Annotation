@@ -75,4 +75,5 @@ def parse_pdf(path: str | Path, *, run_id: str = "run-ingest-local", created_by:
                         bbox=(x0, y0, x1, y1),
                     )
                 )
+    source_document.source_refs = [block.source_ref for block in blocks]
     return source_document, blocks

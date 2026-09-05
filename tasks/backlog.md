@@ -8,10 +8,10 @@
 
 - **目的**：创建 Python/FastAPI、Vue/Vite、LangGraph、SQLite 和 artifact 目录边界。
 - **依赖**：无。
-- **产出**：`src/annotation/`、`web/`、`tests/` 的空骨架、uv/pnpm 配置、环境变量示例和本地启动说明。
+- **产出**：`src/annotation/`、`web/`、`tests/` 的空骨架、uv/npm 配置、环境变量示例和本地启动说明。
 - **完成定义**：前端能访问健康检查 API；后端能加载一个最小 Pydantic artifact；不包含业务生成逻辑。
 
-**状态：已完成（2026-09-05）**。已建立 `src/annotation/`、`web/`、`tests/`、`storage/` 目录边界，FastAPI `/health` 与 fixture 文档 API，Pydantic artifact 最小契约，Vue/Vite + Tailwind/shadcn-vue 风格基础组件，以及 README 本地启动说明。当前仅使用 fixture，不接真实教材、模型或 Agent 流程。
+**状态：已完成（2026-09-05）**。已建立 `src/annotation/`、`web/`、`tests/`、`storage/` 目录边界，FastAPI `/health` 与 fixture 文档 API，Pydantic artifact 最小契约，Vue/Vite + Tailwind/shadcn-vue 风格基础组件，以及 README 本地启动说明。T-000 阶段本身不接真实教材或模型；后续 T-005A/T-005B 已补上可替换 Provider 和离线最小 LangGraph 验证流程。
 
 ### T-001 选择并冻结 POC 教材与章节
 
@@ -65,6 +65,19 @@
 - **依赖**：T-003、T-005。
 - **产出**：Provider 协议、OpenAIProvider、OpenAICompatibleProvider、能力探测和失败分类。
 - **完成定义**：至少能对三类 endpoint 执行一次结构化输出测试；不支持的能力会提前报告。
+
+**状态：已完成（2026-09-05）**。已实现 `ModelProvider` 协议、请求/响应与运行元数据契约、`MockProvider`、`OpenAIProvider`、`OpenAICompatibleProvider`（Ollama/vLLM）、能力声明、结构化输出校验、流式事件和统一错误分类。默认环境配置使用 Mock，不需要网络即可运行。
+
+### T-005B 接入最小 LangGraph 流程
+
+- **目的**：验证显式 artifact 状态可以在 LangGraph 节点之间传递，并保留 provider 运行元数据。
+- **依赖**：T-005A、T-003。
+- **产出**：`ingest → load_or_create_blueprint → generate_document_ir → validate_document_ir → review → assemble` 图、离线 fixture 运行入口和 API 触发接口。
+- **完成定义**：默认 Mock Provider 可完成一次流程；蓝图、文档、来源、审核状态和 provider 元数据可从运行结果读取；失败通过 `errors` 暴露。
+
+**状态：已完成（2026-09-05）**。实现于 `src/annotation/workflow/graph.py`，API 入口为 `POST /api/workflow/run`；当前已接入 `books/` PDF、结构化 Blueprint/Document IR 生成、来源校验和前端结果展示。
+
+运行验证：已使用根目录 `.env` 中的 `deepseek-v4-flash` 完成一次真实运行（1206 个 SourceBlock、3 个 Blueprint 单元、4 个 Document IR 节点、状态 `published`）。教材文本存在替换字符，已作为审核 warning 保留；不宣称 OCR 或教材内容质量已通过最终验收。
 
 ### T-006 生成章节讲解与教学材料
 

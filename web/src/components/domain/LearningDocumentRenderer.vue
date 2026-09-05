@@ -13,7 +13,14 @@ defineProps<{ document: any }>()
         <div v-else-if="node.type === 'callout'" class="border-l-4 border-moss bg-emerald-50 p-4"><p class="font-semibold text-emerald-900">{{ node.title }}</p><p class="mt-1 text-emerald-800">{{ node.content }}</p></div>
         <div v-else-if="node.type === 'quiz'" class="space-y-4"><div><p class="text-xs font-semibold uppercase tracking-widest text-slate-400">练习</p><p class="mt-2 text-lg font-medium text-ink">{{ node.question }}</p></div><div class="grid gap-2 sm:grid-cols-3"><button v-for="option in node.options" :key="option" class="rounded-xl border border-slate-200 px-3 py-2 text-left text-sm transition hover:border-signal hover:bg-orange-50">{{ option }}</button></div></div>
         <p v-else class="text-sm text-red-600">不支持的节点类型：{{ node.type }}</p>
-        <p v-if="node.source_refs?.length" class="mt-4 text-xs text-slate-400">来源：{{ node.source_refs.join(' · ') }}</p>
+        <details v-if="node.source_refs?.length" class="mt-4 text-xs text-slate-400">
+          <summary class="cursor-pointer select-none transition hover:text-slate-600">
+            来源（{{ node.source_refs.length }} 个教材片段）
+          </summary>
+          <ul class="mt-2 space-y-1 border-l border-slate-200 pl-3">
+            <li v-for="sourceRef in node.source_refs" :key="sourceRef" class="break-all">{{ sourceRef }}</li>
+          </ul>
+        </details>
       </div>
     </section>
   </article>

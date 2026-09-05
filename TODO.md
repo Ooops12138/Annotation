@@ -41,7 +41,7 @@ PDF / fixture
 - 内容规范输出：JSON Document IR；
 - 公式：KaTeX；
 - Python 包管理：uv；
-- 前端包管理：pnpm；
+- 前端包管理：npm；
 - P0 不使用 VitePress 作为主前端，不引入向量数据库、Celery 或 Redis。
 
 详细说明见：
@@ -101,7 +101,7 @@ tests/
 ### 1. 建立工程骨架
 
 - 创建 Python 项目和 uv 配置；
-- 创建 Vue/Vite 项目和 pnpm 配置；
+- 创建 Vue/Vite 项目和 npm 配置；
 - 配置 TypeScript、Tailwind CSS、shadcn-vue；
 - 创建 FastAPI app 和健康检查；
 - 创建前端基础 layout；
@@ -278,9 +278,9 @@ ingest
 - [ ] fixture 和 renderer；
 - [ ] PDF 解析；
 - [x] PDF 解析基础骨架（PyMuPDF 页/块级 SourceBlock）；
-- [ ] ModelProvider；
-- [ ] LangGraph 最小流程；
-- [ ] 第一版 Demo 端到端运行；
+- [x] ModelProvider（Mock、OpenAI、OpenAI-compatible、能力声明和错误分类）；
+- [x] LangGraph 最小流程（PDF → SourceBlock → Blueprint → Document IR → 校验 → 审核 → assemble）；
+- [x] 第一版 Demo 端到端运行（Mock/真实 Provider 可替换，当前 PDF 乱码风险会显式进入审核）；
 - [ ] POC 教材与章节评估。
 
 ## 下一窗口启动提示

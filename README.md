@@ -4,28 +4,42 @@
 
 ## 本地启动
 
+前置环境：Python 3.12、uv，以及 Node.js 20（自带 npm）。本项目固定使用 uv 管理 Python 环境和依赖，使用 npm 管理前端依赖。
+
 ### 后端（Python 3.12）
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -e ".[dev]"
-uvicorn annotation.main:app --reload --app-dir src
+uv sync --extra dev
+uv run uvicorn annotation.main:app --reload --app-dir src
 ```
+
+`uv sync --extra dev` 会根据 `pyproject.toml` 创建或同步项目的 `.venv`，并安装运行和开发依赖；`uv run` 会在该环境中执行命令，因此不需要手动激活虚拟环境。
 
 API：`http://127.0.0.1:8000/health`，交互文档：`http://127.0.0.1:8000/docs`。
 
-### 前端（Node 20 + pnpm）
+### 前端（Node 20 + npm）
 
 ```powershell
 cd web
-pnpm install
-pnpm dev
+npm install
+npm run dev
 ```
 
 打开 `http://127.0.0.1:5173`。前端通过 `VITE_API_BASE_URL` 访问后端，默认值为 `http://127.0.0.1:8000`。
 
-当前仅使用 fixture 文档，不接入真实教材、真实模型或完整 Agent 流程。
+Demo 现在会读取 `books/` 中的第一个 PDF，执行教材导入、SourceBlock 生成、Learning Blueprint 生成、Document IR 生成和基础审核。默认生产运行读取根目录 `.env`；测试通过环境变量强制使用 Mock Provider。
+
+`.env` 是本机真实配置（包含密钥，不提交 Git），`.env.example` 是可提交的配置模板。两者都需要保留：新环境可从 `.env.example` 复制出 `.env` 后填写密钥。
+
+运行最小流程：
+
+```powershell
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/workflow/run
+```
+
+返回值包含教材、blueprint、Document IR、审核状态、source block 数量、provider/model/base_url/config_version/duration_ms、警告和错误列表。
+
+注意：当前教材 PDF 的 PyMuPDF 文本提取包含替换字符，运行结果会把这个问题作为审核警告保留；这不等同于 OCR 已完成。若要用于正式内容验收，应先提供文本编码正常的 PDF 或增加 OCR 适配。
 
 ## PDF 解析预览
 

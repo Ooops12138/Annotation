@@ -22,7 +22,7 @@
 | 内容格式 | JSON Document IR | Markdown 作为正文节点/导出格式，不作为唯一协议 |
 | 数学公式 | KaTeX | 通过专用 formula 节点渲染 |
 | 测试 | pytest + Vitest | 加入 artifact 契约和端到端回归样本 |
-| 包管理 | uv（Python）+ pnpm（前端） | 锁定依赖版本 |
+| 包管理 | uv（Python）+ npm（前端） | 分别使用 `uv.lock` 与 `package-lock.json` 锁定依赖版本 |
 
 ## 2. JSON Document IR 是什么
 
@@ -189,6 +189,8 @@ model=<vllm-served-model>
 
 P0 要求：结构化输出、文本生成、错误重试和可记录的模型元数据。工具调用、视觉输入和 embedding 不是 P0 的必要能力。Ollama/vLLM 的 OpenAI-compatible 接口不代表所有模型都支持相同的结构化输出、工具调用或多模态特性，因此运行前要做 capability check。
 
+当前实现提供 `src/annotation/providers/` 下的统一协议、Mock Provider、OpenAI Provider 和 OpenAI-compatible Provider。结构化输出通过可移植的 JSON object 请求并由 Pydantic schema 二次校验；严格 provider-specific JSON Schema 不作为兼容接口的默认能力。`MODEL_PROVIDER=mock` 是离线开发默认值。
+
 ### 5.3 为什么不在业务层直接使用供应商 SDK
 
 - 方便在云端模型和本地模型之间切换；
@@ -312,4 +314,3 @@ VitePress 更适合 Markdown 驱动、构建时确定的静态内容；它不是
 - [shadcn-vue introduction](https://www.shadcn-vue.com/docs/introduction)
 - [Tailwind CSS with Vite](https://tailwindcss.com/docs/installation/using-vite)
 - [PyMuPDF documentation](https://pymupdf.readthedocs.io/en/latest/)
-
