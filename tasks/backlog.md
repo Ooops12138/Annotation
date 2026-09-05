@@ -27,12 +27,16 @@
 - **产出**：Source Material / Source Reference 契约、解析样本和失败记录。
 - **完成定义**：关键段落可从派生片段回到原文位置；解析失败可见。
 
+**状态：已完成（解析骨架）**。`parse_pdf` 使用 PyMuPDF 生成页/块级 `SourceBlock`，保留页码、块序号、bbox、文本 hash、解析器版本和 `source_ref`；文本不做静默修正，缺失 PDF 会显式返回错误。
+
 ### T-002A 验证 PDF 解析和 SQLite FTS5 检索
 
 - **目的**：验证 PyMuPDF 的页/块级定位和 SQLite FTS5 是否足以支持 POC。
 - **依赖**：T-001、T-002。
 - **产出**：SourceBlock 样本、检索查询样本、召回问题清单。
 - **完成定义**：评估样本中的关键定义、公式和例题可以被定位；不足时记录是否需要 OCR/embedding。
+
+**状态：进行中**。当前已完成 PDF 文本块提取和 `/api/source-preview` 预览，SQLite FTS5 检索将在后续增量中实现。
 
 ### T-003 定义并验证 Learning Blueprint 最小 Schema
 

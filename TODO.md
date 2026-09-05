@@ -277,6 +277,7 @@ ingest
 - [x] artifact 模型；
 - [ ] fixture 和 renderer；
 - [ ] PDF 解析；
+- [x] PDF 解析基础骨架（PyMuPDF 页/块级 SourceBlock）；
 - [ ] ModelProvider；
 - [ ] LangGraph 最小流程；
 - [ ] 第一版 Demo 端到端运行；
