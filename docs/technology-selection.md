@@ -189,7 +189,7 @@ model=<vllm-served-model>
 
 P0 要求：结构化输出、文本生成、错误重试和可记录的模型元数据。工具调用、视觉输入和 embedding 不是 P0 的必要能力。Ollama/vLLM 的 OpenAI-compatible 接口不代表所有模型都支持相同的结构化输出、工具调用或多模态特性，因此运行前要做 capability check。
 
-当前实现提供 `src/annotation/providers/` 下的统一协议、Mock Provider、OpenAI Provider 和 OpenAI-compatible Provider。结构化输出通过可移植的 JSON object 请求并由 Pydantic schema 二次校验；严格 provider-specific JSON Schema 不作为兼容接口的默认能力。`MODEL_PROVIDER=mock` 是离线开发默认值。
+当前实现提供 `src/annotation/providers/` 下的统一协议、Mock Provider、OpenAI Provider 和 OpenAI-compatible Provider。结构化输出通过可移植的 JSON object 请求并由 Pydantic schema 二次校验；严格 provider-specific JSON Schema 不作为兼容接口的默认能力。`MODEL_PROVIDER=mock` 是离线开发默认值。仓库中的离线 fixture 已覆盖多节讲解、公式、例题、测验和风险标注；真实 DeepSeek 运行通过同一 `OpenAICompatibleProvider` 接口接入，不把 API 输出或密钥作为测试前提。
 
 ### 5.3 为什么不在业务层直接使用供应商 SDK
 

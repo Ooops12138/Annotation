@@ -17,7 +17,7 @@ def create_provider_from_env() -> ModelProvider:
     # process take precedence (useful for tests and deployment environments).
     load_dotenv(Path(".env"), override=False)
     kind = os.getenv("MODEL_PROVIDER", "mock").strip().lower()
-    model = os.getenv("MODEL_NAME", "fixture-model")
+    model = os.getenv("MODEL_NAME") or ("deepseek-chat" if kind == "deepseek" else "fixture-model")
     config_version = os.getenv("MODEL_CONFIG_VERSION", "env-v1")
     timeout = float(os.getenv("MODEL_TIMEOUT_SECONDS", "30"))
     max_retries = int(os.getenv("MODEL_MAX_RETRIES", "1"))
@@ -35,6 +35,8 @@ def create_provider_from_env() -> ModelProvider:
             max_retries=max_retries,
         )
     if kind in {"openai-compatible", "ollama", "vllm", "deepseek"}:
+        if kind == "deepseek" and not base_url:
+            base_url = "https://api.deepseek.com/v1"
         if not base_url:
             raise ValueError("MODEL_BASE_URL is required for an OpenAI-compatible provider")
         return OpenAICompatibleProvider(

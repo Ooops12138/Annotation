@@ -16,6 +16,18 @@ from annotation.domain.artifacts import SourceBlock, SourceDocument
 PARSER_VERSION = "pymupdf-blocks-v1"
 
 
+def extraction_warnings(blocks: list[SourceBlock]) -> list[str]:
+    """Return visible quality warnings without mutating extracted evidence."""
+    text = " ".join(block.text for block in blocks[:80])
+    warnings: list[str] = []
+    replacement_count = text.count("�")
+    if replacement_count >= 3:
+        warnings.append("source_extraction_warning: PDF 文本包含替换字符，可能存在字体编码或 OCR 问题。")
+    if len(blocks) == 0:
+        warnings.append("source_extraction_warning: PDF 未提取到任何文本块，当前 P0 不执行 OCR。")
+    return warnings
+
+
 def _sha256(value: bytes | str) -> str:
     payload = value.encode("utf-8") if isinstance(value, str) else value
     return hashlib.sha256(payload).hexdigest()

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from annotation.ingestion.pdf_parser import PARSER_VERSION, parse_pdf
+from annotation.ingestion.pdf_parser import PARSER_VERSION, extraction_warnings, parse_pdf
 
 
 def test_parse_fixture_pdf_to_traceable_blocks() -> None:

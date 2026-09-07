@@ -35,11 +35,21 @@ class KnowledgeUnit(ArtifactBase):
     kind: Literal["concept", "formula", "theorem", "example", "skill"]
     learning_objectives: list[str] = Field(default_factory=list)
     prerequisites: list[str] = Field(default_factory=list)
+    related_unit_ids: list[str] = Field(default_factory=list)
+    teaching_materials: list[str] = Field(default_factory=list)
 
 
 class LearningBlueprint(ArtifactBase):
     title: str
     knowledge_units: list[KnowledgeUnit] = Field(default_factory=list)
+
+
+class BlueprintCheckResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: Literal["accepted", "needs_revision", "blocked"]
+    issues: list["ReviewIssue"] = Field(default_factory=list)
+    covered_kinds: list[str] = Field(default_factory=list)
+    checked_unit_ids: list[str] = Field(default_factory=list)
 
 
 class ContentArtifact(ArtifactBase):
@@ -89,7 +99,16 @@ class QuizNode(BaseModel):
     source_refs: list[str] = Field(default_factory=list)
 
 
-DocumentNode = Annotated[Union[MarkdownNode, FormulaNode, CalloutNode, QuizNode], Field(discriminator="type")]
+class ExampleNode(BaseModel):
+    type: Literal["example"] = "example"
+    id: str
+    title: str
+    problem: str
+    solution: str
+    source_refs: list[str] = Field(default_factory=list)
+
+
+DocumentNode = Annotated[Union[MarkdownNode, FormulaNode, CalloutNode, QuizNode, ExampleNode], Field(discriminator="type")]
 
 
 class DocumentSection(BaseModel):
@@ -115,3 +134,4 @@ class RunMetadata(BaseModel):
 
 
 ArtifactBase.model_rebuild()
+BlueprintCheckResult.model_rebuild()

@@ -12,3 +12,7 @@ def test_minimal_langgraph_workflow_produces_traceable_document() -> None:
     assert state["provider_metadata"]["provider"] == "mock"
     assert len(state["document"].source_refs) <= 5
     assert not state.get("warnings")
+    assert len(state["blueprint"].knowledge_units) >= 4
+    assert state["blueprint_check"].status == "accepted"
+    assert len(state["document"].sections) >= 3
+    assert sum(len(section.children) for section in state["document"].sections) >= 10

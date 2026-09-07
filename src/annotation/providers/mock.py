@@ -64,23 +64,24 @@ class MockProvider:
         if not payload:
             if request.schema.__name__ == "BlueprintDraft":
                 payload = {
-                    "title": "教材章节（Mock 生成）",
+                    "title": "实数系与复数系（离线回归）",
                     "knowledge_units": [
-                        {"title": "章节核心概念", "kind": "concept", "learning_objectives": ["理解核心概念"], "source_refs": []},
-                        {"title": "定义与基本性质", "kind": "formula", "learning_objectives": ["掌握定义和性质"], "source_refs": []},
-                        {"title": "典型例题与方法", "kind": "example", "learning_objectives": ["能够应用方法解题"], "source_refs": []},
+                        {"title": "域公理、序公理与区间", "kind": "concept", "learning_objectives": ["说明实数的代数和有序结构", "区分开区间、闭区间和半开区间"], "teaching_materials": ["公理", "区间定义"], "source_refs": []},
+                        {"title": "整数、有理数与无理数", "kind": "theorem", "learning_objectives": ["解释唯一因数分解的内容", "区分有理数与无理数"], "prerequisites": ["域公理、序公理与区间"], "teaching_materials": ["唯一因数分解定理", "无理数证明"], "source_refs": []},
+                        {"title": "上界、上确界与完全公理", "kind": "formula", "learning_objectives": ["区分最大元与上确界", "理解完全公理的作用"], "prerequisites": ["域公理、序公理与区间"], "teaching_materials": ["上确界定义", "完全公理"], "source_refs": []},
+                        {"title": "复数、复平面与绝对值", "kind": "example", "learning_objectives": ["把复数写成 x+iy", "用复平面解释复数绝对值"], "prerequisites": ["域公理、序公理与区间"], "teaching_materials": ["复平面", "模的计算"], "source_refs": []},
                     ],
                 }
             elif request.schema.__name__ == "DocumentDraft":
                 payload = {
-                    "title": "教材章节学习文档",
-                    "section_title": "核心内容",
-                    "explanation": "这是基于教材 SourceBlock 生成的 Mock 讲解，用于离线验证完整数据链路。",
-                    "formula_latex": r"\\lim_{x \\to a} f(x)=L",
-                    "quiz_question": "本 Demo 的内容主来源是什么？",
-                    "quiz_options": ["教材 PDF", "随机外部资料", "未提供来源"],
-                    "quiz_answer": "教材 PDF",
-                    "quiz_explanation": "所有内容应通过 source_refs 回溯到教材片段。",
+                    "title": "实数系与复数系 · 离线回归样例",
+                    "section_title": "实数结构、完全性与复数概览",
+                    "explanation": "本章以实数的域结构、序结构和完全性为主线，依次建立区间、整数、有理数、无理数、上界与上确界等概念，再把数系扩充到复数。离线样例用于验证：知识结构不是简单目录，公式、例题、测验和来源引用可以在同一条 artifact 链路中传递。",
+                    "formula_latex": r"\alpha=\sup S,\qquad z=x+iy,\qquad |z|=\sqrt{x^2+y^2}",
+                    "quiz_question": "集合 S=[0,1) 的最大元与上确界分别是什么？",
+                    "quiz_options": ["最大元为 1，上确界为 1", "没有最大元，上确界为 1", "没有最大元，也没有上确界"],
+                    "quiz_answer": "没有最大元，上确界为 1",
+                    "quiz_explanation": "1 不属于 S，因此不是最大元；但 1 是 S 的最小上界。",
                     "source_refs": [],
                 }
         try:

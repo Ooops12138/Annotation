@@ -11,6 +11,7 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field, field_validator
 
 from annotation.domain.artifacts import (
+    BlueprintCheckResult,
     CalloutNode,
     DocumentSection,
     FormulaNode,
@@ -23,8 +24,11 @@ from annotation.domain.artifacts import (
     SourceBlock,
     SourceDocument,
 )
+from annotation.fixtures.demo import demo_document
 from annotation.config import first_book_pdf
 from annotation.ingestion.pdf_parser import parse_pdf
+from annotation.ingestion.pdf_parser import extraction_warnings
+from annotation.workflow.blueprint_checks import validate_blueprint
 from annotation.providers import (
     ModelProvider,
     MockProvider,
@@ -81,6 +85,7 @@ class WorkflowState(TypedDict, total=False):
     source_blocks: list[SourceBlock]
     source_refs: list[str]
     blueprint: LearningBlueprint
+    blueprint_check: BlueprintCheckResult
     document: LearningDocument
     provider_metadata: dict[str, Any]
     errors: list[str]
@@ -167,6 +172,29 @@ def _fallback_document(run_id: str, blueprint: LearningBlueprint, source_documen
     )
 
 
+def _mock_document_from_fixture(
+    run_id: str,
+    blueprint: LearningBlueprint,
+    source_refs: list[str],
+) -> LearningDocument:
+    """Adapt the rich checked-in fixture to the current PDF/run provenance."""
+    fixture = demo_document().model_copy(deep=True)
+    refs = source_refs[:5]
+    fixture.artifact_id = f"doc-{uuid.uuid4().hex[:12]}"
+    fixture.document_id = f"doc-{run_id}"
+    fixture.run_id = run_id
+    fixture.version = 1
+    fixture.status = "draft"
+    fixture.blueprint_version = f"{blueprint.artifact_id}:v{blueprint.version}"
+    fixture.created_by = "provider:mock"
+    fixture.source_refs = refs
+    for section in fixture.sections:
+        for node in section.children:
+            if hasattr(node, "source_refs"):
+                node.source_refs = refs[: min(2, len(refs))]
+    return fixture
+
+
 def _metadata(response: Any) -> dict[str, Any]:
     return {"provider": response.provider, "model": response.model, "base_url": response.base_url, "config_version": response.config_version, "duration_ms": response.duration_ms, "usage": dict(response.usage)}
 
@@ -187,10 +215,7 @@ def build_minimal_graph(provider: ModelProvider | None = None):
         run_id = state.get("run_id", f"run-{uuid.uuid4().hex[:10]}")
         pdf_path = Path(state.get("pdf_path") or _default_pdf())
         source_document, blocks = parse_pdf(pdf_path, run_id=run_id)
-        extracted_text = " ".join(block.text for block in blocks[:80])
-        warnings = []
-        if extracted_text.count("�") >= 3:
-            warnings.append("source_extraction_warning: PDF 文本包含替换字符，可能存在字体编码或 OCR 问题。")
+        warnings = extraction_warnings(blocks)
         return {"run_id": run_id, "pdf_path": str(pdf_path), "source_document": source_document, "source_blocks": blocks, "source_refs": [block.source_ref for block in blocks], "warnings": warnings}
 
     def load_or_create_blueprint(state: WorkflowState) -> dict[str, Any]:
@@ -211,9 +236,23 @@ def build_minimal_graph(provider: ModelProvider | None = None):
             if not units:
                 raise ProviderError("blueprint contains no knowledge units", category="schema")
             artifact_id = "bp-fixture-001" if response.provider == "mock" else f"bp-{uuid.uuid4().hex[:12]}"
-            return {"blueprint": LearningBlueprint(artifact_id=artifact_id, run_id=state["run_id"], version=1, status="accepted", source_refs=ordered_refs, created_by=f"provider:{response.provider}", title=draft.title or state["source_document"].title, knowledge_units=units), "provider_metadata": _metadata(response)}
+            blueprint = LearningBlueprint(artifact_id=artifact_id, run_id=state["run_id"], version=1, status="checking", source_refs=ordered_refs, created_by=f"provider:{response.provider}", title=draft.title or state["source_document"].title, knowledge_units=units)
+            check = validate_blueprint(blueprint, valid_source_refs=valid_refs)
+            blueprint.issues = check.issues
+            blueprint.status = "needs_revision" if check.status == "needs_revision" else "accepted"
+            if check.status == "needs_revision":
+                fallback = _fallback_blueprint(state["run_id"], state["source_document"], state["source_blocks"])
+                fallback.issues = check.issues
+                return {
+                    "blueprint": fallback,
+                    "blueprint_check": check,
+                    "provider_metadata": _metadata(response),
+                    "warnings": ["blueprint_quality_gate: generated blueprint needs revision; fallback blueprint used"],
+                }
+            return {"blueprint": blueprint, "blueprint_check": check, "provider_metadata": _metadata(response)}
         except Exception as exc:
-            return {"blueprint": _fallback_blueprint(state["run_id"], state["source_document"], state["source_blocks"]), "warnings": [f"blueprint_generation_fallback: {exc}"]}
+            fallback = _fallback_blueprint(state["run_id"], state["source_document"], state["source_blocks"])
+            return {"blueprint": fallback, "warnings": [f"blueprint_generation_fallback: {exc}"]}
 
     def generate_document_ir(state: WorkflowState) -> dict[str, Any]:
         blueprint = state["blueprint"]
@@ -224,6 +263,8 @@ def build_minimal_graph(provider: ModelProvider | None = None):
             refs = _normalize_refs(draft.source_refs, set(state["source_refs"])) or blueprint.source_refs[:5]
             if not refs:
                 refs = state["source_refs"][:5]
+            if response.provider == "mock":
+                return {"document": _mock_document_from_fixture(state["run_id"], blueprint, refs), "provider_metadata": _metadata(response)}
             document = LearningDocument(
                 artifact_id=f"doc-{uuid.uuid4().hex[:12]}", document_id=f"doc-{state['run_id']}", blueprint_version=f"{blueprint.artifact_id}:v{blueprint.version}", run_id=state["run_id"], version=1, status="draft", source_refs=refs, created_by=f"provider:{response.provider}", title=draft.title or blueprint.title,
                 sections=[DocumentSection(id="section-main", title=draft.section_title or blueprint.title, children=[

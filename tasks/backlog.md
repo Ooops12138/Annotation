@@ -20,6 +20,8 @@
 - **产出**：教材版本、章节范围、授权说明、学习对象和学习目标。
 - **完成定义**：评审者能复现同一输入；章节边界和关键目标已记录。
 
+**状态：已完成（2026-09-07）**。POC 输入冻结为 `books/数学分析第1章.pdf` 的第 1 章《实数系与复数系》（25 页）；学习对象、目标、授权前提和已知抽取风险记录于 [`docs/poc-scope.md`](../docs/poc-scope.md)。
+
 ### T-002 建立教材引用与解析适配边界
 
 - **目的**：把教材转化为可定位片段，保留章节/页码或等价引用。
@@ -29,6 +31,8 @@
 
 **状态：已完成（解析骨架）**。`parse_pdf` 使用 PyMuPDF 生成页/块级 `SourceBlock`，保留页码、块序号、bbox、文本 hash、解析器版本和 `source_ref`；文本不做静默修正，缺失 PDF 会显式返回错误。
 
+补充验收：`extraction_warnings` 对替换字符和零文本块产生可见 warning；`/api/source-preview` 返回样例片段和索引数量。
+
 ### T-002A 验证 PDF 解析和 SQLite FTS5 检索
 
 - **目的**：验证 PyMuPDF 的页/块级定位和 SQLite FTS5 是否足以支持 POC。
@@ -36,7 +40,7 @@
 - **产出**：SourceBlock 样本、检索查询样本、召回问题清单。
 - **完成定义**：评估样本中的关键定义、公式和例题可以被定位；不足时记录是否需要 OCR/embedding。
 
-**状态：进行中**。当前已完成 PDF 文本块提取和 `/api/source-preview` 预览，SQLite FTS5 检索将在后续增量中实现。
+**状态：已完成（2026-09-07）**。新增本地 SQLite FTS5 索引、幂等 upsert 和 `/api/source-search` 查询接口；结果返回 `source_ref`、页码、块号、原文和 BM25 rank。固定查询和召回风险记录于 [`docs/poc-scope.md`](../docs/poc-scope.md)。扫描 PDF/OCR 与语义召回仍不属于 P0。
 
 ### T-003 定义并验证 Learning Blueprint 最小 Schema
 
@@ -45,6 +49,8 @@
 - **产出**：版本化蓝图示例、校验规则、人工检查清单。
 - **完成定义**：至少覆盖一个完整小节，并能表达概念、公式/定理、例题、前置关系和来源。
 
+**状态：已完成（2026-09-07）**。Pydantic artifact 已支持知识单元的类型、学习目标、前置关系、相关单元和教学材料；新增 `BlueprintCheckResult` 及确定性 `validate_blueprint` 质量门，检查最少单元数、来源有效性、前置关系和教学材料覆盖。
+
 ### T-004 实现教材理解与蓝图检查流程
 
 - **目的**：从教材生成蓝图草案，并发现遗漏、错误合并、依赖问题和来源缺失。
@@ -52,12 +58,16 @@
 - **产出**：蓝图草案、检查报告、需要回退的案例。
 - **完成定义**：对 POC 章节能解释主要结构；问题可回到抽取步骤修正。
 
+**状态：已完成（2026-09-07，POC 最小实现）**。LangGraph 蓝图节点使用结构化 Provider 输出后执行来源/覆盖/关系检查；检查失败会进入 fallback 并写入 warning，原始问题不会静默丢弃。完整的多轮修订 Agent loop 仍属于后续 T-008/T-010 范围。
+
 ### T-005 选择最小编排与 artifact 生命周期
 
 - **目的**：定义任务计划、状态、版本、重试、人工介入和失败恢复。
 - **依赖**：T-003、T-004。
 - **产出**：一次运行的状态图、artifact 元数据示例、失败/重生成策略。
 - **完成定义**：不依赖隐式上下文即可说明每个阶段输入、输出和停止条件。
+
+**状态：已完成（2026-09-07，POC 最小实现）**。状态图、artifact 元数据、provider metadata、warning/error 暴露和发布门已在 `src/annotation/workflow/graph.py` 落地；失败生成使用显式 fallback，旧输出不会在本地 fixture 中被静默覆盖。持久化 checkpoint/重生成版本比较仍列入后续增强。
 
 ### T-005A 实现 ModelProvider capability contract
 
@@ -77,7 +87,9 @@
 
 **状态：已完成（2026-09-05）**。实现于 `src/annotation/workflow/graph.py`，API 入口为 `POST /api/workflow/run`；当前已接入 `books/` PDF、结构化 Blueprint/Document IR 生成、来源校验和前端结果展示。
 
-运行验证：已使用根目录 `.env` 中的 `deepseek-v4-flash` 完成一次真实运行（1206 个 SourceBlock、3 个 Blueprint 单元、4 个 Document IR 节点、状态 `published`）。教材文本存在替换字符，已作为审核 warning 保留；不宣称 OCR 或教材内容质量已通过最终验收。
+运行验证：已使用根目录 `.env` 中的 `deepseek-v4-flash` 完成一次真实运行（1206 个 SourceBlock、3 个 Blueprint 单元、4 个 Document IR 节点、状态 `published`）。解析器会在实际出现替换字符时保留审核 warning；不宣称 OCR 或教材内容质量已通过最终验收。
+
+离线回归样例已升级为“实数系与复数系”多节文档，包含 3 个章节区段、公式、3 个例题、测验和风险标注；`MODEL_PROVIDER=mock` 时可重复生成，不需要网络。`MODEL_PROVIDER=deepseek` 时工厂会构造 OpenAI-compatible DeepSeek provider，需同时设置 `MODEL_BASE_URL`、模型名和 API key。
 
 ### T-006 生成章节讲解与教学材料
 

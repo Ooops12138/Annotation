@@ -1,3 +1,4 @@
+
 # Annotation
 
 第一版 Demo 的 T-000 技术骨架：FastAPI + Vue 3/Vite + Tailwind CSS（shadcn-vue 风格源码组件）+ Pydantic artifact。
@@ -9,7 +10,8 @@
 ### 后端（Python 3.12）
 
 ```powershell
-uv sync --extra dev
+# uv sync --extra dev
+uv sync --extra dev --link-mode copy
 uv run uvicorn annotation.main:app --reload --app-dir src
 ```
 
@@ -40,6 +42,8 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/workflow/run
 返回值包含教材、blueprint、Document IR、审核状态、source block 数量、provider/model/base_url/config_version/duration_ms、警告和错误列表。
 
 注意：当前教材 PDF 的 PyMuPDF 文本提取包含替换字符，运行结果会把这个问题作为审核警告保留；这不等同于 OCR 已完成。若要用于正式内容验收，应先提供文本编码正常的 PDF 或增加 OCR 适配。
+
+模型切换：`MODEL_PROVIDER=mock` 使用确定性的离线回归样例；`MODEL_PROVIDER=deepseek` 使用 OpenAI-compatible DeepSeek endpoint（还需要 `MODEL_NAME` 和 `MODEL_API_KEY`；`MODEL_BASE_URL` 可省略，默认是 `https://api.deepseek.com/v1`）。详见 [`docs/poc-scope.md`](docs/poc-scope.md)。
 
 ## PDF 解析预览
 

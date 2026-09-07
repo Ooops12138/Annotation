@@ -5,6 +5,8 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BOOKS_DIR = PROJECT_ROOT / "books"
+STORAGE_DIR = PROJECT_ROOT / "storage"
+SOURCE_INDEX_PATH = STORAGE_DIR / "source-index.sqlite3"
 
 
 def first_book_pdf() -> Path:

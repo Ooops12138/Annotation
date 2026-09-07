@@ -18,6 +18,8 @@ def test_demo_document_contract() -> None:
     assert response.status_code == 200
     assert payload["sections"][0]["children"][1]["type"] == "formula"
     assert payload["issues"][0]["severity"] == "warning"
+    assert len(payload["sections"]) >= 3
+    assert any(node["type"] == "example" for section in payload["sections"] for node in section["children"])
 
 
 def test_minimal_workflow_endpoint_uses_offline_provider_by_default() -> None:
@@ -27,3 +29,11 @@ def test_minimal_workflow_endpoint_uses_offline_provider_by_default() -> None:
     assert payload["status"] == "ok"
     assert payload["provider_metadata"]["provider"] == "mock"
     assert payload["document"]["blueprint_version"].startswith("bp-fixture-001:v1")
+
+
+def test_run_metadata_reflects_configured_provider(monkeypatch) -> None:
+    monkeypatch.setenv("MODEL_PROVIDER", "mock")
+    monkeypatch.setenv("MODEL_NAME", "fixture-model")
+    response = client.get("/api/run-metadata")
+    assert response.status_code == 200
+    assert response.json()["provider"] == "mock"

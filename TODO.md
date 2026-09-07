@@ -267,24 +267,30 @@ ingest
 
 ## 当前完成状态
 
-- [x] 项目目标和第一阶段范围已确定；
-- [x] 技术路线已确定；
-- [x] JSON Document IR 与 VitePress 的职责边界已确定；
-- [x] OpenAI/Ollama/vLLM 模型适配方向已确定；
-- [x] Vue + shadcn-vue + Tailwind CSS 前端路线已确定；
-- [x] 技术选型文档和 ADR 已更新；
-- [x] T-000 工程骨架；
-- [x] artifact 模型；
-- [ ] fixture 和 renderer；
-- [ ] PDF 解析；
-- [x] PDF 解析基础骨架（PyMuPDF 页/块级 SourceBlock）；
-- [x] ModelProvider（Mock、OpenAI、OpenAI-compatible、能力声明和错误分类）；
-- [x] LangGraph 最小流程（PDF → SourceBlock → Blueprint → Document IR → 校验 → 审核 → assemble）；
-- [x] 第一版 Demo 端到端运行（Mock/真实 Provider 可替换，当前 PDF 乱码风险会显式进入审核）；
-- [ ] POC 教材与章节评估。
+- [X] 项目目标和第一阶段范围已确定；
+- [X] 技术路线已确定；
+- [X] JSON Document IR 与 VitePress 的职责边界已确定；
+- [X] OpenAI/Ollama/vLLM 模型适配方向已确定；
+- [X] Vue + shadcn-vue + Tailwind CSS 前端路线已确定；
+- [X] 技术选型文档和 ADR 已更新；
+- [X] T-000 工程骨架；
+- [X] artifact 模型；
+- [X] fixture 和 renderer；
+- [X] PDF 解析；
+- [X] PDF 解析基础骨架（PyMuPDF 页/块级 SourceBlock）；
+- [X] SQLite FTS5 source index 和可追溯查询接口；
+- [X] POC 教材/章节冻结与蓝图质量门；
+- [X] ModelProvider（Mock、OpenAI、OpenAI-compatible、能力声明和错误分类）；
+- [X] LangGraph 最小流程（PDF → SourceBlock → Blueprint → Document IR → 校验 → 审核 → assemble）；
+- [X] 第一版 Demo 端到端运行（Mock/真实 Provider 可替换，当前 PDF 乱码风险会显式进入审核）；
+- [ ] POC 教材与章节最终评估（固定 rubric、人工抽样和发布决策）。
 
 ## 下一窗口启动提示
 
 可以直接把下面这句话发给新的 Codex 窗口：
 
-> 请读取 `TODO.md`、`AGENTS.md`、`docs/technology-selection.md`、`docs/architecture.md` 和 `tasks/backlog.md`，从 T-000 开始实现第一版 Demo 技术骨架。先不要接入真实教材和真实模型，先完成 FastAPI + Vue/Vite + shadcn-vue/Tailwind + 最小 Pydantic artifact + 健康检查 + 本地启动说明，并在完成后运行最小验证。
+> 请读取 `TODO.md`、`AGENTS.md`、`docs/technology-selection.md`、`docs/architecture.md` 和 `tasks/backlog.md`，
+
+## 本窗口交付说明（2026-09-07）
+
+P0 的 T-000、T-001、T-002、T-002A、T-003、T-004、T-005、T-005A、T-005B 均已达到当前 POC 的最小完成定义。尚未完成的是 POC 最终人工评估与发布决策，不应把 Mock/DeepSeek 运行成功等同于内容质量验收通过。

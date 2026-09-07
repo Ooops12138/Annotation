@@ -98,7 +98,7 @@ Online Learning Document
 
 重试应区分“同一输入的技术重试”和“修改提示/蓝图后的新版本”。禁止用新输出覆盖旧输出而失去比较能力。是否自动重试、最大轮数和停止条件由实现阶段根据实验确定。
 
-当前 POC 已落地一条最小 LangGraph 图：`ingest → load_or_create_blueprint → generate_document_ir → validate_document_ir → review → assemble`。图状态显式携带蓝图、文档、来源、provider 元数据和错误列表；默认使用 Mock Provider，真实模型通过 `ModelProvider` 工厂替换。该图用于验证 artifact 传递和状态边界，不代表完整教材理解/内容审核闭环已完成。
+当前 POC 已落地一条最小 LangGraph 图：`ingest → load_or_create_blueprint → generate_document_ir → validate_document_ir → review → assemble`。图状态显式携带蓝图、文档、来源、provider 元数据和错误列表；蓝图节点在进入内容生成前执行确定性的覆盖、来源和前置关系检查；默认使用 Mock Provider，真实模型通过 `ModelProvider` 工厂替换。教材导入后可写入本地 SQLite FTS5 索引，并通过 `source_ref` 返回页/块证据。该图用于验证 artifact 传递和状态边界，不代表完整多轮教材理解/内容审核闭环已完成。
 
 ## 7. 运行与部署假设
 
