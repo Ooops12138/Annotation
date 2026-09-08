@@ -19,8 +19,13 @@ def create_provider_from_env() -> ModelProvider:
     kind = os.getenv("MODEL_PROVIDER", "mock").strip().lower()
     model = os.getenv("MODEL_NAME") or ("deepseek-chat" if kind == "deepseek" else "fixture-model")
     config_version = os.getenv("MODEL_CONFIG_VERSION", "env-v1")
-    timeout = float(os.getenv("MODEL_TIMEOUT_SECONDS", "30"))
+    # Reasoning-capable models may spend longer than the lightweight mock
+    # path before returning their final JSON payload.
+    timeout = float(os.getenv("MODEL_TIMEOUT_SECONDS", "120"))
     max_retries = int(os.getenv("MODEL_MAX_RETRIES", "1"))
+    thinking = None
+    if kind == "deepseek":
+        thinking = (os.getenv("MODEL_THINKING") or "disabled").strip().lower()
     api_key = os.getenv("MODEL_API_KEY") or os.getenv("OPENAI_API_KEY")
     base_url = os.getenv("MODEL_BASE_URL")
     if kind == "mock":
@@ -33,6 +38,7 @@ def create_provider_from_env() -> ModelProvider:
             config_version=config_version,
             timeout=timeout,
             max_retries=max_retries,
+            thinking=thinking,
         )
     if kind in {"openai-compatible", "ollama", "vllm", "deepseek"}:
         if kind == "deepseek" and not base_url:
@@ -47,5 +53,6 @@ def create_provider_from_env() -> ModelProvider:
             config_version=config_version,
             timeout=timeout,
             max_retries=max_retries,
+            thinking=thinking,
         )
     raise ValueError(f"Unsupported MODEL_PROVIDER: {kind}")

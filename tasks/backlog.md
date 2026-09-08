@@ -89,6 +89,8 @@
 
 运行验证：已使用根目录 `.env` 中的 `deepseek-v4-flash` 完成一次真实运行（1206 个 SourceBlock、3 个 Blueprint 单元、4 个 Document IR 节点、状态 `published`）。解析器会在实际出现替换字符时保留审核 warning；不宣称 OCR 或教材内容质量已通过最终验收。
 
+补充运行记录（2026-09-07）：DeepSeek 已支持通过 `MODEL_THINKING=disabled` 关闭思考模式；真实 provider 调用会把每个 agent 的输入、原始输出、解析结果和错误追加到 `storage/model-calls.jsonl`。当前最小流程仍只向 agent 提供教材开头 12 个 SourceBlock，主要验证首节，不代表整章生成。
+
 离线回归样例已升级为“实数系与复数系”多节文档，包含 3 个章节区段、公式、3 个例题、测验和风险标注；`MODEL_PROVIDER=mock` 时可重复生成，不需要网络。`MODEL_PROVIDER=deepseek` 时工厂会构造 OpenAI-compatible DeepSeek provider，需同时设置 `MODEL_BASE_URL`、模型名和 API key。
 
 ### T-006 生成章节讲解与教学材料

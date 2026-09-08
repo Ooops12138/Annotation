@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import uuid
 from pathlib import Path
@@ -223,7 +224,7 @@ def build_minimal_graph(provider: ModelProvider | None = None):
             return {}
         prompt = "Return ONLY valid JSON, with no Markdown or explanation. You are a textbook understanding assistant. Use only the textbook excerpts below; do not invent facts. Schema: {title: string, knowledge_units: [{title: string, kind: concept|formula|theorem|example|skill, learning_objectives: string[], prerequisites: string[], source_refs: string[]}]}. Create at least 3 units. Every source_refs item must be copied exactly from the bracketed source IDs.\n\n" + _source_context(state["source_blocks"], 12)
         try:
-            response = model_provider.generate_structured(StructuredGenerationRequest(prompt=prompt, schema=BlueprintDraft, max_output_tokens=3000))
+            response = model_provider.generate_structured(StructuredGenerationRequest(prompt=prompt, schema=BlueprintDraft, max_output_tokens=3000, metadata={"agent": "load_or_create_blueprint", "run_id": state["run_id"]}))
             draft = response.value
             valid_refs = set(state["source_refs"])
             ordered_refs = state["source_refs"]
@@ -256,9 +257,30 @@ def build_minimal_graph(provider: ModelProvider | None = None):
 
     def generate_document_ir(state: WorkflowState) -> dict[str, Any]:
         blueprint = state["blueprint"]
-        prompt = "Return ONLY valid JSON, with no Markdown or explanation. You are a learning-document generator. Use only the Learning Blueprint and textbook excerpts below. Do not output HTML or JavaScript. Schema: {title: string, section_title: string, explanation: string, formula_latex: string, quiz_question: string, quiz_options: string[], quiz_answer: string, quiz_explanation: string, source_refs: string[]}. Every source_refs item must be copied exactly from the bracketed source IDs.\n\nBlueprint:\n" + blueprint.model_dump_json() + "\n\nTextbook excerpts:\n" + _source_context(state["source_blocks"], 12)
+        # The artifact keeps every imported source reference for provenance, but
+        # sending all 1200+ refs back to the model needlessly consumes its
+        # context window.  Keep the generation prompt to the instructional
+        # blueprint fields and the refs attached to each unit.
+        blueprint_context = {
+            "title": blueprint.title,
+            "knowledge_units": [
+                {
+                    "title": unit.title,
+                    "kind": unit.kind,
+                    "learning_objectives": unit.learning_objectives,
+                    "prerequisites": unit.prerequisites,
+                    "source_refs": unit.source_refs,
+                }
+                for unit in blueprint.knowledge_units
+            ],
+        }
+        prompt = "Return ONLY valid JSON, with no Markdown or explanation. You are a learning-document generator. Use only the Learning Blueprint and textbook excerpts below. Do not output HTML or JavaScript. Schema: {title: string, section_title: string, explanation: string, formula_latex: string, quiz_question: string, quiz_options: string[], quiz_answer: string, quiz_explanation: string, source_refs: string[]}. Every source_refs item must be copied exactly from the bracketed source IDs.\n\nBlueprint:\n" + json.dumps(blueprint_context, ensure_ascii=False, separators=(",", ":")) + "\n\nTextbook excerpts:\n" + _source_context(state["source_blocks"], 12)
         try:
-            response = model_provider.generate_structured(StructuredGenerationRequest(prompt=prompt, schema=DocumentDraft, max_output_tokens=3000))
+            # DeepSeek's reasoning models count hidden reasoning tokens against
+            # max_tokens.  A 3000-token budget can end with a truncated JSON
+            # document even when the visible answer is short; leave enough
+            # room for both reasoning and the required structured payload.
+            response = model_provider.generate_structured(StructuredGenerationRequest(prompt=prompt, schema=DocumentDraft, max_output_tokens=6000, metadata={"agent": "generate_document_ir", "run_id": state["run_id"]}))
             draft = response.value
             refs = _normalize_refs(draft.source_refs, set(state["source_refs"])) or blueprint.source_refs[:5]
             if not refs:

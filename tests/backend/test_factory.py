@@ -14,3 +14,4 @@ def test_model_provider_env_switch(monkeypatch) -> None:
     assert provider.provider == "deepseek"
     assert provider.base_url == "https://api.deepseek.com/v1"
     assert provider.model == "deepseek-chat"
+    assert provider.thinking == "disabled"

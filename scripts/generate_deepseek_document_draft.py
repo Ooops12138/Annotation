@@ -14,7 +14,12 @@ if provider.provider == "mock":
 provider._client.timeout = 180
 prompt = """You are generating one small regression fixture from a Chinese textbook excerpt. Return ONLY valid JSON matching the schema exactly. Use simplified Chinese. Do not invent facts. Keep every string short. quiz_answer must exactly equal one option. source_refs must be [].\n\nTEXTBOOK EXCERPT:\n""" + text
 response = provider.generate_structured(
-    StructuredGenerationRequest(prompt=prompt, schema=DocumentDraft, max_output_tokens=3000)
+    StructuredGenerationRequest(
+        prompt=prompt,
+        schema=DocumentDraft,
+        max_output_tokens=6000,
+        metadata={"agent": "generate_deepseek_document_draft", "run_id": "run-draft-generation"},
+    )
 )
 payload = response.value.model_dump_json(indent=2)
 Path("storage/deepseek-document-draft.json").parent.mkdir(parents=True, exist_ok=True)

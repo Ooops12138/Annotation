@@ -1,4 +1,3 @@
-
 # Annotation
 
 第一版 Demo 的 T-000 技术骨架：FastAPI + Vue 3/Vite + Tailwind CSS（shadcn-vue 风格源码组件）+ Pydantic artifact。
@@ -44,6 +43,8 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/workflow/run
 注意：当前教材 PDF 的 PyMuPDF 文本提取包含替换字符，运行结果会把这个问题作为审核警告保留；这不等同于 OCR 已完成。若要用于正式内容验收，应先提供文本编码正常的 PDF 或增加 OCR 适配。
 
 模型切换：`MODEL_PROVIDER=mock` 使用确定性的离线回归样例；`MODEL_PROVIDER=deepseek` 使用 OpenAI-compatible DeepSeek endpoint（还需要 `MODEL_NAME` 和 `MODEL_API_KEY`；`MODEL_BASE_URL` 可省略，默认是 `https://api.deepseek.com/v1`）。详见 [`docs/poc-scope.md`](docs/poc-scope.md)。
+
+每次真实模型调用的 agent 名称、输入提示、原始输出、解析结果、耗时和错误会追加记录到 `storage/model-calls.jsonl`，不记录 API key。DeepSeek 默认使用 `MODEL_THINKING=disabled`；如需测试思考模式，可在本地 `.env` 中改为 `enabled`。
 
 ## PDF 解析预览
 

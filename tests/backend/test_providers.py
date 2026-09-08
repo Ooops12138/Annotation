@@ -1,3 +1,5 @@
+import json
+
 from pydantic import BaseModel
 
 from annotation.workflow.graph import BlueprintDraft, DocumentDraft
@@ -74,6 +76,15 @@ class TinyPayload(BaseModel):
     value: str
 
 
+class _RecordingCompletions:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        return type("Response", (), {"choices": [_FakeChoice()], "usage": None})()
+
+
 def test_openai_and_compatible_endpoint_contracts_support_structured_output() -> None:
     request = StructuredGenerationRequest(prompt="{}", schema=TinyPayload)
     openai = OpenAIProvider(model="test-openai", client=_FakeClient())
@@ -87,3 +98,22 @@ def test_openai_and_compatible_endpoint_contracts_support_structured_output() ->
         )
         assert compatible.provider == name
         assert compatible.generate_structured(request).value.value == "ok"
+
+
+def test_thinking_disabled_is_sent_as_compatible_extra_body(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("MODEL_CALL_LOG_PATH", str(tmp_path / "model-calls.jsonl"))
+    completions = _RecordingCompletions()
+    client = type("Client", (), {"chat": type("Chat", (), {"completions": completions})()})()
+    provider = OpenAICompatibleProvider(
+        model="test-deepseek",
+        base_url="https://api.deepseek.com/v1",
+        provider_name="deepseek",
+        thinking="disabled",
+        client=client,
+    )
+    provider.generate(GenerationRequest(prompt="hello"))
+    assert completions.calls[-1]["extra_body"] == {"thinking": {"type": "disabled"}}
+    record = json.loads((tmp_path / "model-calls.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert record["input"]["prompt"] == "hello"
+    assert record["input"]["thinking"] == "disabled"
+    assert record["output"] == '{"value": "ok"}'
