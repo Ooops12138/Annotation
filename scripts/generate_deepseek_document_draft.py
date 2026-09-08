@@ -4,6 +4,7 @@ from pathlib import Path
 from annotation.providers import StructuredGenerationRequest, create_provider_from_env
 from annotation.workflow.graph import DocumentDraft
 from annotation.ingestion.pdf_parser import parse_pdf
+from annotation.prompt_loader import load_prompt
 
 
 _, blocks = parse_pdf("books/数学分析第1章.pdf", run_id="run-draft-generation")
@@ -12,7 +13,7 @@ provider = create_provider_from_env()
 if provider.provider == "mock":
     raise SystemExit("Set MODEL_PROVIDER=deepseek (or another real endpoint) before generating a model-backed sample.")
 provider._client.timeout = 180
-prompt = """You are generating one small regression fixture from a Chinese textbook excerpt. Return ONLY valid JSON matching the schema exactly. Use simplified Chinese. Do not invent facts. Keep every string short. quiz_answer must exactly equal one option. source_refs must be [].\n\nTEXTBOOK EXCERPT:\n""" + text
+prompt = load_prompt("generate_deepseek_document_draft", TEXTBOOK_CONTEXT=text)
 response = provider.generate_structured(
     StructuredGenerationRequest(
         prompt=prompt,

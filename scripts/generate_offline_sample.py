@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from annotation.ingestion.pdf_parser import parse_pdf
 from annotation.providers import StructuredGenerationRequest, create_provider_from_env
+from annotation.prompt_loader import load_prompt
 
 
 class Section(BaseModel):
@@ -42,7 +43,7 @@ class OfflineSample(BaseModel):
 
 _, blocks = parse_pdf("books/数学分析第1章.pdf", run_id="run-fixture-generation")
 text = "\n".join(f"[{block.source_ref}] {block.text}" for block in blocks[:20])[:9000]
-prompt = """Return ONLY valid JSON matching this exact object shape: {title:string, subtitle:string, learning_objectives:[string], key_terms:[string], sections:[{title:string, explanation:string, formula:string, example:string, source_hint:string}], quiz:[{question:string, options:[string], answer:string, explanation:string, source_hint:string}], risk_notes:[string]}. Use simplified Chinese. Make exactly 2 sections and 2 quiz items. Use only facts in the textbook excerpt; do not invent facts. source_hint should be a page/section label, not a source_ref.\n\nTEXTBOOK EXCERPT:\n""" + text
+prompt = load_prompt("generate_offline_sample", TEXTBOOK_CONTEXT=text)
 provider = create_provider_from_env()
 if provider.provider == "mock":
     raise SystemExit("Set MODEL_PROVIDER=deepseek (or another real endpoint) before generating a model-backed sample.")

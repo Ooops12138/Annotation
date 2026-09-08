@@ -46,6 +46,8 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/workflow/run
 
 每次真实模型调用的 agent 名称、输入提示、原始输出、解析结果、耗时和错误会追加记录到 `storage/model-calls.jsonl`，不记录 API key。DeepSeek 默认使用 `MODEL_THINKING=disabled`；如需测试思考模式，可在本地 `.env` 中改为 `enabled`。
 
+各生成 agent 的提示词以 Markdown 文件独立存放在 `src/annotation/prompts/`。运行时由 `prompt_loader.py` 读取，并替换 `{{TEXTBOOK_CONTEXT}}`、`{{BLUEPRINT_CONTEXT}}` 等占位符；修改提示词不需要改动工作流控制代码。
+
 ## PDF 解析预览
 
 将文本型 PDF 放入仓库根目录的 `books/`（该目录已被 Git 忽略，教材不会上传），启动后端后访问 `http://127.0.0.1:8000/api/source-preview`。接口使用 PyMuPDF 生成页/块级 `SourceBlock`，保留页码、块序号、坐标、文本 hash、解析器版本和 `source_ref`。

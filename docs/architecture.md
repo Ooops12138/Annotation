@@ -21,11 +21,13 @@
 ├── documents/
 │   └── ai_textbook_project_docs/     # 原始设计资料与项目背景
 ├── src/annotation/                   # Python API、领域模型、工作流、适配器
+│   ├── prompts/                      # 每个生成 Agent 独立的 Markdown prompt
+│   └── prompt_loader.py              # prompt 读取与运行时上下文替换
 ├── web/                              # Vue 3 + TypeScript 前端
 ├── tests/                            # 单元、契约、流程和回归测试
 ├── evals/                            # 固定评估样本、标注、评分结果
 ├── artifacts/                        # 本地/构建生成物（不作为源代码）
-└── config/                           # 运行配置与提示模板索引
+└── config/                           # 运行配置（需要时再建立）
 ```
 
 本轮只建立设计和任务文档，不创建 `src/`、`web/`、`tests/`、`evals/` 或 `artifacts/` 的业务实现。`documents/ai_textbook_project_docs/` 是现有设计资料目录，不能被当作运行时输出目录。具体技术选型见 `docs/technology-selection.md`。
@@ -99,6 +101,8 @@ Online Learning Document
 重试应区分“同一输入的技术重试”和“修改提示/蓝图后的新版本”。禁止用新输出覆盖旧输出而失去比较能力。是否自动重试、最大轮数和停止条件由实现阶段根据实验确定。
 
 当前 POC 已落地一条最小 LangGraph 图：`ingest → load_or_create_blueprint → generate_document_ir → validate_document_ir → review → assemble`。图状态显式携带蓝图、文档、来源、provider 元数据和错误列表；蓝图节点在进入内容生成前执行确定性的覆盖、来源和前置关系检查；默认使用 Mock Provider，真实模型通过 `ModelProvider` 工厂替换。教材导入后可写入本地 SQLite FTS5 索引，并通过 `source_ref` 返回页/块证据。该图用于验证 artifact 传递和状态边界，不代表完整多轮教材理解/内容审核闭环已完成。
+
+生成 Agent 的 prompt 不内嵌在工作流函数中，而是按 Agent 名称独立存放为 `src/annotation/prompts/*.md`。Markdown 文件包含可读的角色、任务、约束、输出结构和上下文占位符；`prompt_loader.py` 在运行时注入教材片段或蓝图 JSON。prompt 的输出要求仍由 Pydantic schema 和确定性检查兜底，不能只依赖文字约束。
 
 ## 7. 运行与部署假设
 

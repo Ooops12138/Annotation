@@ -191,6 +191,8 @@ P0 要求：结构化输出、文本生成、错误重试和可记录的模型�
 
 当前实现提供 `src/annotation/providers/` 下的统一协议、Mock Provider、OpenAI Provider 和 OpenAI-compatible Provider。结构化输出通过可移植的 JSON object 请求并由 Pydantic schema 二次校验；严格 provider-specific JSON Schema 不作为兼容接口的默认能力。`MODEL_PROVIDER=mock` 是离线开发默认值。仓库中的离线 fixture 已覆盖多节讲解、公式、例题、测验和风险标注；真实 DeepSeek 运行通过同一 `OpenAICompatibleProvider` 接口接入，不把 API 输出或密钥作为测试前提。DeepSeek 可通过 `MODEL_THINKING=disabled|enabled` 控制思考模式；默认关闭以降低结构化 JSON 的延迟和截断风险。真实 provider 的请求、原始响应、解析结果和错误追加记录到本地 JSONL 日志，API key 不进入日志。
 
+各生成 Agent 的 prompt 采用仓库内 Markdown 文件管理，路径为 `src/annotation/prompts/<agent>.md`。运行时只通过受控占位符注入教材片段、Learning Blueprint 等上下文；Python 节点保留 schema、token 预算、metadata、fallback 和质量门禁，不把这些执行策略混入 prompt 文件。
+
 ### 5.3 为什么不在业务层直接使用供应商 SDK
 
 - 方便在云端模型和本地模型之间切换；

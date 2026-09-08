@@ -36,6 +36,7 @@ from annotation.providers import (
     ProviderError,
     StructuredGenerationRequest,
 )
+from annotation.prompt_loader import load_prompt
 
 
 class BlueprintDraftUnit(BaseModel):
@@ -222,7 +223,10 @@ def build_minimal_graph(provider: ModelProvider | None = None):
     def load_or_create_blueprint(state: WorkflowState) -> dict[str, Any]:
         if state.get("blueprint"):
             return {}
-        prompt = "Return ONLY valid JSON, with no Markdown or explanation. You are a textbook understanding assistant. Use only the textbook excerpts below; do not invent facts. Schema: {title: string, knowledge_units: [{title: string, kind: concept|formula|theorem|example|skill, learning_objectives: string[], prerequisites: string[], source_refs: string[]}]}. Create at least 3 units. Every source_refs item must be copied exactly from the bracketed source IDs.\n\n" + _source_context(state["source_blocks"], 12)
+        prompt = load_prompt(
+            "load_or_create_blueprint",
+            TEXTBOOK_CONTEXT=_source_context(state["source_blocks"], 12),
+        )
         try:
             response = model_provider.generate_structured(StructuredGenerationRequest(prompt=prompt, schema=BlueprintDraft, max_output_tokens=3000, metadata={"agent": "load_or_create_blueprint", "run_id": state["run_id"]}))
             draft = response.value
@@ -274,7 +278,11 @@ def build_minimal_graph(provider: ModelProvider | None = None):
                 for unit in blueprint.knowledge_units
             ],
         }
-        prompt = "Return ONLY valid JSON, with no Markdown or explanation. You are a learning-document generator. Use only the Learning Blueprint and textbook excerpts below. Do not output HTML or JavaScript. Schema: {title: string, section_title: string, explanation: string, formula_latex: string, quiz_question: string, quiz_options: string[], quiz_answer: string, quiz_explanation: string, source_refs: string[]}. Every source_refs item must be copied exactly from the bracketed source IDs.\n\nBlueprint:\n" + json.dumps(blueprint_context, ensure_ascii=False, separators=(",", ":")) + "\n\nTextbook excerpts:\n" + _source_context(state["source_blocks"], 12)
+        prompt = load_prompt(
+            "generate_document_ir",
+            BLUEPRINT_CONTEXT=json.dumps(blueprint_context, ensure_ascii=False, separators=(",", ":")),
+            TEXTBOOK_CONTEXT=_source_context(state["source_blocks"], 12),
+        )
         try:
             # DeepSeek's reasoning models count hidden reasoning tokens against
             # max_tokens.  A 3000-token budget can end with a truncated JSON
