@@ -4,28 +4,28 @@
 
 ## 开始前
 
-- [ ] 阅读 `AGENTS.md`、`README.md`、`docs/requirements.md`、`docs/architecture.md`、`docs/decisions.md`、`documents/wed_design.md` 和 `tasks/backlog.md`。
-- [ ] 保持项目范围：一个学科的一章、一个学习页面、一个可验证闭环。
-- [ ] 不新增维护者工作台、权限系统、版本管理页面或其他平台能力。
+- [x] 阅读 `AGENTS.md`、`README.md`、`docs/requirements.md`、`docs/architecture.md`、`docs/decisions.md`、`documents/wed_design.md` 和 `tasks/backlog.md`。
+- [x] 保持项目范围：一个学科的一章、一个学习页面、一个可验证闭环。
+- [x] 不新增维护者工作台、权限系统、版本管理页面或其他平台能力。
 
 ## T-009A 页面工作
 
-- [ ] 检查 `web/src/components/domain/LearningDocumentPage.vue` 和 `LearningDocumentRenderer.vue` 的当前输出。
-- [ ] 删除页面中的 API 健康状态、`run_id`、`artifact_id`、蓝图版本、审核计数和内部审核面板。
-- [ ] 保留并优化章节导航、讲解、公式、例题、提示、测验和折叠交互。
-- [ ] 将来源改成学习者可理解的“教材依据”：章节、页码或短摘录；不直接显示原始 `source_ref`。
-- [ ] 将事实风险和学术分歧转成中性的“建议核实”“多角度观点”等学习提示。
-- [ ] 未知节点继续安全拒绝；页面只显示“此部分暂不可用”，详细原因写入 Console 或内部日志。
-- [ ] 后端返回的审核报告、运行状态和错误信息保留在 API/Console，暂不增加新的工作台 UI。
+- [x] 检查 `web/src/components/domain/LearningDocumentPage.vue` 和 `LearningDocumentRenderer.vue` 的当前输出。
+- [x] 删除页面中的 API 健康状态、`run_id`、`artifact_id`、蓝图版本、审核计数和内部审核面板。
+- [x] 保留并优化章节导航、讲解、公式、例题、提示、测验和折叠交互。
+- [x] 将来源改成学习者可理解的“教材依据”：章节、页码或短摘录；不直接显示原始 `source_ref`。
+- [x] 将事实风险和学术分歧转成中性的“建议核实”“多角度观点”等学习提示。
+- [x] 未知节点继续安全拒绝；页面只显示“此部分暂不可用”，详细原因写入 Console 或内部日志。
+- [x] 后端返回的审核报告、运行状态和错误信息保留在 API/Console，暂不增加新的工作台 UI。
 
 ## 验证
 
-- [ ] 使用 Mock Provider 启动 FastAPI 和 VitePress。
-- [ ] 用真实浏览器验证：打开页面 → 阅读章节 → 展开教材依据 → 完成练习。
-- [ ] 确认学习页面没有 API 状态、审核面板、原始 ID 或重生成按钮。
-- [ ] 运行前端测试、`npm run build` 和后端回归测试。
+- [x] 使用 Mock Provider 启动 FastAPI 和 VitePress。
+- [x] 用真实浏览器验证：打开页面 → 阅读章节 → 展开教材依据 → 完成练习。
+- [x] 确认学习页面没有 API 状态、审核面板、原始 ID 或重生成按钮。
+- [x] 运行前端测试、`npm run build` 和后端回归测试。
 - [ ] 根据 `docs/evaluation.md` 做一次 POC 人工抽样，并把结果写入归档。
-- [ ] 完成后更新 `tasks/backlog.md`，再决定是否进入 T-010 评估。
+- [x] 完成后更新 `tasks/backlog.md`，再决定是否进入 T-010 评估。
 
 ## 新窗口启动提示
 

@@ -63,7 +63,7 @@ function toggleSection(id: string) {
 
 <style scoped>
 .learning-document { color: #171717; }
-.document-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 2rem; }
+.document-header { display: flex; align-items: flex-start; gap: 2rem; }
 .document-eyebrow, .outline-heading, .section-heading p, .aside-label, .annotation-node-label { font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace; }
 .document-eyebrow { display: flex; align-items: center; gap: .45rem; margin: 0; color: #8b2e24; font-size: .7rem; letter-spacing: .12em; text-transform: uppercase; }
 .document-header h2 { max-width: 50rem; margin: .9rem 0 0; font: 600 clamp(2rem, 4vw, 3.45rem)/1.12 "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif; letter-spacing: -.035em; }
