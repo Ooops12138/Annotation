@@ -15,3 +15,14 @@ def test_load_prompt_rejects_missing_placeholder_value() -> None:
     with pytest.raises(KeyError):
         load_prompt("generate_document_ir", TEXTBOOK_CONTEXT="excerpt")
 
+
+def test_load_content_artifact_prompt_renders_bounded_context() -> None:
+    prompt = load_prompt(
+        "generate_content_artifact",
+        KNOWLEDGE_UNIT_CONTEXT='{"title":"上确界"}',
+        CONTEXT_PACK="[src-1] 上界",
+        ACCEPTANCE_CRITERIA='["覆盖目标"]',
+    )
+    assert prompt.startswith("# Agent: generate_content_artifact")
+    assert "[src-1] 上界" in prompt
+    assert "{{CONTEXT_PACK}}" not in prompt

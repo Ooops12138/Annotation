@@ -52,6 +52,12 @@ def get_source_preview() -> dict[str, object]:
         "document": document.model_dump(mode="json"),
         "block_count": len(blocks),
         "indexed_count": indexed_count,
+        "warnings": document.warnings,
+        "run_metadata": document.run_metadata,
+        "artifact_paths": {
+            "json": document.run_metadata.get("json_path"),
+            "markdown": document.run_metadata.get("markdown_path"),
+        },
         "sample_blocks": [block.model_dump(mode="json") for block in blocks[:5]],
     }
 
@@ -75,17 +81,24 @@ def source_search(query: str, limit: int = 10) -> dict[str, object]:
 
 
 @router.post("/api/workflow/run")
-def run_workflow() -> dict[str, object]:
+def run_workflow(run_id: str = "run-demo-001") -> dict[str, object]:
     """Run the PDF-driven LangGraph flow using the configured provider."""
     try:
-        state = run_minimal_workflow(provider=create_provider_from_env())
+        state = run_minimal_workflow(provider=create_provider_from_env(), run_id=run_id)
     except Exception as exc:
-        return {"status": "error", "document": None, "blueprint": None, "provider_metadata": {}, "errors": [str(exc)]}
+        return {"status": "error", "document": None, "review_report": None, "review_report_path": None, "blueprint": None, "provider_metadata": {}, "errors": [str(exc)]}
     return {
         "status": "ok" if not state.get("errors") else "error",
         "document": state.get("document").model_dump(mode="json") if state.get("document") else None,
+        "review_report": state.get("review_report").model_dump(mode="json") if state.get("review_report") else None,
+        "review_report_path": state.get("review_report_path"),
         "blueprint": state.get("blueprint").model_dump(mode="json") if state.get("blueprint") else None,
         "blueprint_check": state.get("blueprint_check").model_dump(mode="json") if state.get("blueprint_check") else None,
+        "content_tasks": [task.model_dump(mode="json") for task in state.get("content_tasks", [])],
+        "context_packs": [pack.model_dump(mode="json") for pack in state.get("context_packs", [])],
+        "content_artifacts": [artifact.model_dump(mode="json") for artifact in state.get("content_artifacts", [])],
+        "content_artifact_checks": state.get("content_artifact_checks", {}),
+        "content_artifact_path": state.get("content_artifact_path"),
         "source_document": state.get("source_document").model_dump(mode="json") if state.get("source_document") else None,
         "source_block_count": len(state.get("source_blocks", [])),
         "provider_metadata": state.get("provider_metadata", {}),

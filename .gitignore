@@ -6,7 +6,15 @@ __pycache__/
 .pytest_cache/
 storage/
 results/
+tmp/
 books/*.pdf
+docs/
+documents/
+tasks/
+logs/
 web/node_modules/
 web/dist/
+web/docs/.vitepress/dist/
+web/docs/.vitepress/cache/
 .DS_Store
+AGENTS.md

@@ -10,6 +10,7 @@ from typing import Any, Generic, TypeVar
 
 from openai import OpenAI
 from pydantic import BaseModel, ValidationError
+import httpx
 
 from .models import (
     GenerationRequest,
@@ -51,12 +52,31 @@ class _OpenAIBase(Generic[T]):
             # JSON-schema response formats are intentionally not assumed here.
             supports_json_schema=False,
         )
-        self._client = client or OpenAI(
-            api_key=api_key or "dummy-key",
-            base_url=base_url,
-            timeout=timeout,
-            max_retries=max_retries,
-        )
+        if client is not None:
+            self._client = client
+        else:
+            try:
+                self._client = OpenAI(
+                    api_key=api_key or "dummy-key",
+                    base_url=base_url,
+                    timeout=timeout,
+                    max_retries=max_retries,
+                )
+            except ValueError as exc:
+                # Some local environments expose a ``socks5h://`` proxy while
+                # httpx is installed without SOCKS extras.  Construction of a
+                # provider (including capability checks and tests) should not
+                # fail before the first network call; use a non-environment
+                # client as a deterministic fallback.
+                if "Unknown scheme for proxy URL" not in str(exc):
+                    raise
+                self._client = OpenAI(
+                    api_key=api_key or "dummy-key",
+                    base_url=base_url,
+                    timeout=timeout,
+                    max_retries=max_retries,
+                    http_client=httpx.Client(trust_env=False),
+                )
 
     def check_capability(self, capability: str) -> bool:
         return bool(getattr(self.capabilities, capability, False))

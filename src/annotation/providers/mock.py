@@ -84,6 +84,14 @@ class MockProvider:
                     "quiz_explanation": "1 不属于 S，因此不是最大元；但 1 是 S 的最小上界。",
                     "source_refs": [],
                 }
+            elif request.schema.__name__ == "ContentDraft":
+                payload = {
+                    "title": "知识单元讲解（离线回归）",
+                    "content": "这是按单个知识单元生成的离线回归讲解。实际教材事实由 ContextPack 中的来源片段支持。",
+                    "material_role": "explanation",
+                    "formula_latex": None,
+                    "source_refs": [],
+                }
         try:
             value = request.schema.model_validate(payload)
         except Exception as exc:

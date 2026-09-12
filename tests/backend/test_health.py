@@ -29,6 +29,10 @@ def test_minimal_workflow_endpoint_uses_offline_provider_by_default() -> None:
     assert payload["status"] == "ok"
     assert payload["provider_metadata"]["provider"] == "mock"
     assert payload["document"]["blueprint_version"].startswith("bp-fixture-001:v1")
+    assert payload["content_tasks"]
+    assert len(payload["content_tasks"]) <= len(payload["content_artifacts"])
+    assert payload["review_report"]["report_id"] == payload["document"]["review_report_id"]
+    assert payload["review_report"]["checks"]["source_traceability"] == "passed"
 
 
 def test_run_metadata_reflects_configured_provider(monkeypatch) -> None:

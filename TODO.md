@@ -1,296 +1,36 @@
-# Annotation 第一版 Demo TODO
+# 下一步 TODO
 
-这是下一次开发窗口的接续入口。当前目标不是一次完成完整 P0，而是先建立一条可运行、可验证的最小垂直链路。
+当前只推进 T-009A：把已有 JSON Document IR 呈现为一个适合零基础/初学者的在线学习页面。
 
-## 当前目标
+## 开始前
 
-跑通：
+- [ ] 阅读 `AGENTS.md`、`README.md`、`docs/requirements.md`、`docs/architecture.md`、`docs/decisions.md`、`documents/wed_design.md` 和 `tasks/backlog.md`。
+- [ ] 保持项目范围：一个学科的一章、一个学习页面、一个可验证闭环。
+- [ ] 不新增维护者工作台、权限系统、版本管理页面或其他平台能力。
 
-```text
-PDF / fixture
-  → SourceBlock
-  → Learning Blueprint
-  → JSON Document IR
-  → Vue Document Renderer
-  → 在线学习文档
-```
+## T-009A 页面工作
 
-第一版 Demo 必须能够展示：
+- [ ] 检查 `web/src/components/domain/LearningDocumentPage.vue` 和 `LearningDocumentRenderer.vue` 的当前输出。
+- [ ] 删除页面中的 API 健康状态、`run_id`、`artifact_id`、蓝图版本、审核计数和内部审核面板。
+- [ ] 保留并优化章节导航、讲解、公式、例题、提示、测验和折叠交互。
+- [ ] 将来源改成学习者可理解的“教材依据”：章节、页码或短摘录；不直接显示原始 `source_ref`。
+- [ ] 将事实风险和学术分歧转成中性的“建议核实”“多角度观点”等学习提示。
+- [ ] 未知节点继续安全拒绝；页面只显示“此部分暂不可用”，详细原因写入 Console 或内部日志。
+- [ ] 后端返回的审核报告、运行状态和错误信息保留在 API/Console，暂不增加新的工作台 UI。
 
-- 一个章节或示例文档；
-- 章节/知识单元结构；
-- 至少一段讲解；
-- 至少一个公式或结构化内容块；
-- 至少一个来源引用；
-- 至少一个测验或练习；
-- 基础审核状态或风险标注。
+## 验证
 
-## 已确定技术路线
+- [ ] 使用 Mock Provider 启动 FastAPI 和 VitePress。
+- [ ] 用真实浏览器验证：打开页面 → 阅读章节 → 展开教材依据 → 完成练习。
+- [ ] 确认学习页面没有 API 状态、审核面板、原始 ID 或重生成按钮。
+- [ ] 运行前端测试、`npm run build` 和后端回归测试。
+- [ ] 根据 `docs/evaluation.md` 做一次 POC 人工抽样，并把结果写入归档。
+- [ ] 完成后更新 `tasks/backlog.md`，再决定是否进入 T-010 评估。
 
-- 前端：Vue 3 + TypeScript + Vite；
-- UI：`shadcn-vue` + Tailwind CSS + `lucide-vue-next`；
-- 前端状态：Pinia；
-- 后端：Python 3.12 + FastAPI；
-- 数据模型：Pydantic v2；
-- Agent 编排：LangGraph；
-- 模型接入：`ModelProvider`；支持 OpenAI API、Ollama 和 vLLM；
-- 输入：P0 先支持文本型 PDF；
-- PDF 解析：PyMuPDF；
-- 检索：SQLite FTS5 + `source_refs` 精确定位；
-- 持久化：SQLite + SQLAlchemy 2 + Alembic；
-- 内容规范输出：JSON Document IR；
-- 公式：KaTeX；
-- Python 包管理：uv；
-- 前端包管理：npm；
-- P0 不使用 VitePress 作为主前端，不引入向量数据库、Celery 或 Redis。
-
-详细说明见：
-
-- [`docs/technology-selection.md`](docs/technology-selection.md)
-- [`docs/architecture.md`](docs/architecture.md)
-- [`docs/requirements.md`](docs/requirements.md)
-- [`docs/decisions.md`](docs/decisions.md)
-- [`tasks/backlog.md`](tasks/backlog.md)
-
-## 下一窗口第一步
-
-### T-000：建立技术骨架与本地开发约定
-
-创建最小项目骨架：
+## 新窗口启动提示
 
 ```text
-src/annotation/
-├── api/
-├── domain/
-├── workflow/
-├── providers/
-├── ingestion/
-├── retrieval/
-├── persistence/
-└── rendering/
+请读取 AGENTS.md、README.md、TODO.md、docs/requirements.md、docs/architecture.md、docs/decisions.md、documents/wed_design.md 和 tasks/backlog.md。
 
-web/
-├── src/components/ui/
-├── src/components/domain/
-├── src/features/
-├── src/stores/
-└── src/lib/
-
-tests/
-├── contract/
-├── backend/
-└── frontend/
+当前只做 T-009A 的学习者页面收敛。项目目标是把教材一章转换成面向零基础/初学者的在线交互式学习文档。请先检查 LearningDocumentPage.vue 和 LearningDocumentRenderer.vue，删除 API 状态、运行/版本 ID、审核面板和原始 source_ref；保留讲解、例题、公式、练习、章节导航、教学化教材依据和必要的中性风险/观点提示。审核报告、来源检索和重生成只通过 API、Console 或日志调试，不新建维护者工作台。完成后运行测试、VitePress build 和真实浏览器核验。
 ```
-
-第一步只建立骨架和最小契约，不实现完整业务逻辑。
-
-### T-000 完成标准
-
-- 后端可以启动 FastAPI；
-- `GET /health` 返回成功；
-- 后端可以加载并校验一个最小 Pydantic artifact；
-- 前端可以启动 Vite；
-- 前端可以访问后端健康检查；
-- 前端包含一个基础布局和一个占位文档页面；
-- `shadcn-vue` 和 Tailwind CSS 已完成基础配置；
-- 前后端的本地启动命令和环境变量示例已记录；
-- 不接真实模型、不上传真实教材、不实现完整 Agent 流程。
-
-## 实施顺序
-
-### 1. 建立工程骨架
-
-- 创建 Python 项目和 uv 配置；
-- 创建 Vue/Vite 项目和 npm 配置；
-- 配置 TypeScript、Tailwind CSS、shadcn-vue；
-- 创建 FastAPI app 和健康检查；
-- 创建前端基础 layout；
-- 添加 `.env.example`；
-- 明确本地存储目录和 Git 忽略规则。
-
-### 2. 定义最小 artifact 模型
-
-先定义 Pydantic 模型：
-
-- `SourceDocument`；
-- `SourceBlock`；
-- `KnowledgeUnit`；
-- `LearningBlueprint`；
-- `ContentArtifact`；
-- `ReviewIssue`；
-- `LearningDocument` / `DocumentNode`；
-- `RunMetadata`。
-
-所有核心 artifact 至少保留：
-
-```text
-artifact_id
-run_id
-version
-status
-source_refs
-created_by
-issues
-```
-
-### 3. 创建 fixture
-
-在没有确定真实教材前，使用小型 fixture：
-
-- 一个最小 PDF 或测试文本；
-- 一个 Learning Blueprint JSON；
-- 一个 Learning Document IR JSON；
-- 一个 Review Report JSON。
-
-fixture 必须能够让前端先渲染出完整页面。
-
-### 4. 实现 Document IR Renderer
-
-前端先支持以下节点：
-
-- `section`；
-- `markdown`；
-- `formula`；
-- `callout`；
-- `source_ref`；
-- `quiz`；
-- `review_issue`。
-
-建议领域组件：
-
-```text
-LearningDocumentRenderer
-ChapterOutline
-SourcePopover
-ReviewIssueBadge
-FormulaBlock
-QuizCard
-CalloutBlock
-```
-
-安全约束：
-
-- 不渲染模型生成的任意 Vue 模板；
-- 不执行模型生成的 JavaScript；
-- 不允许未知节点类型静默通过；
-- Markdown 内容必须经过明确的渲染边界和安全处理。
-
-### 5. 实现 PDF 解析
-
-- 使用 PyMuPDF 读取页和文本块；
-- 生成页码/块级 `SourceBlock`；
-- 保留文本 hash、页码、块序号和解析器版本；
-- 用 SQLite FTS5 建立基础全文检索；
-- 为关键片段返回 `source_refs`。
-
-如果 POC 教材是扫描 PDF，不要直接扩大范围；先记录 OCR 需求，再单独创建任务。
-
-### 6. 实现 ModelProvider
-
-定义统一接口：
-
-```python
-class ModelProvider(Protocol):
-    def generate(...): ...
-    def generate_structured(...): ...
-    def stream(...): ...
-```
-
-实现：
-
-- `OpenAIProvider`；
-- `OpenAICompatibleProvider`，用于 Ollama 和 vLLM；
-- capability check；
-- 超时、重试和错误分类；
-- 记录 provider、model、base_url、配置版本和耗时。
-
-尚未确定具体默认模型时，先实现 Mock Provider 和配置接口。
-
-### 7. 接入最小 LangGraph 流程
-
-第一版可以先实现：
-
-```text
-ingest
-  → load_or_create_blueprint
-  → generate_document_ir
-  → validate_document_ir
-  → review
-  → assemble
-```
-
-暂时可以使用 fixture 蓝图，先验证流程和状态；随后再接真实教材理解节点。
-
-### 8. 加入真实模型运行
-
-在 Mock Provider 和 fixture 路径稳定后，再选择一个默认模型运行真实生成：
-
-- OpenAI API；或
-- Ollama 本地模型；或
-- vLLM 服务模型。
-
-运行前必须记录：
-
-- provider；
-- model；
-- base URL；
-- prompt/config 版本；
-- 输入 artifact 版本；
-- 输出 artifact 版本；
-- 审核结果。
-
-## 第一版 Demo 不做
-
-- 多教材融合；
-- OCR；
-- EPUB/HTML 输入；
-- 向量数据库和 embedding pipeline；
-- Celery、Redis、Kafka；
-- 账号、权限和协作；
-- 移动端；
-- 生产级部署；
-- 任意模型生成前端代码；
-- VitePress 静态导出；
-- 复杂图片、交互和多媒体生成。
-
-## 需要用户在开发中确定的参数
-
-这些参数不阻碍先搭建骨架，但接入真实数据前必须确定：
-
-1. POC 使用的学科、教材和章节；
-2. 教材是否为可复制文本型 PDF；
-3. 默认模型 Provider；
-4. 默认模型名称；
-5. 是否使用本地 Ollama/vLLM 作为日常开发模型；
-6. 何种审核问题必须阻塞发布；
-7. 是否需要在 P0 结束后增加 VitePress 导出。
-
-## 当前完成状态
-
-- [X] 项目目标和第一阶段范围已确定；
-- [X] 技术路线已确定；
-- [X] JSON Document IR 与 VitePress 的职责边界已确定；
-- [X] OpenAI/Ollama/vLLM 模型适配方向已确定；
-- [X] Vue + shadcn-vue + Tailwind CSS 前端路线已确定；
-- [X] 技术选型文档和 ADR 已更新；
-- [X] T-000 工程骨架；
-- [X] artifact 模型；
-- [X] fixture 和 renderer；
-- [X] PDF 解析；
-- [X] PDF 解析基础骨架（PyMuPDF 页/块级 SourceBlock）；
-- [X] SQLite FTS5 source index 和可追溯查询接口；
-- [X] POC 教材/章节冻结与蓝图质量门；
-- [X] ModelProvider（Mock、OpenAI、OpenAI-compatible、能力声明和错误分类）；
-- [X] LangGraph 最小流程（PDF → SourceBlock → Blueprint → Document IR → 校验 → 审核 → assemble）；
-- [X] 第一版 Demo 端到端运行（Mock/真实 Provider 可替换，当前 PDF 乱码风险会显式进入审核）；
-- [ ] POC 教材与章节最终评估（固定 rubric、人工抽样和发布决策）。
-
-## 下一窗口启动提示
-
-可以直接把下面这句话发给新的 Codex 窗口：
-
-> 请读取 `TODO.md`、`AGENTS.md`、`docs/technology-selection.md`、`docs/architecture.md` 和 `tasks/backlog.md`，
-
-## 本窗口交付说明（2026-09-07）
-
-P0 的 T-000、T-001、T-002、T-002A、T-003、T-004、T-005、T-005A、T-005B 均已达到当前 POC 的最小完成定义。尚未完成的是 POC 最终人工评估与发布决策，不应把 Mock/DeepSeek 运行成功等同于内容质量验收通过。
