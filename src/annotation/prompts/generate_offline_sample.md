@@ -32,11 +32,12 @@ Return **only valid JSON** matching this exact object shape:
 }
 ```
 
-Use simplified Chinese. Make exactly 2 sections and 2 quiz items. Use only
-facts in the textbook excerpt; do not invent facts. `source_hint` should be a
-page or section label, not a `source_ref`.
+Use simplified Chinese. Make exactly 2 sections. Choose the number of quiz
+items from the evidence in the textbook excerpt, including zero when no
+well-supported practice item is appropriate; do not pad the list to reach a
+fixed target. Use only facts in the textbook excerpt; do not invent facts.
+`source_hint` should be a page or section label, not a `source_ref`.
 
 ## Textbook excerpt
 
 {{TEXTBOOK_CONTEXT}}
-

@@ -1,6 +1,6 @@
 """Provider boundary used by workflow nodes."""
 
-from .mock import MockProvider
+from .mock import MockProvider, SequenceProvider
 from .factory import create_provider_from_env
 from .models import (
     GenerationRequest,
@@ -20,6 +20,7 @@ __all__ = [
     "ModelEvent",
     "ModelProvider",
     "MockProvider",
+    "SequenceProvider",
     "create_provider_from_env",
     "OpenAICompatibleProvider",
     "OpenAIProvider",

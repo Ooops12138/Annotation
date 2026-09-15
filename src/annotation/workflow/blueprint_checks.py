@@ -27,6 +27,17 @@ def validate_blueprint(
             )
         )
 
+    if len(unit_ids) != len(blueprint.knowledge_units):
+        issues.append(
+            ReviewIssue(
+                issue_id="blueprint-duplicate-unit-id",
+                category="logic",
+                severity="blocking",
+                message="Learning Blueprint 的 knowledge_unit_id 必须唯一。",
+                target_id=blueprint.artifact_id,
+            )
+        )
+
     for unit in blueprint.knowledge_units:
         if not unit.learning_objectives:
             issues.append(
@@ -71,6 +82,18 @@ def validate_blueprint(
                     severity="blocking",
                     message=f"知识单元“{unit.title}”包含未解析的前置关系：{', '.join(unresolved)}。",
                     target_id=unit.artifact_id,
+                )
+            )
+        unresolved_related = [related for related in unit.related_unit_ids if related not in unit_ids]
+        if unresolved_related:
+            issues.append(
+                ReviewIssue(
+                    issue_id=f"blueprint-invalid-related-{unit.artifact_id}",
+                    category="logic",
+                    severity="blocking",
+                    message=f"知识单元“{unit.title}”包含未解析的 related_unit_ids：{', '.join(unresolved_related)}。",
+                    target_id=unit.artifact_id,
+                    suggested_action="使用同一 Blueprint 中存在的稳定 knowledge_unit_id，不能用标题猜测修复。",
                 )
             )
 

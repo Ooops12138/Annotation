@@ -16,5 +16,7 @@ web/node_modules/
 web/dist/
 web/docs/.vitepress/dist/
 web/docs/.vitepress/cache/
+.playwright-cli/
+output/playwright/
 .DS_Store
 AGENTS.md

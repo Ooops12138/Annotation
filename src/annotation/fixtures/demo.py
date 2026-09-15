@@ -42,12 +42,12 @@ def demo_document() -> LearningDocument:
                     FormulaNode(id="formula-order", latex=r"x<y \Rightarrow x+z<y+z", source_refs=["src-fixture-p1-b2"]),
                     CalloutNode(
                         id="callout-note", tone="info", title="学习提示",
-                        content="先掌握集合、子集、区间和有序关系，再进入上界、上确界与完备性。它们是后面极限理论的语言基础。",
+                        content="先掌握集合、子集、区间和有序关系，再进入上界、上确界（记作 $\\sup S$）与完备性。它们是后面极限理论的语言基础。",
                     ),
                     ExampleNode(
                         id="example-interval", title="例：区间的端点",
-                        problem="说明开区间 (a,b) 与闭区间 [a,b] 的区别。",
-                        solution="(a,b) 只包含满足 a<x<b 的点，不包含端点；[a,b] 包含满足 a≤x≤b 的全部点。半开区间只包含其中一个端点。",
+                        problem="说明开区间 $(a,b)$ 与闭区间 $[a,b]$ 的区别。",
+                        solution="$(a,b)$ 只包含满足 $a<x<b$ 的点，不包含端点；$[a,b]$ 包含满足 $a≤x≤b$ 的全部点。半开区间只包含其中一个端点。",
                         source_refs=["src-fixture-p1-b2"],
                     ),
                 ],
@@ -67,8 +67,8 @@ def demo_document() -> LearningDocument:
                     ),
                     ExampleNode(
                         id="example-supremum", title="例：最大元不等于上确界",
-                        problem="比较 S=[0,1] 与 S=[0,1) 的最大元和上确界。",
-                        solution="[0,1] 的最大元和上确界都是 1；[0,1) 没有最大元，但上确界仍为 1。上确界是所有上界中最小的，不要求它属于集合。",
+                        problem="比较 $S=[0,1]$ 与 $S=[0,1)$ 的最大元和上确界。",
+                        solution="$[0,1]$ 的最大元和上确界都是 $1$；$[0,1)$ 没有最大元，但上确界仍为 $1$。上确界是所有上界中最小的，不要求它属于集合。",
                         source_refs=["src-fixture-p4-b1"],
                     ),
                 ],
@@ -78,7 +78,7 @@ def demo_document() -> LearningDocument:
                 children=[
                     MarkdownNode(
                         id="md-complex",
-                        content="复数可写成 z=x+iy，其中 x、y 为实数，i 为满足 i²=-1 的虚数单位。复数可以在复平面上表示为点或向量，因此加法对应分量相加，绝对值对应从原点到该点的距离。教材特别指出，复数不能按实数那样建立同时满足序公理的全序。",
+                        content="复数可写成 $z=x+iy$，其中 $x$、$y$ 为实数，$i$ 为满足 $i^2=-1$ 的虚数单位。复数可以在复平面上表示为点或向量，因此加法对应分量相加，绝对值对应从原点到该点的距离。教材特别指出，复数不能按实数那样建立同时满足序公理的全序。",
                         source_refs=["src-fixture-p13-b1", "src-fixture-p14-b1"],
                     ),
                     FormulaNode(
@@ -88,16 +88,16 @@ def demo_document() -> LearningDocument:
                     ),
                     ExampleNode(
                         id="example-complex", title="例：复数的几何意义",
-                        problem="写出 z=3+4i 的实部、虚部和绝对值。",
-                        solution="实部为 3，虚部为 4；在复平面上对应点 (3,4)，所以 |z|=√(3²+4²)=5。",
+                        problem="写出 $z=3+4i$ 的实部、虚部和绝对值。",
+                        solution="实部为 $3$，虚部为 $4$；在复平面上对应点 $(3,4)$，所以 $|z|=\\sqrt{3^2+4^2}=5$。",
                         source_refs=["src-fixture-p14-b1", "src-fixture-p15-b1"],
                     ),
                     QuizNode(
                         id="quiz-complex",
-                        question="关于集合 S=[0,1)，下列说法正确的是？",
-                        options=["1 是最大元", "S 没有上界", "sup S=1 但 S 没有最大元"],
-                        answer="sup S=1 但 S 没有最大元",
-                        explanation="1 是上界但不属于 S，因此不是最大元；所有元素都不超过 1，且可以任意逼近 1。",
+                        question="关于集合 $S=[0,1)$，下列说法正确的是？",
+                        options=["$1$ 是最大元", "$S$ 没有上界", "$\\sup S=1$ 但 $S$ 没有最大元"],
+                        answer="$\\sup S=1$ 但 $S$ 没有最大元",
+                        explanation="$1$ 是上界但不属于 $S$，因此不是最大元；所有元素都不超过 $1$，且可以任意逼近 $1$。",
                         source_refs=["src-fixture-p4-b1"],
                     ),
                 ],

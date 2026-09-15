@@ -75,10 +75,20 @@ class ModelEvent:
 class ProviderError(RuntimeError):
     """A normalized provider failure suitable for workflow error handling."""
 
-    def __init__(self, message: str, *, category: str, retryable: bool = False) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        category: str,
+        retryable: bool = False,
+        raw_output: str = "",
+        parsed_output: Any | None = None,
+    ) -> None:
         super().__init__(message)
         self.category = category
         self.retryable = retryable
+        self.raw_output = raw_output
+        self.parsed_output = parsed_output
 
 
 class ModelProvider(Protocol):

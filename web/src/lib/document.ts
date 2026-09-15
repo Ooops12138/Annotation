@@ -116,7 +116,14 @@ export function isDocumentNode(value: unknown): value is DocumentNode {
     case 'formula': return typeof node.latex === 'string'
     case 'example': return typeof node.title === 'string' && typeof node.problem === 'string' && typeof node.solution === 'string'
     case 'callout': return isCalloutTone(node.tone) && typeof node.title === 'string' && typeof node.content === 'string'
-    case 'quiz': return typeof node.question === 'string' && isStringArray(node.options) && typeof node.answer === 'string' && typeof node.explanation === 'string'
+    case 'quiz': {
+      if (typeof node.question !== 'string' || !node.question.trim()) return false
+      if (!isStringArray(node.options) || node.options.length < 2) return false
+      if (node.options.some((option) => !option.trim())) return false
+      if (new Set(node.options).size !== node.options.length) return false
+      if (typeof node.answer !== 'string' || node.options.filter((option) => option === node.answer).length !== 1) return false
+      return typeof node.explanation === 'string' && Boolean(node.explanation.trim())
+    }
   }
 }
 

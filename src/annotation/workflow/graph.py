@@ -1,28 +1,32 @@
-"""PDF-driven LangGraph workflow for the runnable POC demo."""
+"""Shared workflow helpers and backward-compatible graph entry points."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import uuid
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, Literal
 
-from langgraph.graph import END, START, StateGraph
-from pydantic import BaseModel, Field, field_validator
-
+from annotation.config import STORAGE_DIR, first_book_pdf
 from annotation.domain.artifacts import (
     BlueprintCheckResult,
     CalloutNode,
     ContentArtifact,
+    ContentCritiqueDraft,
+    ContentHardCheckResult,
     ContentTask,
+    ContentUnitLoopTrace,
     ContextPack,
     DocumentSection,
+    ExampleNode,
     FormulaNode,
     KnowledgeUnit,
     LearningBlueprint,
     LearningDocument,
     MarkdownNode,
+    QuizArtifact,
     QuizNode,
     ReviewIssue,
     ReviewReport,
@@ -30,114 +34,56 @@ from annotation.domain.artifacts import (
     SourceDocument,
 )
 from annotation.fixtures.demo import demo_document
-from annotation.config import STORAGE_DIR, first_book_pdf
-from annotation.ingestion.pdf_parser import parse_pdf
-from annotation.ingestion.pdf_parser import extraction_warnings
-from annotation.workflow.blueprint_checks import validate_blueprint
-from annotation.providers import (
-    ModelProvider,
-    MockProvider,
-    ProviderError,
-    StructuredGenerationRequest,
+from annotation.ingestion.pdf_parser import extraction_warnings, parse_pdf
+from annotation.providers import ModelProvider, ProviderError
+from annotation.workflow.content import select_source_refs
+from annotation.workflow.models import (
+    BlueprintDraft,
+    BlueprintDraftUnit,
+    ContentDraft,
+    ContentReflectionState,
+    DocumentDraft,
+    WorkflowState,
 )
-from annotation.prompt_loader import load_prompt
-from annotation.workflow.content import build_context_pack, render_context_pack, select_source_refs, write_content_run_artifact
 
-
-class BlueprintDraftUnit(BaseModel):
-    title: str
-    kind: str = "concept"
-    learning_objectives: list[str] = Field(default_factory=list)
-    prerequisites: list[str] = Field(default_factory=list)
-    teaching_materials: list[str] = Field(default_factory=list)
-    source_refs: list[str] = Field(default_factory=list)
-
-
-class BlueprintDraft(BaseModel):
-    title: str
-    knowledge_units: list[BlueprintDraftUnit] = Field(default_factory=list)
-
-
-class DocumentDraft(BaseModel):
-    title: str
-    section_title: str
-    explanation: str
-    formula_latex: str = r"\lim_{x \to a} f(x)=L"
-    quiz_question: str
-    quiz_options: list[str] = Field(default_factory=list)
-    quiz_answer: str
-    quiz_explanation: str
-    source_refs: list[str] = Field(default_factory=list)
-
-    @field_validator("quiz_answer", mode="before")
-    @classmethod
-    def coerce_answer(cls, value: Any) -> str:
-        return str(value)
-
-    @field_validator("source_refs", mode="before")
-    @classmethod
-    def coerce_source_refs(cls, value: Any) -> list[str]:
-        if value is None:
-            return []
-        if isinstance(value, str):
-            return [value]
-        if isinstance(value, list):
-            return [str(item) for item in value]
-        return [str(value)]
-
-
-class ContentDraft(BaseModel):
-    """Small structured response for one T-006 task."""
-
-    title: str
-    content: str
-    material_role: str = "explanation"
-    formula_latex: str | None = None
-    teaching_material: str | None = None
-    source_refs: list[str] = Field(default_factory=list)
-
-    @field_validator("source_refs", mode="before")
-    @classmethod
-    def coerce_source_refs(cls, value: Any) -> list[str]:
-        if value is None:
-            return []
-        if isinstance(value, str):
-            return [value]
-        if isinstance(value, list):
-            return [str(item) for item in value]
-        return [str(value)]
-
-
-class WorkflowState(TypedDict, total=False):
-    run_id: str
-    pdf_path: str
-    source_document: SourceDocument
-    source_blocks: list[SourceBlock]
-    source_refs: list[str]
-    blueprint: LearningBlueprint
-    blueprint_check: BlueprintCheckResult
-    content_tasks: list[ContentTask]
-    context_packs: list[ContextPack]
-    content_artifacts: list[ContentArtifact]
-    content_artifact_checks: dict[str, str]
-    content_artifact_path: str
-    document: LearningDocument
-    review_report: ReviewReport
-    review_report_path: str
-    provider_metadata: dict[str, Any]
-    errors: list[str]
-    warnings: list[str]
-
+from annotation.workflow.content_support import (
+    _blocked_content_artifact,
+    _content_artifact_from_draft,
+    _content_hard_check,
+    _content_issue,
+    _content_loop_summary,
+    _critic_review_issues,
+    _dedupe_review_issues,
+    _focused_teaching_material,
+    _formula_format_issues,
+    _is_focused_unit,
+    _lossless_refs,
+    _markdown_formula_format_issues,
+    _merge_messages,
+    _mock_content_critique,
+    _mock_content_draft,
+    _normalize_refs,
+    _plan_content_tasks,
+    _teaching_material_artifact,
+    _unescaped_token_count,
+    _unit_context,
+)
 
 def _default_pdf() -> Path:
     return first_book_pdf()
 
 
-def _source_context(blocks: list[SourceBlock], limit: int = 35) -> str:
+def _source_context(blocks: list[SourceBlock], limit: int | None = None) -> str:
+    """Render non-empty textbook blocks for the blueprint model input.
+
+    The blueprint stage receives the complete parsed chapter by default.  A
+    caller may still provide a limit for targeted fixtures or experiments.
+    """
+    non_empty = [block for block in blocks if block.text.strip()]
+    selected = non_empty if limit is None else non_empty[:limit]
     return "\n".join(
         f"[{block.source_ref}] {re.sub(r'\\s+', ' ', block.text).strip()[:500]}"
-        for block in blocks[:limit]
-        if block.text.strip()
+        for block in selected
     )
 
 
@@ -275,57 +221,112 @@ def _review_report_for(document: LearningDocument, state: WorkflowState) -> Revi
 
     issues = list(document.issues)
     valid_refs = set(state.get("source_refs", []))
+    source_document = state.get("source_document")
     checks: dict[str, str] = {
         "document_structure": "passed" if document.sections and any(section.children for section in document.sections) else "blocking",
         "source_traceability": "passed" if document.source_refs and set(document.source_refs).issubset(valid_refs) else "blocking",
     }
+    # Parsed source artifacts are intentionally draft until a human confirms
+    # the extraction.  Keep that distinction visible in the review artifact;
+    # it must not be silently treated as an approved textbook source.
+    source_status = getattr(source_document, "status", None)
+    if source_status == "draft":
+        checks["source_artifact_status"] = "warning"
+        issues.append(ReviewIssue(
+            issue_id="review-source-artifact-draft",
+            category="source",
+            severity="warning",
+            layer="fact",
+            message="教材来源 artifact 仍处于 draft，尚未完成人工确认；当前内容仅可作为待核实预览。",
+            target_id=getattr(source_document, "artifact_id", None),
+            source_refs=list(getattr(source_document, "source_refs", []) or []),
+            suggested_action="抽样核对页码、文本和公式候选后，再将来源标记为已确认。",
+        ))
+    elif source_status in {"accepted", "published"}:
+        checks["source_artifact_status"] = "passed"
+    else:
+        checks["source_artifact_status"] = "warning"
     nodes = [node for section in document.sections for node in section.children]
     quiz_nodes = [node for node in nodes if getattr(node, "type", None) == "quiz"]
-    checks["learning_activity"] = "passed" if quiz_nodes else "warning"
-    if not quiz_nodes:
+    quiz_coverage = state.get("quiz_coverage_report")
+    coverage_status = str(getattr(quiz_coverage, "status", "")) if quiz_coverage is not None else ""
+    # An empty quiz set is a valid agent decision under the adaptive policy.
+    # A missing coverage report still indicates a legacy/fallback document
+    # whose learning activity has not been checked.
+    checks["learning_activity"] = "passed" if quiz_nodes or coverage_status == "passed" else "warning"
+    if quiz_coverage is not None:
+        checks["quiz_coverage"] = coverage_status
+        checks["quiz_question_count"] = "passed" if coverage_status == "passed" else "blocking"
+        existing_issue_ids = {issue.issue_id for issue in issues}
+        for coverage_issue in list(getattr(quiz_coverage, "issues", []) or []):
+            if coverage_issue.issue_id not in existing_issue_ids:
+                issues.append(coverage_issue)
+                existing_issue_ids.add(coverage_issue.issue_id)
+    if quiz_coverage is None and not quiz_nodes:
         issues.append(ReviewIssue(
             issue_id="review-missing-learning-activity",
             category="coverage",
             severity="warning",
             layer="structure",
-            message="文档当前没有可交互的练习；T-007 已后置，发布前应补齐与知识单元对应的测验。",
+            message="文档当前没有可交互练习，且没有题目覆盖报告。",
             target_id=document.document_id,
-            suggested_action="补充可追溯题目、答案和解析后重新审核。",
+            suggested_action="如学习目标需要练习，再由 Agent 根据教材证据生成题目并重新审核。",
         ))
     malformed_quizzes = [
         getattr(node, "id", "unknown")
         for node in quiz_nodes
-        if len(getattr(node, "options", []) or []) < 2 or getattr(node, "answer", None) not in (getattr(node, "options", []) or [])
+        if (
+            not str(getattr(node, "question", "") or "").strip()
+            or len(getattr(node, "options", []) or []) < 2
+            or len(set(getattr(node, "options", []) or [])) != len(getattr(node, "options", []) or [])
+            or getattr(node, "answer", None) not in (getattr(node, "options", []) or [])
+            or (getattr(node, "options", []) or []).count(getattr(node, "answer", None)) != 1
+            or not str(getattr(node, "explanation", "") or "").strip()
+        )
     ]
-    if malformed_quizzes:
+    if malformed_quizzes or (quiz_coverage is not None and getattr(quiz_coverage, "status", "blocked") == "blocked"):
         checks["quiz_integrity"] = "blocking"
-        issues.append(ReviewIssue(
-            issue_id="review-invalid-quiz",
-            category="logic",
-            severity="blocking",
-            layer="structure",
-            message=f"测验节点的选项或答案不完整：{', '.join(malformed_quizzes)}。",
-            target_id=document.document_id,
-            suggested_action="确认答案属于选项，并补齐至少两个可选项。",
-        ))
+        if malformed_quizzes:
+            issues.append(ReviewIssue(
+                issue_id="review-invalid-quiz",
+                category="logic",
+                severity="blocking",
+                layer="structure",
+                message=f"测验节点的题干、选项、答案或解析不完整：{', '.join(malformed_quizzes)}。",
+                target_id=document.document_id,
+                suggested_action="确认答案属于选项，并补齐至少两个可选项。",
+            ))
     else:
-        checks["quiz_integrity"] = "passed" if quiz_nodes else "warning"
+        checks["quiz_integrity"] = "passed" if quiz_nodes or coverage_status == "passed" else "warning"
     malformed_formulas = [
         getattr(node, "id", "unknown")
         for node in nodes
         if getattr(node, "type", None) == "formula" and not str(getattr(node, "latex", "")).strip()
     ]
-    if malformed_formulas:
+    formula_format_issues = _formula_format_issues(nodes)
+    checks["formula_format"] = "blocking" if formula_format_issues else "passed"
+    if malformed_formulas or formula_format_issues:
         checks["formula_integrity"] = "blocking"
-        issues.append(ReviewIssue(
-            issue_id="review-empty-formula",
-            category="formula",
-            severity="blocking",
-            layer="structure",
-            message=f"公式节点缺少 LaTeX 内容：{', '.join(malformed_formulas)}。",
-            target_id=document.document_id,
-            suggested_action="补充公式或将该节点退回内容生成阶段。",
-        ))
+        if malformed_formulas:
+            issues.append(ReviewIssue(
+                issue_id="review-empty-formula",
+                category="formula",
+                severity="blocking",
+                layer="structure",
+                message=f"公式节点缺少 LaTeX 内容：{', '.join(malformed_formulas)}。",
+                target_id=document.document_id,
+                suggested_action="补充原始 LaTeX 公式或将该节点退回内容生成阶段。",
+            ))
+        if formula_format_issues:
+            issues.append(ReviewIssue(
+                issue_id="review-invalid-formula-format",
+                category="formula",
+                severity="blocking",
+                layer="structure",
+                message="；".join(formula_format_issues),
+                target_id=document.document_id,
+                suggested_action="正文公式使用成对的 $...$ 或 $$...$$ 定界符；FormulaNode 的 formula_latex 保持为不带定界符的原始 KaTeX LaTeX，并检查花括号是否配对。",
+            ))
     else:
         checks["formula_integrity"] = "passed"
     invalid_node_refs = []
@@ -386,164 +387,11 @@ def _review_report_for(document: LearningDocument, state: WorkflowState) -> Revi
         recommendations=(
             ["逐条核对事实风险和教材公式；审核结论仅表示值得进一步核查。"]
             if fact_risk else []
-        ) + (["补齐测验覆盖并重新运行审核。"] if not quiz_nodes else []),
+        ) + (["如学习目标需要练习，再由 Agent 根据教材证据生成题目并重新审核。"] if quiz_coverage is None and not quiz_nodes else []),
     )
     path = _write_review_report(report)
     report.artifact_path = str(path.resolve())
     return report
-
-
-def _merge_messages(existing: list[str] | None, new: list[str]) -> list[str]:
-    return list(dict.fromkeys([*(existing or []), *new]))
-
-
-def _normalize_refs(values: list[str], valid_refs: set[str]) -> list[str]:
-    normalized: list[str] = []
-    for value in values:
-        candidate = value.strip().strip("[]")
-        if candidate in valid_refs and candidate not in normalized:
-            normalized.append(candidate)
-    return normalized
-
-
-def _plan_content_tasks(run_id: str, blueprint: LearningBlueprint) -> list[ContentTask]:
-    tasks: list[ContentTask] = []
-    blueprint_version = f"{blueprint.artifact_id}:v{blueprint.version}"
-    for index, unit in enumerate(blueprint.knowledge_units, start=1):
-        criteria = [
-            "覆盖该知识单元的学习目标",
-            "只使用 ContextPack 中可定位的教材证据",
-            "说明与直接前置知识的必要衔接" if unit.prerequisites else "使用适合初学者的分步解释",
-        ]
-        tasks.append(ContentTask(
-            task_id=f"task-{run_id}-{index:03d}",
-            run_id=run_id,
-            blueprint_version=blueprint_version,
-            knowledge_unit_id=unit.artifact_id,
-            source_refs=list(unit.source_refs),
-            acceptance_criteria=criteria,
-        ))
-    return tasks
-
-
-def _mock_content_draft(unit: KnowledgeUnit, pack: ContextPack) -> ContentDraft:
-    refs = pack.source_refs[:3]
-    evidence = " ".join(excerpt.text for excerpt in pack.excerpts[:2])
-    prerequisite_note = (
-        f"本单元建立在“{'、'.join(unit.prerequisites)}”之上。"
-        if unit.prerequisites else ""
-    )
-    return ContentDraft(
-        title=unit.title,
-        content=(
-            f"本节围绕“{unit.title}”展开。{prerequisite_note}"
-            f"学习目标是：{'；'.join(unit.learning_objectives) or '掌握本单元的基本含义和用法'}。"
-            f"教材证据摘录：{evidence or '当前没有可用的教材摘录，需要人工审核。'}"
-        ),
-        material_role="explanation",
-        source_refs=refs,
-        teaching_material=(
-            f"可配合教学材料“{'、'.join(unit.teaching_materials)}”进行练习或复述。"
-            if unit.teaching_materials else None
-        ),
-    )
-
-
-def _content_artifact_from_draft(
-    *,
-    draft: ContentDraft,
-    task: ContentTask,
-    unit: KnowledgeUnit,
-    pack: ContextPack,
-    run_id: str,
-    provider_name: str,
-    ) -> ContentArtifact:
-    valid_refs = set(pack.source_refs)
-    refs = _normalize_refs(draft.source_refs, valid_refs) or list(pack.source_refs)
-    role = draft.material_role if draft.material_role in {"explanation", "example", "proof", "bridge", "supplement"} else "explanation"
-    content = draft.content.strip()
-    if draft.formula_latex:
-        content = f"{content}\n\n公式：$${draft.formula_latex}$$"
-    return ContentArtifact(
-        artifact_id=f"content-{uuid.uuid4().hex[:12]}",
-        run_id=run_id,
-        version=1,
-        status="draft",
-        source_refs=refs,
-        created_by=f"provider:{provider_name}",
-        content_type="explanation" if role in {"explanation", "bridge", "proof", "supplement"} else "example",
-        knowledge_unit_ids=[unit.artifact_id],
-        title=draft.title or unit.title,
-        material_role=role,
-        task_id=task.task_id,
-        context_pack_id=pack.context_pack_id,
-        prompt_version="generate_content_artifact:v1",
-        metadata={
-            "learning_objectives": list(unit.learning_objectives),
-            "teaching_materials": list(unit.teaching_materials),
-            "formula_latex": draft.formula_latex,
-            "omitted_source_refs": list(pack.omitted_source_refs),
-            "retrieval_strategy": list(pack.retrieval_strategy),
-            "source_snapshot": pack.source_snapshot,
-        },
-        content=content,
-    )
-
-
-def _teaching_material_artifact(
-    *,
-    draft: ContentDraft,
-    parent: ContentArtifact,
-    task: ContentTask,
-    unit: KnowledgeUnit,
-    pack: ContextPack,
-    run_id: str,
-    provider_name: str,
-) -> ContentArtifact:
-    """Create a separately traceable teaching-material artifact."""
-
-    role = "example" if unit.kind == "example" else "proof" if unit.kind == "theorem" else "bridge"
-    material = (draft.teaching_material or "").strip() or (
-        f"教学材料建议：围绕“{unit.title}”使用教材中的“{'、'.join(unit.teaching_materials)}”进行讲解、复述或练习。"
-    )
-    return ContentArtifact(
-        artifact_id=f"content-{uuid.uuid4().hex[:12]}",
-        run_id=run_id,
-        version=1,
-        status="accepted" if pack.source_refs else "blocked",
-        source_refs=list(pack.source_refs),
-        created_by=f"provider:{provider_name}",
-        content_type="example" if role == "example" else "explanation",
-        knowledge_unit_ids=[unit.artifact_id],
-        title=f"{unit.title}：教学材料",
-        material_role=role,
-        task_id=task.task_id,
-        context_pack_id=pack.context_pack_id,
-        prompt_version="generate_content_artifact:v1",
-        parent_artifact_id=parent.artifact_id,
-        metadata={
-            "teaching_materials": list(unit.teaching_materials),
-            "material_kind": role,
-            "source_snapshot": pack.source_snapshot,
-        },
-        content=material,
-    )
-
-
-def _unit_context(unit: KnowledgeUnit) -> str:
-    return json.dumps(
-        {
-            "knowledge_unit_id": unit.artifact_id,
-            "title": unit.title,
-            "kind": unit.kind,
-            "learning_objectives": unit.learning_objectives,
-            "prerequisites": unit.prerequisites,
-            "teaching_materials": unit.teaching_materials,
-            "source_refs": unit.source_refs,
-        },
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
 
 
 def _assemble_document_from_artifacts(
@@ -551,11 +399,16 @@ def _assemble_document_from_artifacts(
     blueprint: LearningBlueprint,
     artifacts: list[ContentArtifact],
     provider_name: str,
+    quiz_artifacts: list[QuizArtifact] | None = None,
 ) -> LearningDocument:
     by_unit: dict[str, list[ContentArtifact]] = {}
     for artifact in artifacts:
         for unit_id in artifact.knowledge_unit_ids:
             by_unit.setdefault(unit_id, []).append(artifact)
+    quiz_by_unit: dict[str, list[QuizArtifact]] = {}
+    for artifact in quiz_artifacts or []:
+        for unit_id in artifact.knowledge_unit_ids:
+            quiz_by_unit.setdefault(unit_id, []).append(artifact)
     sections: list[DocumentSection] = []
     units = {unit.artifact_id: unit for unit in blueprint.knowledge_units}
     for index, unit in enumerate(blueprint.knowledge_units, start=1):
@@ -576,6 +429,7 @@ def _assemble_document_from_artifacts(
                     tone="info",
                     title=artifact.title or "教学材料",
                     content=artifact.content,
+                    source_refs=list(artifact.source_refs),
                 ))
             else:
                 children.append(MarkdownNode(id=f"{artifact.artifact_id}-markdown", content=artifact.content, source_refs=list(artifact.source_refs)))
@@ -589,9 +443,27 @@ def _assemble_document_from_artifacts(
                 title="学习目标",
                 content="；".join(unit.learning_objectives),
             ))
+        # Quiz artifacts are independently checked before assembly.  Keep the
+        # learner-facing projection deliberately small and preserve the exact
+        # item/source identity in the artifact rather than adding hidden fields
+        # to the renderer contract.
+        for quiz_artifact in quiz_by_unit.get(unit.artifact_id, []):
+            for question in quiz_artifact.questions:
+                children.append(QuizNode(
+                    id=question.question_id,
+                    question=question.question,
+                    options=list(question.options),
+                    answer=question.answer,
+                    explanation=question.explanation,
+                    source_refs=list(question.source_refs or quiz_artifact.source_refs),
+                ))
         sections.append(DocumentSection(id=f"section-{index:03d}", title=unit.title, children=children))
     refs: list[str] = []
     for artifact in artifacts:
+        for ref in artifact.source_refs:
+            if ref not in refs:
+                refs.append(ref)
+    for artifact in quiz_artifacts or []:
         for ref in artifact.source_refs:
             if ref not in refs:
                 refs.append(ref)
@@ -609,247 +481,130 @@ def _assemble_document_from_artifacts(
     )
 
 
-def build_minimal_graph(provider: ModelProvider | None = None):
-    model_provider = provider or MockProvider()
+def _blueprint_from_draft(
+    *,
+    draft: BlueprintDraft,
+    state: WorkflowState,
+    provider_name: str,
+    fixture_adaptation: bool,
+) -> tuple[LearningBlueprint, bool]:
+    """Convert a validated model draft without repairing real-provider data."""
 
-    def ingest(state: WorkflowState) -> dict[str, Any]:
-        run_id = state.get("run_id", f"run-{uuid.uuid4().hex[:10]}")
-        pdf_path = Path(state.get("pdf_path") or _default_pdf())
-        source_document, blocks = parse_pdf(pdf_path, run_id=run_id)
-        warnings = extraction_warnings(blocks)
-        return {"run_id": run_id, "pdf_path": str(pdf_path), "source_document": source_document, "source_blocks": blocks, "source_refs": [block.source_ref for block in blocks], "warnings": warnings}
-
-    def load_or_create_blueprint(state: WorkflowState) -> dict[str, Any]:
-        if state.get("blueprint"):
-            return {}
-        prompt = load_prompt(
-            "load_or_create_blueprint",
-            TEXTBOOK_CONTEXT=_source_context(state["source_blocks"], 12),
-        )
-        try:
-            response = model_provider.generate_structured(StructuredGenerationRequest(prompt=prompt, schema=BlueprintDraft, max_output_tokens=3000, metadata={"agent": "load_or_create_blueprint", "run_id": state["run_id"]}))
-            draft = response.value
-            valid_refs = set(state["source_refs"])
-            ordered_refs = state["source_refs"]
-            units = [KnowledgeUnit(
-                artifact_id=f"ku-{uuid.uuid4().hex[:12]}", run_id=state["run_id"], version=1, status="draft",
-                source_refs=(
-                    _normalize_refs(unit.source_refs, valid_refs)
-                    or select_source_refs(
-                        title=unit.title,
-                        learning_objectives=unit.learning_objectives,
-                        teaching_materials=unit.teaching_materials,
-                        blocks=state["source_blocks"],
-                    )
-                    or ordered_refs[:3]
-                ), created_by=f"provider:{response.provider}",
-                title=unit.title, kind=unit.kind if unit.kind in {"concept", "formula", "theorem", "example", "skill"} else "concept",
-                learning_objectives=unit.learning_objectives, prerequisites=unit.prerequisites,
-                teaching_materials=unit.teaching_materials,
-            ) for unit in draft.knowledge_units[:12]]
-            if not units:
-                raise ProviderError("blueprint contains no knowledge units", category="schema")
-            artifact_id = "bp-fixture-001" if response.provider == "mock" else f"bp-{uuid.uuid4().hex[:12]}"
-            blueprint = LearningBlueprint(artifact_id=artifact_id, run_id=state["run_id"], version=1, status="checking", source_refs=ordered_refs, created_by=f"provider:{response.provider}", title=draft.title or state["source_document"].title, knowledge_units=units)
-            check = validate_blueprint(blueprint, valid_source_refs=valid_refs)
-            blueprint.issues = check.issues
-            blueprint.status = "needs_revision" if check.status == "needs_revision" else "accepted"
-            if check.status == "needs_revision":
-                fallback = _fallback_blueprint(state["run_id"], state["source_document"], state["source_blocks"])
-                fallback.issues = check.issues
-                return {
-                    "blueprint": fallback,
-                    "blueprint_check": check,
-                    "provider_metadata": _metadata(response),
-                    "warnings": ["blueprint_quality_gate: generated blueprint needs revision; fallback blueprint used"],
-                }
-            return {"blueprint": blueprint, "blueprint_check": check, "provider_metadata": _metadata(response)}
-        except Exception as exc:
-            fallback = _fallback_blueprint(state["run_id"], state["source_document"], state["source_blocks"])
-            return {"blueprint": fallback, "warnings": [f"blueprint_generation_fallback: {exc}"]}
-
-    def plan_content_tasks(state: WorkflowState) -> dict[str, Any]:
-        return {"content_tasks": _plan_content_tasks(state["run_id"], state["blueprint"])}
-
-    def build_context_packs(state: WorkflowState) -> dict[str, Any]:
-        blueprint = state["blueprint"]
-        units = {unit.artifact_id: unit for unit in blueprint.knowledge_units}
-        capabilities = getattr(model_provider, "capabilities", None)
-        context_window = getattr(capabilities, "context_window", None)
-        packs: list[ContextPack] = []
-        warnings: list[str] = []
-        for task in state.get("content_tasks", []):
-            unit = units.get(task.knowledge_unit_id)
-            if not unit:
-                warnings.append(f"content_task_missing_unit: {task.task_id}")
-                continue
-            pack = build_context_pack(task, unit, blueprint, state["source_blocks"], context_window=context_window)
-            packs.append(pack)
-            if pack.omitted_source_refs:
-                warnings.append(f"context_pack_omitted_sources:{task.task_id}:{','.join(pack.omitted_source_refs)}")
-        return {"context_packs": packs, "warnings": _merge_messages(state.get("warnings"), warnings)}
-
-    def generate_content_artifacts(state: WorkflowState) -> dict[str, Any]:
-        blueprint = state["blueprint"]
-        units = {unit.artifact_id: unit for unit in blueprint.knowledge_units}
-        packs = {pack.task_id: pack for pack in state.get("context_packs", [])}
-        artifacts: list[ContentArtifact] = []
-        checks: dict[str, str] = {}
-        warnings: list[str] = []
-        provider_metadata: dict[str, Any] = dict(state.get("provider_metadata", {}))
-        for task in state.get("content_tasks", []):
-            task.status = "generating"
-            unit = units.get(task.knowledge_unit_id)
-            pack = packs.get(task.task_id)
-            if not unit or not pack:
-                checks[task.task_id] = "blocked"
-                task.status = "blocked"
-                warnings.append(f"content_task_blocked:{task.task_id}")
-                continue
-            if pack.omitted_source_refs:
-                checks[task.task_id] = "blocked"
-                task.status = "blocked"
-                warnings.append(f"content_task_evidence_over_budget:{task.task_id}:{','.join(pack.omitted_source_refs)}")
-                continue
-            prompt = load_prompt(
-                "generate_content_artifact",
-                KNOWLEDGE_UNIT_CONTEXT=_unit_context(unit),
-                CONTEXT_PACK=render_context_pack(pack),
-                ACCEPTANCE_CRITERIA=json.dumps(task.acceptance_criteria, ensure_ascii=False),
-            )
-            try:
-                if getattr(model_provider, "provider", "") == "mock":
-                    draft = _mock_content_draft(unit, pack)
-                    response_metadata = {"provider": "mock", "model": getattr(model_provider, "model", "fixture-model"), "base_url": None, "config_version": getattr(model_provider, "config_version", "mock-v1"), "duration_ms": 0, "usage": {}}
-                else:
-                    provider_limit = getattr(getattr(model_provider, "capabilities", None), "max_output_tokens", None)
-                    response = model_provider.generate_structured(StructuredGenerationRequest(
-                        prompt=prompt,
-                        schema=ContentDraft,
-                        max_output_tokens=min(2200, provider_limit) if provider_limit else 2200,
-                        metadata={"agent": "generate_content_artifact", "run_id": state["run_id"], "task_id": task.task_id, "context_pack_id": pack.context_pack_id},
-                    ))
-                    draft = response.value
-                    response_metadata = _metadata(response)
-                artifact = _content_artifact_from_draft(draft=draft, task=task, unit=unit, pack=pack, run_id=state["run_id"], provider_name=response_metadata["provider"])
-                artifact.status = "accepted" if artifact.content and artifact.source_refs else "needs_revision"
-                if not artifact.source_refs:
-                    artifact.issues.append(ReviewIssue(issue_id=f"content-missing-sources-{task.task_id}", category="source", severity="blocking", message="内容 artifact 没有可回溯的来源。", target_id=artifact.artifact_id))
-                    artifact.status = "blocked"
-                artifacts.append(artifact)
-                if unit.teaching_materials:
-                    artifacts.append(_teaching_material_artifact(
-                        draft=draft,
-                        parent=artifact,
-                        task=task,
-                        unit=unit,
-                        pack=pack,
-                        run_id=state["run_id"],
-                        provider_name=response_metadata["provider"],
-                    ))
-                checks[task.task_id] = artifact.status
-                task.status = artifact.status
-                provider_metadata = response_metadata
-            except Exception as exc:
-                checks[task.task_id] = "blocked"
-                task.status = "blocked"
-                warnings.append(f"content_generation_fallback:{task.task_id}:{exc}")
-        artifact_path = write_content_run_artifact(
+    # Re-validate here even when a test provider hands us a model instance.
+    # This keeps the production boundary strict for enum values such as kind.
+    draft = BlueprintDraft.model_validate(draft.model_dump(mode="python"))
+    valid_refs = set(state["source_refs"])
+    ordered_refs = list(state["source_refs"])
+    units: list[KnowledgeUnit] = []
+    adapted = False
+    used_unit_ids: set[str] = set()
+    for index, unit in enumerate(draft.knowledge_units[:12], start=1):
+        if fixture_adaptation:
+            refs = _normalize_refs(unit.source_refs, valid_refs)
+            if not refs:
+                refs = select_source_refs(
+                    title=unit.title,
+                    learning_objectives=unit.learning_objectives,
+                    teaching_materials=unit.teaching_materials,
+                    blocks=state["source_blocks"],
+                ) or ordered_refs[:3]
+                adapted = True
+        else:
+            refs = _lossless_refs(unit.source_refs)
+        requested_id = (unit.knowledge_unit_id or "").strip()
+        stable_id = requested_id or f"ku-{hashlib.sha256(unit.title.strip().encode('utf-8')).hexdigest()[:12]}"
+        if stable_id in used_unit_ids:
+            stable_id = f"{stable_id}-{index:02d}"
+        used_unit_ids.add(stable_id)
+        units.append(KnowledgeUnit(
+            artifact_id=stable_id,
             run_id=state["run_id"],
-            blueprint_version=f"{blueprint.artifact_id}:v{blueprint.version}",
-            tasks=state.get("content_tasks", []),
-            context_packs=state.get("context_packs", []),
-            artifacts=artifacts,
-            checks=checks,
-            provider_metadata=provider_metadata,
-            root=STORAGE_DIR / "artifacts" / "content",
-        )
-        return {"content_tasks": state.get("content_tasks", []), "content_artifacts": artifacts, "content_artifact_checks": checks, "content_artifact_path": str(artifact_path.resolve()), "provider_metadata": provider_metadata, "warnings": _merge_messages(state.get("warnings"), warnings)}
-
-    def assemble_document_ir(state: WorkflowState) -> dict[str, Any]:
-        artifacts = [artifact for artifact in state.get("content_artifacts", []) if artifact.status == "accepted"]
-        if not artifacts:
-            return {"document": _fallback_document(state["run_id"], state["blueprint"], state["source_document"], state["source_blocks"], model_provider.provider)}
-        # Keep the rich offline fixture as a renderer regression baseline while
-        # exposing the new per-unit artifacts in workflow state.  Real providers
-        # are assembled directly from the accepted T-006 artifacts.
-        if model_provider.provider == "mock":
-            refs = []
-            for artifact in artifacts:
-                refs.extend(ref for ref in artifact.source_refs if ref not in refs)
-            return {"document": _mock_document_from_fixture(state["run_id"], state["blueprint"], refs)}
-        return {"document": _assemble_document_from_artifacts(state["run_id"], state["blueprint"], artifacts, model_provider.provider)}
-
-    def validate_document_ir(state: WorkflowState) -> dict[str, Any]:
-        try:
-            LearningDocument.model_validate(state["document"].model_dump())
-            return {}
-        except Exception as exc:
-            return {"errors": [f"document_validation: {exc}"]}
-
-    def review(state: WorkflowState) -> dict[str, Any]:
-        document = state["document"]
-        issues = list(document.issues)
-        valid_refs = set(state["source_refs"])
-        tasks = state.get("content_tasks", [])
-        artifacts = state.get("content_artifacts", [])
-        accepted_task_ids = {artifact.task_id for artifact in artifacts if artifact.status == "accepted" and artifact.task_id}
-        if tasks and len(accepted_task_ids) != len(tasks):
-            missing = [task.task_id for task in tasks if task.task_id not in accepted_task_ids]
-            issues.append(ReviewIssue(issue_id="review-content-task-coverage", category="coverage", severity="blocking", message=f"有内容任务未产出可接受 artifact：{', '.join(missing)}", target_id=document.document_id))
-        for artifact in artifacts:
-            if artifact.status == "blocked":
-                issues.append(ReviewIssue(issue_id=f"review-blocked-content-{artifact.artifact_id}", category="coverage", severity="blocking", message="内容 artifact 被阻塞，不能进入发布文档。", target_id=artifact.artifact_id))
-            if not set(artifact.source_refs).issubset(valid_refs):
-                issues.append(ReviewIssue(issue_id=f"review-invalid-content-sources-{artifact.artifact_id}", category="source", severity="blocking", message="内容 artifact 包含无法回溯到本次教材导入的来源引用。", target_id=artifact.artifact_id))
-        if not document.source_refs:
-            issues.append(ReviewIssue(issue_id="review-missing-sources", category="source", severity="blocking", message="文档缺少教材来源引用。", target_id=document.document_id))
-        elif not set(document.source_refs).issubset(valid_refs):
-            issues.append(ReviewIssue(issue_id="review-invalid-sources", category="source", severity="blocking", message="文档包含无法回溯到本次教材导入的来源引用。", target_id=document.document_id))
-        if not document.sections or not any(section.children for section in document.sections):
-            issues.append(ReviewIssue(issue_id="review-empty-document", category="coverage", severity="blocking", message="文档没有可呈现内容。", target_id=document.document_id))
-        if state.get("warnings"):
-            issues.append(ReviewIssue(
-                issue_id="review-generation-warning",
-                category="uncertainty",
-                severity="warning",
-                layer="fact",
-                message="；".join(state["warnings"]),
-                target_id=document.document_id,
-                suggested_action="对涉及的教材片段、公式候选和生成内容进行人工抽样复核。",
-            ))
-        document.issues = issues
-        document.status = "blocked" if any(issue.severity == "blocking" for issue in issues) else "accepted"
-        report = _review_report_for(document, {**state, "source_refs": list(valid_refs)})
-        document.review_report_id = report.report_id
-        return {"document": document, "review_report": report, "review_report_path": report.artifact_path or ""}
-
-    def assemble(state: WorkflowState) -> dict[str, Any]:
-        document = state["document"]
-        if not state.get("errors") and document.status == "accepted":
-            document.status = "published"
-        return {"document": document}
-
-    graph = StateGraph(WorkflowState)
-    for name, node in {"ingest": ingest, "load_or_create_blueprint": load_or_create_blueprint, "plan_content_tasks": plan_content_tasks, "build_context_packs": build_context_packs, "generate_content_artifacts": generate_content_artifacts, "assemble_document_ir": assemble_document_ir, "validate_document_ir": validate_document_ir, "review": review, "assemble": assemble}.items():
-        graph.add_node(name, node)
-    graph.add_edge(START, "ingest")
-    graph.add_edge("ingest", "load_or_create_blueprint")
-    graph.add_edge("load_or_create_blueprint", "plan_content_tasks")
-    graph.add_edge("plan_content_tasks", "build_context_packs")
-    graph.add_edge("build_context_packs", "generate_content_artifacts")
-    graph.add_edge("generate_content_artifacts", "assemble_document_ir")
-    graph.add_edge("assemble_document_ir", "validate_document_ir")
-    graph.add_edge("validate_document_ir", "review")
-    graph.add_edge("review", "assemble")
-    graph.add_edge("assemble", END)
-    return graph.compile()
+            version=1,
+            status="draft",
+            source_refs=refs,
+            created_by=f"provider:{provider_name}",
+            title=unit.title,
+            kind=unit.kind,
+            learning_objectives=list(unit.learning_objectives),
+            prerequisites=list(unit.prerequisites),
+            related_unit_ids=list(unit.related_unit_ids),
+            teaching_materials=list(unit.teaching_materials),
+        ))
+    if not units:
+        raise ProviderError("blueprint contains no knowledge units", category="schema")
+    artifact_id = "bp-fixture-001" if fixture_adaptation else f"bp-{uuid.uuid4().hex[:12]}"
+    blueprint = LearningBlueprint(
+        artifact_id=artifact_id,
+        run_id=state["run_id"],
+        version=1,
+        status="checking",
+        source_refs=ordered_refs,
+        created_by=f"provider:{provider_name}",
+        title=draft.title or state["source_document"].title,
+        knowledge_units=units,
+    )
+    return blueprint, adapted
 
 
-def run_minimal_workflow(*, provider: ModelProvider | None = None, run_id: str = "run-demo-001", blueprint: LearningBlueprint | None = None, pdf_path: str | Path | None = None) -> WorkflowState:
-    initial: WorkflowState = {"run_id": run_id}
-    if blueprint:
-        initial["blueprint"] = blueprint
-    if pdf_path:
-        initial["pdf_path"] = str(pdf_path)
-    return build_minimal_graph(provider).invoke(initial)
+def _provider_metadata(provider: ModelProvider) -> dict[str, Any]:
+    return {
+        "provider": getattr(provider, "provider", "unknown"),
+        "model": getattr(provider, "model", "unknown"),
+        "base_url": getattr(provider, "base_url", None),
+        "config_version": getattr(provider, "config_version", "unknown"),
+    }
+
+
+
+def build_content_reflection_subgraph(
+    provider: ModelProvider,
+    *,
+    max_attempts: int,
+):
+    """Build the bounded per-unit explanation reflection subgraph."""
+
+    from annotation.workflow.content_reflection import build_content_reflection_subgraph as build
+
+    return build(provider, max_attempts=max_attempts)
+
+
+def build_minimal_graph(
+    provider: ModelProvider | None = None,
+    *,
+    blueprint_max_attempts: int | None = None,
+    content_reflection_max_attempts: int | None = None,
+):
+    """Build the top-level workflow graph while retaining the legacy import path."""
+
+    from annotation.workflow.runtime import build_minimal_graph as build
+
+    return build(
+        provider,
+        blueprint_max_attempts=blueprint_max_attempts,
+        content_reflection_max_attempts=content_reflection_max_attempts,
+    )
+
+
+def run_minimal_workflow(
+    *,
+    provider: ModelProvider | None = None,
+    run_id: str = "run-demo-001",
+    blueprint: LearningBlueprint | None = None,
+    pdf_path: str | Path | None = None,
+    document_id: str | None = None,
+    blueprint_max_attempts: int | None = None,
+    content_reflection_max_attempts: int | None = None,
+) -> WorkflowState:
+    """Run the top-level workflow while retaining the legacy import path."""
+
+    from annotation.workflow.runtime import run_minimal_workflow as run
+
+    return run(
+        provider=provider,
+        run_id=run_id,
+        blueprint=blueprint,
+        pdf_path=pdf_path,
+        document_id=document_id,
+        blueprint_max_attempts=blueprint_max_attempts,
+        content_reflection_max_attempts=content_reflection_max_attempts,
+    )

@@ -5,4 +5,11 @@
 :root { font-family: Inter, system-ui, sans-serif; color: #1e293b; background: #f8fafc; }
 body { margin: 0; min-width: 320px; }
 button:focus-visible { outline: 3px solid #e76f51; outline-offset: 2px; }
+.annotation-markdown .katex,
+.annotation-rich-text .katex,
+.annotation-rich-text-inline .katex { font-size: 1.05em; }
+.annotation-inline-formula { white-space: nowrap; }
+.annotation-inline-formula-display { display: block; margin: 1rem 0; overflow-x: auto; text-align: center; white-space: normal; }
+.annotation-rich-text > :first-child { margin-top: 0; }
+.annotation-rich-text > :last-child { margin-bottom: 0; }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }

@@ -62,13 +62,14 @@ class _OpenAIBase(Generic[T]):
                     timeout=timeout,
                     max_retries=max_retries,
                 )
-            except ValueError as exc:
+            except (ValueError, ImportError) as exc:
                 # Some local environments expose a ``socks5h://`` proxy while
                 # httpx is installed without SOCKS extras.  Construction of a
                 # provider (including capability checks and tests) should not
                 # fail before the first network call; use a non-environment
                 # client as a deterministic fallback.
-                if "Unknown scheme for proxy URL" not in str(exc):
+                message = str(exc).lower()
+                if "unknown scheme for proxy url" not in message and "socksio" not in message:
                     raise
                 self._client = OpenAI(
                     api_key=api_key or "dummy-key",
@@ -171,6 +172,7 @@ class _OpenAIBase(Generic[T]):
                 error = ProviderError(
                     f"structured response validation failed: {exc}",
                     category="schema",
+                    raw_output=raw_text,
                 )
                 log_model_call(
                     provider=self.provider, model=self.model, base_url=self.base_url,

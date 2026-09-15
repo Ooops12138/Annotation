@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+import json
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any
 
 from pydantic import BaseModel
@@ -20,6 +21,10 @@ from .models import (
 
 class MockProvider:
     provider = "mock"
+    # Only this built-in fixture is allowed to adapt empty source refs for
+    # deterministic offline regression tests.  Real or sequence providers
+    # must preserve the model output exactly.
+    fixture_adaptation = True
 
     def __init__(
         self,
@@ -66,10 +71,12 @@ class MockProvider:
                 payload = {
                     "title": "实数系与复数系（离线回归）",
                     "knowledge_units": [
-                        {"title": "域公理、序公理与区间", "kind": "concept", "learning_objectives": ["说明实数的代数和有序结构", "区分开区间、闭区间和半开区间"], "teaching_materials": ["公理", "区间定义"], "source_refs": []},
-                        {"title": "整数、有理数与无理数", "kind": "theorem", "learning_objectives": ["解释唯一因数分解的内容", "区分有理数与无理数"], "prerequisites": ["域公理、序公理与区间"], "teaching_materials": ["唯一因数分解定理", "无理数证明"], "source_refs": []},
-                        {"title": "上界、上确界与完全公理", "kind": "formula", "learning_objectives": ["区分最大元与上确界", "理解完全公理的作用"], "prerequisites": ["域公理、序公理与区间"], "teaching_materials": ["上确界定义", "完全公理"], "source_refs": []},
-                        {"title": "复数、复平面与绝对值", "kind": "example", "learning_objectives": ["把复数写成 x+iy", "用复平面解释复数绝对值"], "prerequisites": ["域公理、序公理与区间"], "teaching_materials": ["复平面", "模的计算"], "source_refs": []},
+                        {"knowledge_unit_id": "ku-real-structure", "title": "实数公理与基本性质", "kind": "concept", "learning_objectives": ["说明实数的代数和有序结构", "区分开区间、闭区间和半开区间"], "teaching_materials": ["公理", "区间定义"], "source_refs": [], "related_unit_ids": []},
+                        {"knowledge_unit_id": "ku-supremum", "title": "上确界与完全公理", "kind": "formula", "learning_objectives": ["区分最大元与上确界", "用逼近性质理解上确界", "理解完全公理的作用"], "prerequisites": ["ku-real-structure"], "teaching_materials": ["上确界定义", "完全公理"], "source_refs": [], "related_unit_ids": ["ku-irrational"]},
+                        {"knowledge_unit_id": "ku-integers-rationals", "title": "整数与有理数", "kind": "theorem", "learning_objectives": ["说明整数的基本性质", "解释有理数的表示和稠密性"], "prerequisites": ["ku-real-structure"], "teaching_materials": ["唯一因数分解定理", "有理数表示"], "source_refs": [], "related_unit_ids": ["ku-irrational"]},
+                        {"knowledge_unit_id": "ku-irrational", "title": "无理数", "kind": "theorem", "learning_objectives": ["区分有理数与无理数", "跟做非完全平方数平方根的无理性证明", "根据教材复述 e 的无理性证明"], "prerequisites": ["ku-integers-rationals", "ku-supremum"], "teaching_materials": ["非完全平方数平方根证明", "e 的无理性证明"], "source_refs": [], "related_unit_ids": ["ku-supremum"]},
+                        {"knowledge_unit_id": "ku-absolute-inequality", "title": "绝对值与不等式", "kind": "formula", "learning_objectives": ["解释绝对值的几何意义", "推导三角不等式或柯西-施瓦茨不等式"], "prerequisites": ["ku-real-structure"], "teaching_materials": ["三角不等式", "柯西-施瓦茨不等式"], "source_refs": [], "related_unit_ids": ["ku-complex"]},
+                        {"knowledge_unit_id": "ku-complex", "title": "复数系及其运算", "kind": "example", "learning_objectives": ["把复数写成 x+iy", "计算复数的模和辐角", "用指数形式表达复数并识别主值"], "prerequisites": ["ku-real-structure", "ku-absolute-inequality"], "teaching_materials": ["复平面", "模与辐角", "指数形式和主值"], "source_refs": [], "related_unit_ids": []},
                     ],
                 }
             elif request.schema.__name__ == "DocumentDraft":
@@ -98,6 +105,7 @@ class MockProvider:
             raise ProviderError(
                 f"mock structured payload does not match schema: {exc}",
                 category="schema",
+                raw_output=json.dumps(payload, ensure_ascii=False, default=str),
             ) from exc
         return StructuredGenerationResponse(
             value=value,
@@ -112,3 +120,71 @@ class MockProvider:
     def stream(self, request: GenerationRequest) -> Iterator[ModelEvent]:
         yield ModelEvent(type="token", text=f"Mock response: {request.prompt}")
         yield ModelEvent(type="done")
+
+
+class SequenceProvider(MockProvider):
+    """Deterministic provider for replaying a finite structured-output sequence.
+
+    This is intentionally small and local: it gives loop tests a provider that
+    can emit a blocking candidate, a repaired candidate, or a typed
+    ``ProviderError`` without making a network call.
+    """
+
+    # It deliberately follows the offline MockProvider content path after the
+    # Blueprint sequence is consumed, so loop tests count only Blueprint calls.
+    provider = "mock"
+    fixture_adaptation = False
+
+    def __init__(
+        self,
+        responses: Sequence[Mapping[str, Any] | ProviderError | Exception | Callable[[StructuredGenerationRequest[Any]], Any]],
+        *,
+        model: str = "sequence-fixture",
+        config_version: str = "mock-sequence-v1",
+    ) -> None:
+        super().__init__(model=model, config_version=config_version)
+        # A non-empty marker prevents the Blueprint graph from treating this
+        # explicit sequence as the built-in empty-source fixture.
+        self.structured_payload = {"__sequence_provider__": True}
+        self._responses = list(responses)
+        self.calls: list[StructuredGenerationRequest[Any]] = []
+
+    def generate_structured(
+        self, request: StructuredGenerationRequest[BaseModel]
+    ) -> StructuredGenerationResponse[BaseModel]:
+        self.calls.append(request)
+        if not self._responses:
+            raise ProviderError("sequence provider exhausted", category="sequence")
+        item = self._responses.pop(0)
+        if isinstance(item, BaseException):
+            if isinstance(item, ProviderError):
+                raise item
+            raise ProviderError(str(item), category="sequence") from item
+        if callable(item):
+            item = item(request)
+        if isinstance(item, BaseException):
+            if isinstance(item, ProviderError):
+                raise item
+            raise ProviderError(str(item), category="sequence") from item
+        if isinstance(item, BaseModel):
+            value = request.schema.model_validate(item.model_dump(mode="python"))
+            raw_text = value.model_dump_json()
+        else:
+            raw_text = json.dumps(item, ensure_ascii=False, default=str)
+            try:
+                value = request.schema.model_validate(item)
+            except Exception as exc:
+                raise ProviderError(
+                    f"sequence structured payload does not match schema: {exc}",
+                    category="schema",
+                    raw_output=raw_text,
+                ) from exc
+        return StructuredGenerationResponse(
+            value=value,
+            raw_text=raw_text,
+            provider=self.provider,
+            model=self.model,
+            base_url=self.base_url,
+            config_version=self.config_version,
+            duration_ms=0,
+        )

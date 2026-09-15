@@ -12,7 +12,10 @@ describe('Document IR presentation contract', () => {
 
   it('accepts only complete, typed nodes at the renderer boundary', () => {
     expect(isDocumentNode({ type: 'markdown', id: 'm-1', content: '正文' })).toBe(true)
-    expect(isDocumentNode({ type: 'quiz', id: 'q-1', question: '问题', options: ['A'], answer: 'A', explanation: '解释' })).toBe(true)
+    expect(isDocumentNode({ type: 'quiz', id: 'q-1', question: '问题', options: ['A', 'B'], answer: 'A', explanation: '解释' })).toBe(true)
+    expect(isDocumentNode({ type: 'quiz', id: 'q-single', question: '问题', options: ['A'], answer: 'A', explanation: '解释' })).toBe(false)
+    expect(isDocumentNode({ type: 'quiz', id: 'q-duplicate', question: '问题', options: ['A', 'A'], answer: 'A', explanation: '解释' })).toBe(false)
+    expect(isDocumentNode({ type: 'quiz', id: 'q-blank-option', question: '问题', options: ['A', ' '], answer: 'A', explanation: '解释' })).toBe(false)
     expect(isDocumentNode({ type: 'quiz', id: 'q-2', question: '问题', options: ['A'], answer: 'A' })).toBe(false)
     expect(isDocumentNode({ type: 'formula', id: 'f-1', latex: '<script>alert(1)</script>' })).toBe(true)
     expect(isDocumentNode({ type: 'html', id: 'x-1', content: '<script>alert(1)</script>' })).toBe(false)

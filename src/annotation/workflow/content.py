@@ -166,11 +166,13 @@ def build_context_pack(
         if ref not in selected_refs and ref not in omitted_refs:
             omitted_refs.append(ref)
 
-    prerequisites = [
-        prerequisite
-        for prerequisite in unit.prerequisites
-        if any(candidate.title == prerequisite for candidate in blueprint.knowledge_units)
-    ]
+    by_id = {candidate.artifact_id: candidate for candidate in blueprint.knowledge_units}
+    by_title = {candidate.title: candidate for candidate in blueprint.knowledge_units}
+    prerequisites = []
+    for prerequisite in unit.prerequisites:
+        candidate = by_id.get(prerequisite) or by_title.get(prerequisite)
+        if candidate is not None and candidate.title not in prerequisites:
+            prerequisites.append(candidate.title)
     snapshot_material = "|".join(f"{excerpt.source_ref}:{by_ref[excerpt.source_ref].text_hash}" for excerpt in excerpts if excerpt.source_ref in by_ref)
     source_snapshot = hashlib.sha256(snapshot_material.encode("utf-8")).hexdigest() if snapshot_material else None
     rendered_chars = sum(len(excerpt.text) for excerpt in excerpts)
@@ -191,6 +193,57 @@ def build_context_pack(
     )
 
 
+def _content_loop_summary_from_traces(traces: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build the minimum v2 aggregate when a caller only supplies traces."""
+
+    statuses = [str(trace.get("final_status") or trace.get("status") or "") for trace in traces]
+    attempts = [attempt for trace in traces for attempt in trace.get("attempts") or []]
+
+    def called(attempt: dict[str, Any], field: str) -> bool:
+        return str(attempt.get(field) or "skipped") != "skipped"
+
+    def metric_total(field: str) -> int:
+        total = 0
+        for attempt in attempts:
+            metadata_fields = ["generation_provider_metadata", "critic_provider_metadata"]
+            if not any(attempt.get(name) for name in metadata_fields):
+                metadata_fields.append("provider_metadata")
+            for metadata_field in metadata_fields:
+                metadata = attempt.get(metadata_field) or {}
+                if not isinstance(metadata, dict):
+                    continue
+                if field == "duration_ms":
+                    value = metadata.get(field)
+                else:
+                    usage = metadata.get("usage") or {}
+                    value = usage.get(field) if isinstance(usage, dict) else None
+                if isinstance(value, int | float):
+                    total += int(value)
+        return total
+
+    return {
+        "unit_count": len(traces),
+        "accepted_count": sum(status == "accepted" for status in statuses),
+        "blocked_count": sum(status == "blocked" for status in statuses),
+        "failed_count": sum(status == "failed" for status in statuses),
+        "skipped_count": sum(status == "skipped" for status in statuses),
+        "attempt_count": len(attempts),
+        "generation_call_count": sum(
+            called(attempt, "generation_status") and attempt.get("generation_stage") != "revision"
+            for attempt in attempts
+        ),
+        "revision_call_count": sum(
+            called(attempt, "generation_status") and attempt.get("generation_stage") == "revision"
+            for attempt in attempts
+        ),
+        "critic_call_count": sum(called(attempt, "critic_status") for attempt in attempts),
+        "total_tokens": metric_total("total_tokens"),
+        "total_duration_ms": metric_total("duration_ms"),
+        "stop_reasons": [trace.get("stop_reason") for trace in traces if trace.get("stop_reason")],
+        "final_status": "failed" if "failed" in statuses else "blocked" if "blocked" in statuses else "accepted",
+    }
+
+
 def write_content_run_artifact(
     *,
     run_id: str,
@@ -198,9 +251,13 @@ def write_content_run_artifact(
     tasks: list[ContentTask],
     context_packs: list[ContextPack],
     artifacts: list[Any],
+    quiz_artifacts: list[Any] | None = None,
+    quiz_coverage: Any | None = None,
     checks: dict[str, str],
     provider_metadata: dict[str, Any],
     root: str | Path,
+    content_loop_traces: list[Any] | None = None,
+    content_loop_summary: dict[str, Any] | None = None,
 ) -> Path:
     """Persist the complete T-006 handoff without relying on graph memory."""
 
@@ -208,14 +265,38 @@ def write_content_run_artifact(
     artifact_dir = Path(root) / safe_run_id
     artifact_dir.mkdir(parents=True, exist_ok=True)
     path = artifact_dir / "content.json"
+    if path.exists():
+        revision = 2
+        while (artifact_dir / f"content-revision-{revision}.json").exists():
+            revision += 1
+        path = artifact_dir / f"content-revision-{revision}.json"
+    trace_path = str(path.resolve())
+    traces = [artifact.model_dump(mode="json") if hasattr(artifact, "model_dump") else artifact for artifact in (content_loop_traces or [])]
+    for trace in content_loop_traces or []:
+        if hasattr(trace, "artifact_path"):
+            trace.artifact_path = trace_path
+    if content_loop_summary is None and traces:
+        content_loop_summary = _content_loop_summary_from_traces(traces)
+    if content_loop_summary is not None:
+        content_loop_summary["trace_path"] = trace_path
     payload = {
+        "schema_version": "content-artifact-v2" if traces or content_loop_summary is not None else "content-artifact-v1",
         "run_id": run_id,
         "blueprint_version": blueprint_version,
         "tasks": [task.model_dump(mode="json") for task in tasks],
         "context_packs": [pack.model_dump(mode="json") for pack in context_packs],
         "content_artifacts": [artifact.model_dump(mode="json") for artifact in artifacts],
+        "quiz_artifacts": [artifact.model_dump(mode="json") for artifact in (quiz_artifacts or [])],
+        "quiz_coverage": (
+            quiz_coverage.model_dump(mode="json")
+            if hasattr(quiz_coverage, "model_dump")
+            else quiz_coverage
+        ),
         "checks": checks,
         "provider_metadata": provider_metadata,
     }
+    if traces or content_loop_summary is not None:
+        payload["content_loop_traces"] = traces
+        payload["content_loop_summary"] = content_loop_summary
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return path

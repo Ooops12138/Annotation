@@ -26,3 +26,6 @@ def test_load_content_artifact_prompt_renders_bounded_context() -> None:
     assert prompt.startswith("# Agent: generate_content_artifact")
     assert "[src-1] 上界" in prompt
     assert "{{CONTEXT_PACK}}" not in prompt
+    assert "learner-facing Markdown" in prompt
+    assert "$...$" in prompt
+    assert "Do not leave formulas as bare text" in prompt

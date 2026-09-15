@@ -1,12 +1,13 @@
 # 下一步 TODO
 
-当前只推进 T-009A：把已有 JSON Document IR 呈现为一个适合零基础/初学者的在线学习页面。
+当前已完成 T-009A/T-009B、T-010 Codex 初评、A-001、A-002 离线实现和 T-007 题目闭环实现。下一步是对固定教材生成新版本，完成 6 题 + 4 材料人工抽样并按 P0 rubric 复评；不自动降低发布门槛或新增维护者工作台。
 
 ## 开始前
 
 - [x] 阅读 `AGENTS.md`、`README.md`、`docs/requirements.md`、`docs/architecture.md`、`docs/decisions.md`、`documents/wed_design.md` 和 `tasks/backlog.md`。
 - [x] 保持项目范围：一个学科的一章、一个学习页面、一个可验证闭环。
 - [x] 不新增维护者工作台、权限系统、版本管理页面或其他平台能力。
+- [x] 增加单用户本地文档库：教材去重、运行记录、artifact 和文档版本持久化；页面不自动生成。
 
 ## T-009A 页面工作
 
@@ -24,13 +25,35 @@
 - [x] 用真实浏览器验证：打开页面 → 阅读章节 → 展开教材依据 → 完成练习。
 - [x] 确认学习页面没有 API 状态、审核面板、原始 ID 或重生成按钮。
 - [x] 运行前端测试、`npm run build` 和后端回归测试。
-- [ ] 根据 `docs/evaluation.md` 做一次 POC 人工抽样，并把结果写入归档。
+- [x] 根据 `docs/evaluation.md` 完成 Codex POC 初评，并把结果写入归档。
 - [x] 完成后更新 `tasks/backlog.md`，再决定是否进入 T-010 评估。
+
+## T-010 → A-001 入口
+
+- [x] 读取固定 POC 样本和已有 `deepseek-full-context-live-001` artifact，完成 8 个维度的 Codex 初评。
+- [x] 将 T-010 报告写入 `docs/archive/2026-09-14/t010-poc-evaluation.md`，记录证据、问题和发布判断。
+- [ ] 项目负责人确认数学内容与最终 P0 状态；T-010 初评仍暂不通过，保留 `at_risk` 预览。
+- [x] A-001 已实现 Blueprint `generate → check → route` 回环，离线 Mock/Sequence Provider 覆盖通过、修订、阻塞和失败路径。
+- [x] A-002 已实现每知识单元讲解反思子图：来源/公式硬检查先于教学 Critic，最多 3 个候选，保留 trace、content-artifact-v2、SQLite/API 摘要和 blocked/fail-fast 路径；不自动发起 DeepSeek。
+
+## T-007 题目与 P0 完善
+
+- [x] 扩展 QuizQuestion/QuizArtifact/ContentTask 契约，保留 run、version、task、ContextPack、prompt 和 raw/error 元数据。
+- [x] 由 Agent 根据学习目标和 ContextPack 证据自主决定题量（可为 0）；题目答案、解析、目标和 source_refs 通过结构化检查。
+- [x] 生成覆盖矩阵并把缺题、坏题、无效来源设为 blocking；目标缺口保留 warning。
+- [x] 组装 QuizNode、保留来源回看，并在未知/损坏节点处 fail closed。
+- [x] 独立保存 `quiz-v1.json`，更新 API、run manifest 和 SQLite artifact 索引。
+- [x] 实现 `HumanReviewRecord` 和 ReviewReport 版本合并，不覆盖旧报告。
+- [ ] 用固定数学分析章节重新生成并执行真实运行成本确认（不默认发起 DeepSeek）。
+- [ ] 完成 6 道题 + 4 份重点材料人工复核，关闭严重事实/逻辑/公式问题。
+- [ ] 按 8 维 rubric 复评，只有 `ReviewReport.status=passed` 才决定 `published`。
+
+T-010 未完成并由人工确认前，不运行新的 DeepSeek 试跑；任何真实试跑都需先确认预计调用量、输入规模和费用。
 
 ## 新窗口启动提示
 
 ```text
 请读取 AGENTS.md、README.md、TODO.md、docs/requirements.md、docs/architecture.md、docs/decisions.md、documents/wed_design.md 和 tasks/backlog.md。
 
-当前只做 T-009A 的学习者页面收敛。项目目标是把教材一章转换成面向零基础/初学者的在线交互式学习文档。请先检查 LearningDocumentPage.vue 和 LearningDocumentRenderer.vue，删除 API 状态、运行/版本 ID、审核面板和原始 source_ref；保留讲解、例题、公式、练习、章节导航、教学化教材依据和必要的中性风险/观点提示。审核报告、来源检索和重生成只通过 API、Console 或日志调试，不新建维护者工作台。完成后运行测试、VitePress build 和真实浏览器核验。
+当前 T-010 Codex 初评已归档，A-001 Blueprint loop、A-002 讲解反思 loop 和 T-007 题目闭环已完成。下一步生成固定教材新版本，完成 6 题 + 4 材料人工抽样和 P0 复评；任何新的 DeepSeek 试跑都必须先确认输入规模、调用量和费用。
 ```

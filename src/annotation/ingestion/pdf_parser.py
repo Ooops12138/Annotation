@@ -103,11 +103,26 @@ def _markdown(document: SourceDocument, blocks: list[SourceBlock]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _immutable_artifact_path(path: Path) -> Path:
+    if not path.exists():
+        return path
+    revision = 2
+    while True:
+        candidate = path.with_name(f"{path.stem}-revision-{revision}{path.suffix}")
+        if not candidate.exists():
+            return candidate
+        revision += 1
+
+
 def _write_artifacts(document: SourceDocument, blocks: list[SourceBlock], artifact_dir: Path) -> None:
     artifact_dir.mkdir(parents=True, exist_ok=True)
+    json_path = _immutable_artifact_path(artifact_dir / "source.json")
+    markdown_path = _immutable_artifact_path(artifact_dir / "source.md")
+    document.run_metadata["json_path"] = str(json_path.resolve())
+    document.run_metadata["markdown_path"] = str(markdown_path.resolve())
     payload = {"schema_version": "source-artifact-v1", "document": document.model_dump(mode="json"), "blocks": [b.model_dump(mode="json") for b in blocks]}
-    (artifact_dir / "source.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    (artifact_dir / "source.md").write_text(_markdown(document, blocks), encoding="utf-8")
+    json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    markdown_path.write_text(_markdown(document, blocks), encoding="utf-8")
 
 
 def parse_pdf(path: str | Path, *, run_id: str = "run-ingest-local", created_by: str = "parser", ocr_backend: str | None = None, formula_backend: str | None = None, artifact_dir: str | Path | None = None) -> tuple[SourceDocument, list[SourceBlock]]:
