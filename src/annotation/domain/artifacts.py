@@ -69,7 +69,6 @@ class KnowledgeUnit(ArtifactBase):
     learning_objectives: list[str] = Field(default_factory=list)
     prerequisites: list[str] = Field(default_factory=list)
     related_unit_ids: list[str] = Field(default_factory=list)
-    teaching_materials: list[str] = Field(default_factory=list)
 
 
 class LearningBlueprint(ArtifactBase):
@@ -86,14 +85,14 @@ class BlueprintCheckResult(BaseModel):
 
 
 class ContentArtifact(ArtifactBase):
-    content_type: Literal["explanation", "example", "quiz", "digital"]
+    """One readable Markdown artifact for a knowledge unit."""
+
+    content_type: Literal["explanation"] = "explanation"
     knowledge_unit_ids: list[str] = Field(default_factory=list)
     title: str | None = None
-    material_role: Literal["explanation", "example", "proof", "bridge", "supplement"] = "explanation"
     task_id: str | None = None
     context_pack_id: str | None = None
     prompt_version: str | None = None
-    parent_artifact_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     content: str
 
@@ -209,7 +208,9 @@ class ContentTask(BaseModel):
     run_id: str
     blueprint_version: str
     knowledge_unit_id: str
-    content_types: list[Literal["explanation", "example", "proof", "bridge", "teaching_material", "quiz"]] = Field(default_factory=lambda: ["explanation", "teaching_material"])
+    content_types: list[Literal["explanation", "quiz"]] = Field(
+        default_factory=lambda: ["explanation", "quiz"]
+    )
     # A quiz task is one structured call per unit.  ``None`` means the quiz
     # agent chooses the number of questions, including zero.  A supplied value
     # is only a hint for deterministic fixtures and compatibility callers.
@@ -221,6 +222,14 @@ class ContentTask(BaseModel):
     @property
     def quiz_question_count(self) -> int | None:
         return self.quiz_count
+
+    @model_validator(mode="after")
+    def validate_content_types(self) -> "ContentTask":
+        if self.content_types != ["explanation", "quiz"]:
+            raise ValueError(
+                "content_types must be exactly ['explanation', 'quiz']"
+            )
+        return self
 
 
 class ContextExcerpt(BaseModel):
@@ -264,6 +273,114 @@ class ReviewIssue(BaseModel):
     layer: Literal["fact", "stance", "structure"] = "structure"
     source_refs: list[str] = Field(default_factory=list)
     suggested_action: str | None = None
+
+
+class FactCheckPolicy(BaseModel):
+    """Bounded policy recorded with every post-generation fact-check run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_claims_per_unit: int = Field(default=20, ge=1, le=50)
+    max_corrections_per_unit: int = Field(default=2, ge=0, le=2)
+    textbook_result_limit: int = Field(default=5, ge=1, le=10)
+    web_enabled: bool = False
+    web_query_limit: int = Field(default=10, ge=0, le=20)
+
+
+class FactCheckClaim(BaseModel):
+    """One auditable assertion extracted from an accepted content artifact."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    claim_id: str
+    artifact_id: str
+    knowledge_unit_id: str
+    target_id: str
+    role: Literal["explanation", "quiz_question", "quiz_answer", "quiz_explanation"]
+    kind: Literal["fact", "stance"]
+    text: str = Field(min_length=1)
+    query: str = Field(min_length=1)
+    source_refs: list[str] = Field(default_factory=list)
+
+
+class FactCheckEvidence(BaseModel):
+    """A bounded textbook or external evidence excerpt retained in the trace."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_id: str
+    source_kind: Literal["textbook", "web"]
+    provider: str
+    locator: str
+    text: str = Field(min_length=1)
+    source_ref: str | None = None
+    url: str | None = None
+    rank: float | None = None
+
+
+class FactCheckAssessment(BaseModel):
+    """The policy decision for one claim, separate from learner-facing issues."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    assessment_id: str
+    claim_id: str
+    verdict: Literal["supported", "contradicted", "insufficient", "external_conflict", "stance", "error"]
+    judgement: str = Field(min_length=1)
+    route: Literal["accept", "annotate", "revise_content", "regenerate_quiz", "exclude_quiz"]
+    textbook_evidence: list[FactCheckEvidence] = Field(default_factory=list)
+    external_evidence: list[FactCheckEvidence] = Field(default_factory=list)
+    stop_reason: str | None = None
+
+
+class FactCheckRoundTrace(BaseModel):
+    """One check/correction pass for one knowledge unit."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    round: int = Field(ge=0, le=2)
+    content_artifact_id: str
+    quiz_artifact_id: str | None = None
+    claims: list[FactCheckClaim] = Field(default_factory=list)
+    assessments: list[FactCheckAssessment] = Field(default_factory=list)
+    route: Literal["accept", "annotate", "revise_content", "regenerate_quiz", "exclude_quiz"]
+    correction_artifact_id: str | None = None
+    stop_reason: str | None = None
+
+
+class FactCheckUnitTrace(BaseModel):
+    """Versioned A-003 trace for one knowledge unit after quiz generation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    trace_id: str
+    run_id: str
+    task_id: str
+    knowledge_unit_id: str
+    max_corrections: int = Field(ge=0, le=2)
+    rounds: list[FactCheckRoundTrace] = Field(default_factory=list)
+    final_status: Literal["accepted", "at_risk", "failed"]
+    corrections_used: int = Field(ge=0, le=2)
+    stop_reason: str
+    final_content_artifact_id: str | None = None
+    final_quiz_artifact_id: str | None = None
+
+
+class FactCheckArtifact(BaseModel):
+    """Run-level A-003 evidence artifact persisted independently of content."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_id: str
+    run_id: str
+    version: int = Field(ge=1)
+    status: Literal["accepted", "at_risk", "failed"]
+    created_by: str
+    policy: FactCheckPolicy
+    unit_traces: list[FactCheckUnitTrace] = Field(default_factory=list)
+    issues: list[ReviewIssue] = Field(default_factory=list)
+    summary: dict[str, Any] = Field(default_factory=dict)
+    artifact_path: str | None = None
 
 
 class ReviewReport(BaseModel):
@@ -312,12 +429,10 @@ class ContentCriticIssueDraft(BaseModel):
     code: Literal[
         "objective_missing",
         "prerequisite_unexplained",
-        "required_material_not_followable",
         "beginner_clarity",
         "organization",
         "wording",
     ]
-    target: Literal["content", "teaching_material"]
     message: str = Field(min_length=1)
     suggested_action: str | None = None
 
@@ -348,10 +463,9 @@ class ContentAttemptTrace(BaseModel):
     revision_prompt: str | None = None
     generation_raw_output: str = ""
     generation_parsed_output: dict[str, Any] | None = None
-    # A group can contain the explanation and its required teaching material.
-    # Accept both live Pydantic artifacts and JSON-decoded dictionaries so a
-    # persisted trace remains readable without a migration adapter.
-    candidate_artifacts: list[ContentArtifact | dict[str, Any]] = Field(default_factory=list)
+    # Each attempt produces one readable Markdown candidate. The complete
+    # generation response remains available above for audit and retry.
+    candidate_artifact: ContentArtifact | dict[str, Any] | None = None
     generation_status: Literal["succeeded", "schema_error", "provider_error", "skipped"] = "skipped"
     generation_error: str | None = None
     generation_error_category: str | None = None
@@ -379,19 +493,6 @@ class ContentAttemptTrace(BaseModel):
         "context_pack_source_over_budget",
         "upstream_failure",
     ] | None = None
-
-    @field_validator("candidate_artifacts", mode="before")
-    @classmethod
-    def coerce_candidate_artifacts(cls, value: Any) -> list[Any]:
-        """Accept a single JSON artifact or a sequence without losing it."""
-
-        if value is None:
-            return []
-        if isinstance(value, (ContentArtifact, dict)):
-            return [value]
-        if isinstance(value, (list, tuple)):
-            return list(value)
-        raise ValueError("candidate_artifacts must be a content artifact, mapping, or list")
 
     @model_validator(mode="after")
     def synchronize_compatibility_fields(self) -> "ContentAttemptTrace":
@@ -439,7 +540,7 @@ class ContentUnitLoopTrace(BaseModel):
         "context_pack_source_over_budget",
         "upstream_failure",
     ]
-    final_content_artifact_ids: list[str] = Field(default_factory=list)
+    final_content_artifact_id: str | None = None
     artifact_path: str | None = None
 
 
@@ -485,13 +586,6 @@ class MarkdownNode(BaseModel):
     source_refs: list[str] = Field(default_factory=list)
 
 
-class FormulaNode(BaseModel):
-    type: Literal["formula"] = "formula"
-    id: str
-    latex: str
-    source_refs: list[str] = Field(default_factory=list)
-
-
 class CalloutNode(BaseModel):
     type: Literal["callout"] = "callout"
     id: str
@@ -511,16 +605,7 @@ class QuizNode(BaseModel):
     source_refs: list[str] = Field(default_factory=list)
 
 
-class ExampleNode(BaseModel):
-    type: Literal["example"] = "example"
-    id: str
-    title: str
-    problem: str
-    solution: str
-    source_refs: list[str] = Field(default_factory=list)
-
-
-DocumentNode = Annotated[Union[MarkdownNode, FormulaNode, CalloutNode, QuizNode, ExampleNode], Field(discriminator="type")]
+DocumentNode = Annotated[Union[MarkdownNode, CalloutNode, QuizNode], Field(discriminator="type")]
 
 
 class DocumentSection(BaseModel):

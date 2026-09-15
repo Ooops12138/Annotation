@@ -18,8 +18,6 @@ from annotation.prompt_loader import load_prompt
 class Section(BaseModel):
     title: str
     explanation: str
-    formula: str = ""
-    example: str = ""
     source_hint: str
 
 

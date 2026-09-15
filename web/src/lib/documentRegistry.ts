@@ -1,7 +1,7 @@
-import type { DocumentNode, ReviewIssue } from './document'
+import type { DocumentNode, ReviewIssue, SupportedDocumentNodeType } from './document'
 import { isDocumentNode, isSupportedDocumentNodeType } from './document'
 
-export type DocumentNodeRendererKind = 'markdown' | 'formula' | 'example' | 'callout' | 'quiz'
+export type DocumentNodeRendererKind = SupportedDocumentNodeType
 
 export interface RejectedNodeRecord {
   node_id: string

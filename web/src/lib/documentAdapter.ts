@@ -33,6 +33,54 @@ function issues(value: unknown): ReviewIssue[] {
   })
 }
 
+function sourceRefs(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  return value.filter((ref): ref is string => typeof ref === 'string')
+}
+
+function legacyFormulaContent(latex: string): string {
+  return `$$\n${latex}\n$$`
+}
+
+function legacyExampleContent(title: string, problem: string, solution: string): string {
+  return `### ${title || '例题'}\n\n**题目**\n\n${problem}\n\n**解答**\n\n${solution}`
+}
+
+function normalizeLegacyDocumentNode(value: unknown): unknown {
+  if (!isRecord(value)) return value
+  const type = string(value.type)
+  const id = string(value.id)
+  const refs = sourceRefs(value.source_refs)
+
+  if (type === 'formula' && id) {
+    const latex = string(value.latex)
+    if (latex !== null) {
+      return {
+        type: 'markdown' as const,
+        id,
+        content: legacyFormulaContent(latex),
+        ...(refs === undefined ? {} : { source_refs: refs }),
+      }
+    }
+  }
+
+  if (type === 'example' && id) {
+    const title = string(value.title)
+    const problem = string(value.problem)
+    const solution = string(value.solution)
+    if (title !== null && problem !== null && solution !== null) {
+      return {
+        type: 'markdown' as const,
+        id,
+        content: legacyExampleContent(title, problem, solution),
+        ...(refs === undefined ? {} : { source_refs: refs }),
+      }
+    }
+  }
+
+  return value
+}
+
 export function normalizeLearningDocument(value: unknown): LearningDocument | null {
   if (!isRecord(value)) return null
   const artifactId = string(value.artifact_id)
@@ -47,7 +95,12 @@ export function normalizeLearningDocument(value: unknown): LearningDocument | nu
     const id = string(section.id)
     const sectionTitle = string(section.title)
     if (!id || !sectionTitle || !Array.isArray(section.children)) return []
-    return [{ type: 'section' as const, id, title: sectionTitle, children: section.children }]
+    return [{
+      type: 'section' as const,
+      id,
+      title: sectionTitle,
+      children: section.children.map(normalizeLegacyDocumentNode),
+    }]
   })
   return {
     artifact_id: artifactId,

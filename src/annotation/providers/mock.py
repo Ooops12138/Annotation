@@ -71,12 +71,12 @@ class MockProvider:
                 payload = {
                     "title": "实数系与复数系（离线回归）",
                     "knowledge_units": [
-                        {"knowledge_unit_id": "ku-real-structure", "title": "实数公理与基本性质", "kind": "concept", "learning_objectives": ["说明实数的代数和有序结构", "区分开区间、闭区间和半开区间"], "teaching_materials": ["公理", "区间定义"], "source_refs": [], "related_unit_ids": []},
-                        {"knowledge_unit_id": "ku-supremum", "title": "上确界与完全公理", "kind": "formula", "learning_objectives": ["区分最大元与上确界", "用逼近性质理解上确界", "理解完全公理的作用"], "prerequisites": ["ku-real-structure"], "teaching_materials": ["上确界定义", "完全公理"], "source_refs": [], "related_unit_ids": ["ku-irrational"]},
-                        {"knowledge_unit_id": "ku-integers-rationals", "title": "整数与有理数", "kind": "theorem", "learning_objectives": ["说明整数的基本性质", "解释有理数的表示和稠密性"], "prerequisites": ["ku-real-structure"], "teaching_materials": ["唯一因数分解定理", "有理数表示"], "source_refs": [], "related_unit_ids": ["ku-irrational"]},
-                        {"knowledge_unit_id": "ku-irrational", "title": "无理数", "kind": "theorem", "learning_objectives": ["区分有理数与无理数", "跟做非完全平方数平方根的无理性证明", "根据教材复述 e 的无理性证明"], "prerequisites": ["ku-integers-rationals", "ku-supremum"], "teaching_materials": ["非完全平方数平方根证明", "e 的无理性证明"], "source_refs": [], "related_unit_ids": ["ku-supremum"]},
-                        {"knowledge_unit_id": "ku-absolute-inequality", "title": "绝对值与不等式", "kind": "formula", "learning_objectives": ["解释绝对值的几何意义", "推导三角不等式或柯西-施瓦茨不等式"], "prerequisites": ["ku-real-structure"], "teaching_materials": ["三角不等式", "柯西-施瓦茨不等式"], "source_refs": [], "related_unit_ids": ["ku-complex"]},
-                        {"knowledge_unit_id": "ku-complex", "title": "复数系及其运算", "kind": "example", "learning_objectives": ["把复数写成 x+iy", "计算复数的模和辐角", "用指数形式表达复数并识别主值"], "prerequisites": ["ku-real-structure", "ku-absolute-inequality"], "teaching_materials": ["复平面", "模与辐角", "指数形式和主值"], "source_refs": [], "related_unit_ids": []},
+                        {"knowledge_unit_id": "ku-real-structure", "title": "实数公理与基本性质", "kind": "concept", "learning_objectives": ["说明实数的代数和有序结构", "区分开区间、闭区间和半开区间"], "source_refs": [], "related_unit_ids": []},
+                        {"knowledge_unit_id": "ku-supremum", "title": "上确界与完全公理", "kind": "formula", "learning_objectives": ["区分最大元与上确界", "用逼近性质理解上确界", "理解完全公理的作用"], "prerequisites": ["ku-real-structure"], "source_refs": [], "related_unit_ids": ["ku-irrational"]},
+                        {"knowledge_unit_id": "ku-integers-rationals", "title": "整数与有理数", "kind": "theorem", "learning_objectives": ["说明整数的基本性质", "解释有理数的表示和稠密性"], "prerequisites": ["ku-real-structure"], "source_refs": [], "related_unit_ids": ["ku-irrational"]},
+                        {"knowledge_unit_id": "ku-irrational", "title": "无理数", "kind": "theorem", "learning_objectives": ["区分有理数与无理数", "说明非完全平方数平方根的无理性论证", "根据教材复述 e 的无理性证明"], "prerequisites": ["ku-integers-rationals", "ku-supremum"], "source_refs": [], "related_unit_ids": ["ku-supremum"]},
+                        {"knowledge_unit_id": "ku-absolute-inequality", "title": "绝对值与不等式", "kind": "formula", "learning_objectives": ["解释绝对值的几何意义", "推导三角不等式或柯西-施瓦茨不等式"], "prerequisites": ["ku-real-structure"], "source_refs": [], "related_unit_ids": ["ku-complex"]},
+                        {"knowledge_unit_id": "ku-complex", "title": "复数系及其运算", "kind": "example", "learning_objectives": ["把复数写成 x+iy", "计算复数的模和辐角", "用指数形式表达复数并识别主值"], "prerequisites": ["ku-real-structure", "ku-absolute-inequality"], "source_refs": [], "related_unit_ids": []},
                     ],
                 }
             elif request.schema.__name__ == "DocumentDraft":
@@ -84,7 +84,6 @@ class MockProvider:
                     "title": "实数系与复数系 · 离线回归样例",
                     "section_title": "实数结构、完全性与复数概览",
                     "explanation": "本章以实数的域结构、序结构和完全性为主线，依次建立区间、整数、有理数、无理数、上界与上确界等概念，再把数系扩充到复数。离线样例用于验证：知识结构不是简单目录，公式、例题、测验和来源引用可以在同一条 artifact 链路中传递。",
-                    "formula_latex": r"\alpha=\sup S,\qquad z=x+iy,\qquad |z|=\sqrt{x^2+y^2}",
                     "quiz_question": "集合 S=[0,1) 的最大元与上确界分别是什么？",
                     "quiz_options": ["最大元为 1，上确界为 1", "没有最大元，上确界为 1", "没有最大元，也没有上确界"],
                     "quiz_answer": "没有最大元，上确界为 1",
@@ -94,9 +93,8 @@ class MockProvider:
             elif request.schema.__name__ == "ContentDraft":
                 payload = {
                     "title": "知识单元讲解（离线回归）",
-                    "content": "这是按单个知识单元生成的离线回归讲解。实际教材事实由 ContextPack 中的来源片段支持。",
-                    "material_role": "explanation",
-                    "formula_latex": None,
+                    "content": "## 讲解\n\n这是按单个知识单元生成的离线回归讲解。实际教材事实由 ContextPack 中的来源片段支持。",
+                    "callouts": [],
                     "source_refs": [],
                 }
         try:

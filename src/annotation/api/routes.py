@@ -19,6 +19,7 @@ from annotation.domain.artifacts import LearningDocument, RunMetadata
 from annotation.fixtures.demo import demo_document
 from annotation.ingestion.pdf_parser import parse_pdf
 from annotation.api.persistence_service import (
+    fact_check_summary,
     load_document_payload,
     load_run_payload,
     new_run_id,
@@ -98,6 +99,7 @@ def _run_response_from_state(result: dict[str, Any], state: dict[str, Any]) -> d
             "final_status": "failed" if "failed" in statuses else "blocked" if "blocked" in statuses else "accepted",
             "trace_path": state.get("content_loop_trace_path"),
         }
+    fact_check_compact_summary = fact_check_summary(state)
     blocked = (
         state.get("workflow_status") == "blocked"
         or run.get("status") == "blocked"
@@ -125,6 +127,8 @@ def _run_response_from_state(result: dict[str, Any], state: dict[str, Any]) -> d
         "warnings": list(state.get("warnings", [])),
         "blueprint_loop": loop_summary,
         "content_loop": content_loop_summary,
+        "fact_check_summary": fact_check_compact_summary,
+        "fact_check_artifact_path": state.get("fact_check_artifact_path"),
     }
 
 
@@ -140,6 +144,7 @@ def _stored_compatibility_payload(repo: Any, run_id: str) -> dict[str, Any] | No
     artifacts = {item.get("kind"): item for item in loaded.get("artifacts", [])}
     content_payload = _read_artifact_payload((artifacts.get("content") or {}).get("path")) or {}
     quiz_payload = _read_artifact_payload((artifacts.get("quiz") or {}).get("path")) or {}
+    fact_check_row = artifacts.get("fact_check") or {}
     blueprint_payload = _read_artifact_payload((artifacts.get("blueprint") or {}).get("path")) or {}
     source_payload = _read_artifact_payload((artifacts.get("source") or {}).get("path")) or {}
     document = loaded.get("document")
@@ -160,6 +165,8 @@ def _stored_compatibility_payload(repo: Any, run_id: str) -> dict[str, Any] | No
         "content_artifact_checks": content_payload.get("checks", {}),
         "content_artifact_path": (artifacts.get("content") or {}).get("path"),
         "quiz_artifact_path": (artifacts.get("quiz") or {}).get("path"),
+        "fact_check_summary": loaded.get("fact_check_summary"),
+        "fact_check_artifact_path": fact_check_row.get("path"),
         "source_document": source_payload.get("document"),
         "source_block_count": len(source_payload.get("blocks", [])),
         "provider_metadata": run.get("metadata", {}).get("provider_metadata") or {
@@ -318,6 +325,10 @@ def create_run(request: RunRequest) -> dict[str, Any]:
             None,
         ) or {}
         quiz_payload = _read_artifact_payload(quiz_row.get("path")) or {}
+        fact_check_row = next(
+            (item for item in loaded.get("artifacts", []) if item.get("kind") == "fact_check"),
+            None,
+        ) or {}
         return {
             "status": "ok" if loaded.get("run", {}).get("status") == "succeeded" else loaded.get("status", "error"),
             "run": loaded.get("run"),
@@ -333,6 +344,8 @@ def create_run(request: RunRequest) -> dict[str, Any]:
             "quiz_coverage": content_payload.get("quiz_coverage") or quiz_payload.get("quiz_coverage"),
             "content_artifact_path": content_row.get("path"),
             "quiz_artifact_path": quiz_row.get("path"),
+            "fact_check_summary": loaded.get("fact_check_summary"),
+            "fact_check_artifact_path": fact_check_row.get("path"),
             "blueprint_loop": loaded.get("blueprint_loop"),
             "content_loop": loaded.get("content_loop"),
         }
@@ -360,6 +373,35 @@ def get_run(run_id: str) -> dict[str, Any]:
         payload["quiz_coverage"] = content_payload.get("quiz_coverage") or quiz_payload.get("quiz_coverage")
         payload["quiz_artifact_path"] = quiz_row.get("path")
         return payload
+    finally:
+        repo.close()
+
+
+@router.get("/api/runs/{run_id}/fact-check")
+def get_run_fact_check(run_id: str) -> dict[str, Any]:
+    """Return the full A-003 trace only through its dedicated audit endpoint."""
+
+    repo = repository()
+    try:
+        loaded = load_run_payload(repo, run_id)
+        if not loaded:
+            raise HTTPException(status_code=404, detail=f"未找到运行：{run_id}")
+        row = next(
+            (item for item in loaded.get("artifacts", []) if item.get("kind") == "fact_check"),
+            None,
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail=f"该运行没有事实核查记录：{run_id}")
+        artifact_payload = _read_artifact_payload(row.get("path"))
+        if artifact_payload is None:
+            raise HTTPException(status_code=404, detail=f"事实核查工件不可读取：{run_id}")
+        return {
+            "status": "ok",
+            "run_id": run_id,
+            "summary": loaded.get("fact_check_summary") or artifact_payload.get("summary"),
+            "fact_check": artifact_payload.get("fact_check", artifact_payload),
+            "artifact_path": row.get("path"),
+        }
     finally:
         repo.close()
 
@@ -464,6 +506,8 @@ def run_workflow(run_id: str = "run-demo-001") -> dict[str, object]:
             "content_artifact_checks": state.get("content_artifact_checks", {}),
             "content_artifact_path": state.get("content_artifact_path"),
             "quiz_artifact_path": state.get("quiz_artifact_path"),
+            "fact_check_summary": fact_check_summary(state),
+            "fact_check_artifact_path": state.get("fact_check_artifact_path"),
             "source_document": state.get("source_document").model_dump(mode="json") if state.get("source_document") else None,
             "source_block_count": len(state.get("source_blocks", [])),
             "provider_metadata": state.get("provider_metadata", {}),

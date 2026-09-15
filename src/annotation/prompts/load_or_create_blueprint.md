@@ -19,7 +19,6 @@ object.
       "kind": "concept|formula|theorem|example|skill",
       "learning_objectives": ["string"],
       "prerequisites": ["string"],
-      "teaching_materials": ["string"],
       "source_refs": ["string"],
       "related_unit_ids": ["stable knowledge_unit_id"]
     }

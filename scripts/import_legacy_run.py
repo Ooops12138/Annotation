@@ -51,14 +51,51 @@ def _blueprint_call(run_id: str, calls_path: Path) -> dict[str, Any]:
     return found
 
 
+def _legacy_content_task(value: Any) -> dict[str, Any]:
+    """Project a historic task into the active two-path task contract."""
+
+    payload = dict(value) if isinstance(value, dict) else {}
+    payload["content_types"] = ["explanation", "quiz"]
+    return payload
+
+
+def _legacy_content_artifact(value: Any) -> dict[str, Any]:
+    """Keep historic prose readable without re-emitting retired artifact roles."""
+
+    payload = dict(value) if isinstance(value, dict) else {}
+    payload.pop("material_role", None)
+    payload.pop("parent_artifact_id", None)
+    payload["content_type"] = "explanation"
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict):
+        payload["metadata"] = {
+            key: item
+            for key, item in metadata.items()
+            if key not in {
+                "teaching_materials",
+                "candidate_teaching_material",
+                "material_kind",
+                "material_completeness",
+                "human_review_note",
+            }
+        }
+    return payload
+
+
 def reconstruct_state(run_id: str, root: Path) -> dict[str, Any]:
     source_payload = _load(root / "artifacts" / "ingestion" / run_id / "source.json")
     content_payload = _load(root / "artifacts" / "content" / run_id / "content.json")
     review_payload = _load(root / "artifacts" / "review" / run_id / "review-v1.json")
     source_document = SourceDocument.model_validate(source_payload["document"])
     source_blocks = [SourceBlock.model_validate(item) for item in source_payload.get("blocks", [])]
-    tasks = [ContentTask.model_validate(item) for item in content_payload.get("tasks", [])]
-    content_artifacts = [ContentArtifact.model_validate(item) for item in content_payload.get("content_artifacts", [])]
+    tasks = [
+        ContentTask.model_validate(_legacy_content_task(item))
+        for item in content_payload.get("tasks", [])
+    ]
+    content_artifacts = [
+        ContentArtifact.model_validate(_legacy_content_artifact(item))
+        for item in content_payload.get("content_artifacts", [])
+    ]
     report = ReviewReport.model_validate(review_payload.get("report", review_payload))
     draft = _blueprint_call(run_id, root / "model-calls.jsonl")
 
@@ -86,7 +123,6 @@ def reconstruct_state(run_id: str, root: Path) -> dict[str, Any]:
             kind=kind,
             learning_objectives=[str(value) for value in raw_unit.get("learning_objectives", [])],
             prerequisites=[str(value) for value in raw_unit.get("prerequisites", [])],
-            teaching_materials=[str(value) for value in raw_unit.get("teaching_materials", [])],
         ))
     if not units:
         # Content artifacts still provide enough identity to keep the old run
@@ -103,7 +139,6 @@ def reconstruct_state(run_id: str, root: Path) -> dict[str, Any]:
                 title=first.title if first and first.title else f"知识单元 {index}",
                 kind="concept",
                 learning_objectives=(first.metadata.get("learning_objectives", []) if first else []),
-                teaching_materials=(first.metadata.get("teaching_materials", []) if first else []),
             ))
 
     blueprint_version = str(content_payload.get("blueprint_version") or "bp-legacy:v1")

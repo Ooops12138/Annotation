@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, TypedDict
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from annotation.domain.artifacts import (
     BlueprintAttemptTrace,
@@ -32,7 +32,6 @@ class BlueprintDraftUnit(BaseModel):
     kind: Literal["concept", "formula", "theorem", "example", "skill"] = "concept"
     learning_objectives: list[str] = Field(default_factory=list)
     prerequisites: list[str] = Field(default_factory=list)
-    teaching_materials: list[str] = Field(default_factory=list)
     source_refs: list[str] = Field(default_factory=list)
     related_unit_ids: list[str] = Field(default_factory=list)
 
@@ -46,7 +45,6 @@ class DocumentDraft(BaseModel):
     title: str
     section_title: str
     explanation: str
-    formula_latex: str = r"\lim_{x \to a} f(x)=L"
     quiz_question: str
     quiz_options: list[str] = Field(default_factory=list)
     quiz_answer: str
@@ -70,14 +68,26 @@ class DocumentDraft(BaseModel):
         return [str(value)]
 
 
+class CalloutDraft(BaseModel):
+    """An optional, intentionally separate learner-facing callout."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1)
+    tone: Literal["info", "warning", "success"] = "info"
+    content: str = Field(min_length=1)
+
+
 class ContentDraft(BaseModel):
-    """Small structured response for one T-006 task."""
+    """One Markdown-first content response for a knowledge unit."""
+
+    model_config = ConfigDict(extra="forbid")
 
     title: str
     content: str
-    material_role: str = "explanation"
-    formula_latex: str | None = None
-    teaching_material: str | None = None
+    # Callouts are optional special material. All ordinary teaching content,
+    # including follow-along steps, stays in the Markdown body.
+    callouts: list[CalloutDraft] = Field(default_factory=list)
     source_refs: list[str] = Field(default_factory=list)
 
     @field_validator("source_refs", mode="before")
@@ -90,6 +100,44 @@ class ContentDraft(BaseModel):
         if isinstance(value, list):
             return [str(item) for item in value]
         return [str(value)]
+
+
+class FactCheckClaimDraft(BaseModel):
+    """One claim selected for the bounded A-003 evidence pass."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    target_id: str = Field(min_length=1)
+    kind: Literal["fact", "stance"]
+    text: str = Field(min_length=1)
+    query: str = Field(min_length=1)
+
+
+class FactCheckClaimsDraft(BaseModel):
+    """Structured claim extraction output for one knowledge unit."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    claims: list[FactCheckClaimDraft] = Field(default_factory=list)
+
+
+class FactCheckAssessmentDraft(BaseModel):
+    """One evidence judgement returned by the A-003 assessor."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    claim_id: str = Field(min_length=1)
+    verdict: Literal["supported", "contradicted", "insufficient", "external_conflict", "stance"]
+    judgement: str = Field(min_length=1)
+    sufficient_textbook_evidence: bool = False
+
+
+class FactCheckAssessmentsDraft(BaseModel):
+    """Batch evidence judgement output for the claims in one knowledge unit."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    assessments: list[FactCheckAssessmentDraft] = Field(default_factory=list)
 
 
 class ContentReflectionState(TypedDict, total=False):
@@ -115,7 +163,7 @@ class ContentReflectionState(TypedDict, total=False):
     generation_retryable: bool
     generation_provider_metadata: dict[str, Any]
     candidate_draft: ContentDraft | None
-    candidate_artifacts: list[ContentArtifact]
+    candidate_artifact: ContentArtifact | None
     hard_check: ContentHardCheckResult | None
     critic_prompt: str | None
     critic_raw_output: str
@@ -167,6 +215,11 @@ class WorkflowState(TypedDict, total=False):
     content_loop_trace_path: str
     quiz_artifacts: list[QuizArtifact]
     quiz_coverage_report: Any
+    fact_check_artifact: Any
+    fact_check_issues: list[ReviewIssue]
+    fact_check_summary: dict[str, Any]
+    fact_check_status: str
+    fact_check_artifact_path: str
     content_artifact_checks: dict[str, str]
     content_artifact_path: str
     quiz_artifact_path: str

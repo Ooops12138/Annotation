@@ -14,38 +14,21 @@ from annotation.domain.artifacts import (
     ContentTask,
     ContentUnitLoopTrace,
     ContextPack,
-    FormulaNode,
     KnowledgeUnit,
     LearningBlueprint,
     ReviewIssue,
 )
-from annotation.workflow.models import ContentDraft
+from annotation.workflow.models import CalloutDraft, ContentDraft
 
 def _formula_format_issues(nodes: list[Any]) -> list[str]:
-    """Check formula notation contracts, not mathematical correctness.
-
-    Markdown text is intentionally checked only for explicit delimiter errors
-    and unmistakable Unicode superscripts/subscripts.  We do not try to infer
-    whether arbitrary prose or code is mathematical notation.
-    """
+    """Check Markdown math in learner-facing Markdown and callouts only."""
     issues: list[str] = []
     for node in nodes:
         node_id = getattr(node, "id", "unknown")
-        if getattr(node, "type", None) == "formula":
-            latex = str(getattr(node, "latex", "") or "").strip()
-            if not latex:
-                continue
-            if any(delimiter in latex for delimiter in ("$", "\\(", "\\)", "\\[", "\\]")):
-                issues.append(f"公式节点“{node_id}”的 formula_latex 不应包含 Markdown 公式定界符。")
-            if latex.count("{") != latex.count("}"):
-                issues.append(f"公式节点“{node_id}”的 LaTeX 花括号未配对。")
-            if re.search(r"[⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉]", latex):
-                issues.append(f"公式节点“{node_id}”包含未转换的 Unicode 上下标。")
-        else:
-            if getattr(node, "type", None) != "markdown":
-                continue
-            content = str(getattr(node, "content", "") or "")
-            issues.extend(_markdown_formula_format_issues(node_id, content))
+        if getattr(node, "type", None) not in {"markdown", "callout"}:
+            continue
+        content = str(getattr(node, "content", "") or "")
+        issues.extend(_markdown_formula_format_issues(node_id, content))
     return issues
 
 
@@ -139,7 +122,7 @@ def _plan_content_tasks(run_id: str, blueprint: LearningBlueprint) -> list[Conte
             run_id=run_id,
             blueprint_version=blueprint_version,
             knowledge_unit_id=unit.artifact_id,
-            content_types=["explanation", "teaching_material", "quiz"],
+            content_types=["explanation", "quiz"],
             source_refs=list(unit.source_refs),
             acceptance_criteria=criteria,
         ))
@@ -156,16 +139,13 @@ def _mock_content_draft(unit: KnowledgeUnit, pack: ContextPack) -> ContentDraft:
     return ContentDraft(
         title=unit.title,
         content=(
+            "## 讲解\n\n"
             f"本节围绕“{unit.title}”展开。{prerequisite_note}"
             f"学习目标是：{'；'.join(unit.learning_objectives) or '掌握本单元的基本含义和用法'}。"
             f"教材证据摘录：{evidence or '当前没有可用的教材摘录，需要人工审核。'}"
         ),
-        material_role="explanation",
         source_refs=refs,
-        # Fixture adaptation is explicit at the call site.  The local fixture
-        # still supplies a follow-along material so the same group contract is
-        # exercised without asking a network provider to invent it.
-        teaching_material=_focused_teaching_material(unit, pack) if unit.teaching_materials else None,
+        callouts=[],
     )
 
 
@@ -188,7 +168,6 @@ def _content_artifact_from_draft(
     refs = _lossless_refs(draft.source_refs)
     if fixture_adaptation and not refs:
         refs = list(pack.source_refs)
-    role = draft.material_role if draft.material_role in {"explanation", "example", "proof", "bridge", "supplement"} else "explanation"
     content = draft.content.strip()
     return ContentArtifact(
         artifact_id=f"content-{uuid.uuid4().hex[:12]}",
@@ -197,126 +176,21 @@ def _content_artifact_from_draft(
         status="draft",
         source_refs=refs,
         created_by=f"provider:{provider_name}",
-        content_type="explanation" if role in {"explanation", "bridge", "proof", "supplement"} else "example",
+        content_type="explanation",
         knowledge_unit_ids=[unit.artifact_id],
         title=draft.title or unit.title,
-        material_role=role,
         task_id=task.task_id,
         context_pack_id=pack.context_pack_id,
         prompt_version=prompt_version,
         metadata={
             "learning_objectives": list(unit.learning_objectives),
-            "teaching_materials": list(unit.teaching_materials),
-            "formula_latex": draft.formula_latex,
             "omitted_source_refs": list(pack.omitted_source_refs),
             "retrieval_strategy": list(pack.retrieval_strategy),
             "source_snapshot": pack.source_snapshot,
-            "candidate_teaching_material": draft.teaching_material,
+            "callouts": [callout.model_dump(mode="json") for callout in draft.callouts],
             "fixture_adaptation": fixture_adaptation,
         },
         content=content,
-    )
-
-
-def _teaching_material_artifact(
-    *,
-    draft: ContentDraft,
-    parent: ContentArtifact,
-    task: ContentTask,
-    unit: KnowledgeUnit,
-    pack: ContextPack,
-    run_id: str,
-    provider_name: str,
-    fixture_adaptation: bool = False,
-    attempt: int = 1,
-    prompt_version: str = "generate_content_artifact:v1",
-    status: Literal["draft", "accepted", "blocked"] = "draft",
-) -> ContentArtifact:
-    """Create a separately traceable teaching-material artifact."""
-
-    role = "example" if unit.kind == "example" else "proof" if unit.kind == "theorem" else "bridge"
-    material = (draft.teaching_material or "").strip()
-    if fixture_adaptation and (not material or material.startswith("可配合教学材料") or material.startswith("教学材料建议")):
-        material = _focused_teaching_material(unit, pack)
-    refs = list(pack.source_refs) if fixture_adaptation else _lossless_refs(draft.source_refs)
-    artifact_status: Literal["draft", "accepted", "blocked"] = status
-    if not material or not refs:
-        artifact_status = "blocked"
-    return ContentArtifact(
-        artifact_id=f"content-{uuid.uuid4().hex[:12]}",
-        run_id=run_id,
-        version=attempt,
-        status=artifact_status,
-        source_refs=refs,
-        created_by=f"provider:{provider_name}",
-        content_type="example" if role == "example" else "explanation",
-        knowledge_unit_ids=[unit.artifact_id],
-        title=f"{unit.title}：教学材料",
-        material_role=role,
-        task_id=task.task_id,
-        context_pack_id=pack.context_pack_id,
-        prompt_version=prompt_version,
-        parent_artifact_id=parent.artifact_id,
-        metadata={
-            "teaching_materials": list(unit.teaching_materials),
-            "material_kind": role,
-            "material_completeness": "complete_follow_along" if _is_focused_unit(unit) else "guided_prompt",
-            "human_review_note": "重点材料仍需按教材原文逐步核对；ContextPack 证据不足时保留待核实标记。" if _is_focused_unit(unit) else None,
-            "source_snapshot": pack.source_snapshot,
-            "fixture_adaptation": fixture_adaptation,
-        },
-        content=material,
-    )
-
-
-def _is_focused_unit(unit: KnowledgeUnit) -> bool:
-    return any(keyword in unit.title for keyword in ("上确界", "无理数", "绝对值与不等式", "复数"))
-
-
-def _focused_teaching_material(unit: KnowledgeUnit, pack: ContextPack) -> str:
-    """Provide a follow-along worksheet for the four P0 high-risk units.
-
-    The worksheet is still evidence-bound: its source refs come from the
-    current ContextPack, and the irrationality item explicitly keeps an
-    unresolved marker when the excerpt does not contain the proof steps.
-    """
-
-    refs = ", ".join(pack.source_refs[:2]) or "当前 ContextPack 无来源"
-    evidence_note = "教材证据：" + refs
-    title = unit.title
-    if "上确界" in title:
-        return (
-            "跟做材料：取集合 $S=[0,1)$。第一步，逐项检查 $1$ 是上界；第二步，说明 $1$ 不属于 $S$，"
-            "所以 $S$ 没有最大元；第三步，对任意 $\\varepsilon>0$ 取 $x=1-\\varepsilon/2$（当需要时按教材"
-            "的范围条件调整），验证 $x\\in S$ 且 $1-\\varepsilon<x$，从而得到 $\\sup S=1$。"
-            f"\n\n{evidence_note}"
-        )
-    if "无理数" in title:
-        return (
-            "跟做材料：按教材的反证法证明非完全平方数的平方根不是有理数。先假设 $\\sqrt{n}=p/q$"
-            " 且 $p,q$ 互素，平方并整理因数分解，再逐步指出素因子指数的矛盾。随后把教材关于 $e$"
-            " 无理性的每一个截断、整数性和估计步骤抄写成编号清单；当前片段若没有给出某一步，明确写“待核实”，"
-            "不得用外部证明补齐。"
-            f"\n\n{evidence_note}"
-        )
-    if "绝对值与不等式" in title:
-        return (
-            "跟做材料：从 $(|x|-|y|)^2\\ge 0$ 展开，得到 $2|xy|\\le x^2+y^2$；再把"
-            "$x,y$ 替换为向量的内积与范数，逐行核对柯西-施瓦茨不等式，最后取平方根得到"
-            "$|x+y|\\le |x|+|y|$ 的三角不等式。每一步在旁边标注使用的教材定义或已证性质。"
-            f"\n\n{evidence_note}"
-        )
-    if "复数" in title:
-        return (
-            "跟做材料：对 $z=x+iy$ 先计算 $|z|=\\sqrt{x^2+y^2}$，再在复平面标出点 $(x,y)$。"
-            "当 $z\\ne0$ 时，按教材选取辐角 $\\theta$，检查"
-            "$z=|z|(\\cos\\theta+i\\sin\\theta)=|z|e^{i\\theta}$；最后把 $\\theta$ 限制到主值区间并"
-            "用一个象限边界例子核对符号。教材未给出的对数、方根或主值约定保留“待核实”。"
-            f"\n\n{evidence_note}"
-        )
-    return (
-        f"跟做材料：围绕“{unit.title}”逐项完成教材材料“{'、'.join(unit.teaching_materials)}”，"
-        f"先抄写定义，再用一个教材例子验证。\n\n{evidence_note}"
     )
 
 
@@ -349,7 +223,7 @@ def _content_hard_check(
     unit: KnowledgeUnit,
     context_pack: ContextPack,
     valid_source_refs: set[str],
-    candidate_artifacts: list[ContentArtifact],
+    candidate_artifact: ContentArtifact | None,
 ) -> ContentHardCheckResult:
     """Apply non-negotiable source, binding, and notation checks.
 
@@ -358,14 +232,14 @@ def _content_hard_check(
     """
 
     issues: list[ReviewIssue] = []
-    primary = next((artifact for artifact in candidate_artifacts if artifact.parent_artifact_id is None), None)
+    primary = candidate_artifact
     if primary is None:
         issues.append(_content_issue(
             task=task,
             suffix="missing-explanation",
             category="coverage",
             severity="blocking",
-            message="候选组缺少主讲解 artifact。",
+            message="候选缺少主讲解 artifact。",
             suggested_action="重新生成当前知识单元的主讲解。",
         ))
     else:
@@ -380,20 +254,8 @@ def _content_hard_check(
                 suggested_action="补充面向学习者的讲解正文。",
             ))
 
-    teaching = next((artifact for artifact in candidate_artifacts if artifact.parent_artifact_id == getattr(primary, "artifact_id", None)), None)
-    if unit.teaching_materials and (teaching is None or not teaching.content.strip()):
-        issues.append(_content_issue(
-            task=task,
-            suffix="missing-teaching-material",
-            category="coverage",
-            severity="blocking",
-            message="蓝图声明了教学材料，但候选组未提供可跟做的教学材料。",
-            target_id=primary.artifact_id if primary is not None else None,
-            suggested_action="为每项声明的教学材料补充明确、可跟做的步骤。",
-        ))
-
     pack_refs = set(context_pack.source_refs)
-    for artifact in candidate_artifacts:
+    for artifact in [primary] if primary is not None else []:
         if artifact.run_id != task.run_id:
             issues.append(_content_issue(
                 task=task,
@@ -455,12 +317,35 @@ def _content_hard_check(
                 suggested_action="删除未知来源，并使用当前 ContextPack 中的精确 source_ref。",
             ))
         formula_messages = _markdown_formula_format_issues(artifact.artifact_id, artifact.content)
-        if artifact is primary:
-            formula_latex = str(artifact.metadata.get("formula_latex") or "").strip()
-            if formula_latex:
-                formula_messages.extend(_formula_format_issues([
-                    FormulaNode(id=f"{artifact.artifact_id}-formula", latex=formula_latex),
-                ]))
+        raw_callouts = artifact.metadata.get("callouts", [])
+        if not isinstance(raw_callouts, list):
+            issues.append(_content_issue(
+                task=task,
+                suffix=f"invalid-callouts-{artifact.artifact_id}",
+                category="coverage",
+                severity="blocking",
+                message="候选 artifact 的 callouts 必须是列表。",
+                target_id=artifact.artifact_id,
+                suggested_action="只返回可选 Callout 对象组成的 callouts 列表。",
+            ))
+            raw_callouts = []
+        for callout_index, raw_callout in enumerate(raw_callouts, start=1):
+            try:
+                callout = CalloutDraft.model_validate(raw_callout)
+            except Exception:
+                issues.append(_content_issue(
+                    task=task,
+                    suffix=f"invalid-callout-{artifact.artifact_id}-{callout_index}",
+                    category="coverage",
+                    severity="blocking",
+                    message="候选 artifact 包含不符合 Callout 契约的特殊内容。",
+                    target_id=artifact.artifact_id,
+                    suggested_action="只返回带 title、tone 和 content 的可选 callouts。",
+                ))
+                continue
+            formula_messages.extend(_markdown_formula_format_issues(
+                f"{artifact.artifact_id}-callout-{callout_index}", callout.content,
+            ))
         for index, message in enumerate(formula_messages, start=1):
             issues.append(_content_issue(
                 task=task,
@@ -469,7 +354,7 @@ def _content_hard_check(
                 severity="blocking",
                 message=message,
                 target_id=artifact.artifact_id,
-                suggested_action="使用成对的公式定界符，并将 formula_latex 保持为无外层定界符的 KaTeX。",
+                suggested_action="使用成对的 Markdown 数学定界符，并将公式直接写在 Markdown 正文或 Callout 内容中。",
             ))
 
     return ContentHardCheckResult(
@@ -482,7 +367,6 @@ def _content_hard_check(
 _CRITIC_BLOCKING_CODES = {
     "objective_missing",
     "prerequisite_unexplained",
-    "required_material_not_followable",
 }
 
 
@@ -491,20 +375,17 @@ def _critic_review_issues(
     *,
     task: ContentTask,
     primary_artifact: ContentArtifact | None,
-    teaching_artifact: ContentArtifact | None,
     attempt: int,
 ) -> list[ReviewIssue]:
     category_by_code: dict[str, Literal["logic", "coverage", "transition"]] = {
         "objective_missing": "coverage",
         "prerequisite_unexplained": "transition",
-        "required_material_not_followable": "coverage",
         "beginner_clarity": "logic",
         "organization": "logic",
         "wording": "logic",
     }
     issues: list[ReviewIssue] = []
     for index, finding in enumerate(critique.issues, start=1):
-        target = primary_artifact if finding.target == "content" else teaching_artifact
         severity: Literal["warning", "blocking"] = "blocking" if finding.code in _CRITIC_BLOCKING_CODES else "warning"
         issues.append(_content_issue(
             task=task,
@@ -512,7 +393,7 @@ def _critic_review_issues(
             category=category_by_code[finding.code],
             severity=severity,
             message=finding.message,
-            target_id=target.artifact_id if target is not None else primary_artifact.artifact_id if primary_artifact is not None else None,
+            target_id=primary_artifact.artifact_id if primary_artifact is not None else None,
             suggested_action=finding.suggested_action,
         ))
     return issues
@@ -545,7 +426,6 @@ def _blocked_content_artifact(
         content_type="explanation",
         knowledge_unit_ids=[unit.artifact_id],
         title=unit.title,
-        material_role="explanation",
         task_id=task.task_id,
         context_pack_id=context_pack.context_pack_id if context_pack is not None else None,
         prompt_version="content_reflection:v1",
@@ -625,7 +505,6 @@ def _unit_context(unit: KnowledgeUnit) -> str:
             "kind": unit.kind,
             "learning_objectives": unit.learning_objectives,
             "prerequisites": unit.prerequisites,
-            "teaching_materials": unit.teaching_materials,
             "source_refs": unit.source_refs,
         },
         ensure_ascii=False,

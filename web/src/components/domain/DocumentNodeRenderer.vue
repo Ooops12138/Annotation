@@ -4,8 +4,6 @@ import { CircleAlert } from 'lucide-vue-next'
 import type { RejectedNodeRecord } from '../../lib/documentRegistry'
 import { asDocumentNode, rejectedNodeRecord, resolveNodeRenderer } from '../../lib/documentRegistry'
 import MarkdownBlock from './MarkdownBlock.vue'
-import FormulaBlock from './FormulaBlock.vue'
-import ExampleBlock from './ExampleBlock.vue'
 import CalloutBlock from './CalloutBlock.vue'
 import QuizCard from './QuizCard.vue'
 import SourcePanel from './SourcePanel.vue'
@@ -25,8 +23,6 @@ onMounted(() => {
 <template>
   <div v-if="asDocumentNode(node)" class="annotation-node">
     <MarkdownBlock v-if="renderer() === 'markdown'" :content="node.content" />
-    <FormulaBlock v-else-if="renderer() === 'formula'" :latex="node.latex" />
-    <ExampleBlock v-else-if="renderer() === 'example'" :title="node.title" :problem="node.problem" :solution="node.solution" />
     <CalloutBlock v-else-if="renderer() === 'callout'" :tone="node.tone" :title="node.title" :content="node.content" />
     <QuizCard v-else-if="renderer() === 'quiz'" :question="node.question" :options="node.options" :answer="node.answer" :explanation="node.explanation" />
     <SourcePanel :source-refs="node.source_refs" />

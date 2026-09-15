@@ -16,22 +16,29 @@ def test_health() -> None:
 def test_demo_document_contract() -> None:
     response = client.get("/api/demo-document")
     payload = response.json()
+    nodes = [node for section in payload["sections"] for node in section["children"]]
+
     assert response.status_code == 200
-    assert payload["sections"][0]["children"][1]["type"] == "formula"
     assert payload["issues"][0]["severity"] == "warning"
     assert len(payload["sections"]) >= 3
-    assert any(node["type"] == "example" for section in payload["sections"] for node in section["children"])
+    assert {node["type"] for node in nodes} <= {"markdown", "callout", "quiz"}
+    assert "formula" not in {node["type"] for node in nodes}
+    assert "example" not in {node["type"] for node in nodes}
+    assert not any(node["type"] == "callout" and node.get("title", "").startswith("例：") for node in nodes)
+    assert any(node["type"] == "markdown" and node["id"].startswith("example-") for node in nodes)
 
 
 def test_demo_document_renders_math_in_rich_node_text() -> None:
     response = client.get("/api/demo-document")
     nodes = [node for section in response.json()["sections"] for node in section["children"]]
     callout = next(node for node in nodes if node["type"] == "callout")
-    examples = [node for node in nodes if node["type"] == "example"]
+    examples = [node for node in nodes if node["type"] == "markdown" and node["id"].startswith("example-")]
     quiz = next(node for node in nodes if node["type"] == "quiz")
+    formulas = [node for node in nodes if node["type"] == "markdown" and "$$" in node["content"]]
 
     assert "$" in callout["content"]
-    assert all("$" in field for example in examples for field in (example["problem"], example["solution"]))
+    assert formulas
+    assert all("$" in example["content"] for example in examples)
     assert "$" in quiz["question"]
     assert all("$" in option for option in quiz["options"])
     assert "$" in quiz["answer"] and "$" in quiz["explanation"]

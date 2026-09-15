@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from annotation.api.persistence_service import load_document_payload, persist_workflow_result
+import json
+
+from annotation.api.persistence_service import _document_from_path, load_document_payload, persist_workflow_result
 from annotation.domain.artifacts import (
     BlueprintCheckResult,
     ContentArtifact,
@@ -169,3 +171,54 @@ def test_service_hides_blocked_document_but_keeps_review(tmp_path) -> None:
     assert payload["document"] is None
     assert payload["review_report"]["status"] == "blocked"
     repo.close()
+
+
+def test_document_reader_projects_retired_nodes_without_rewriting_artifact(tmp_path) -> None:
+    path = tmp_path / "legacy-document.json"
+    legacy_document = {
+        "artifact_id": "doc-legacy-artifact",
+        "document_id": "doc-legacy",
+        "run_id": "run-legacy",
+        "version": 1,
+        "status": "accepted",
+        "source_refs": ["src-legacy"],
+        "created_by": "fixture",
+        "issues": [],
+        "blueprint_version": "bp-legacy:v1",
+        "title": "历史文档",
+        "sections": [{
+            "id": "section-legacy",
+            "title": "历史章节",
+            "children": [
+                {
+                    "type": "formula",
+                    "id": "formula-legacy",
+                    "latex": r"x^2+y^2=z^2",
+                    "source_refs": ["src-legacy"],
+                },
+                {
+                    "type": "example",
+                    "id": "example-legacy",
+                    "title": "历史例题",
+                    "problem": "求 $x$。",
+                    "solution": "$x=1$。",
+                    "source_refs": ["src-legacy"],
+                },
+            ],
+        }],
+    }
+    path.write_text(
+        json.dumps({"schema_version": "document-artifact-v1", "document": legacy_document}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    document = _document_from_path(path)
+    nodes = document.sections[0].children
+
+    assert [node.type for node in nodes] == ["markdown", "markdown"]
+    assert nodes[0].content == "$$\nx^2+y^2=z^2\n$$"
+    assert nodes[0].source_refs == ["src-legacy"]
+    assert nodes[1].content == "### 历史例题\n\n**问题**\n\n求 $x$。\n\n**解析**\n\n$x=1$。"
+    assert nodes[1].source_refs == ["src-legacy"]
+    # The read adapter must not rewrite an immutable historical artifact.
+    assert '"type": "formula"' in path.read_text(encoding="utf-8")

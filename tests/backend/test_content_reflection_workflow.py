@@ -34,9 +34,8 @@ class WorkflowContentProvider:
         if schema_name == "ContentDraft":
             payload: dict[str, Any] = {
                 "title": "测试单元",
-                "content": "先解释定义，再用 $x^2$ 说明一个教材例子。",
-                "material_role": "explanation",
-                "teaching_material": "跟做：按教材步骤代入一个例子，并逐步说明。",
+                "content": "## 讲解\n\n先解释定义，再用 $x^2$ 说明一个教材例子。",
+                "callouts": [],
                 "source_refs": ["unknown-source"] if self.mode == "blocking" else ["src-1"],
             }
         elif schema_name == "ContentCritiqueDraft":
@@ -46,7 +45,6 @@ class WorkflowContentProvider:
                 "issues": [
                     {
                         "code": "beginner_clarity",
-                        "target": "content",
                         "message": "需要先解释符号含义。",
                     }
                 ] if not any(call.schema.__name__ == "ContentCritiqueDraft" for call in self.calls[:-1]) else []
@@ -121,7 +119,6 @@ def _blueprint(run_id: str) -> LearningBlueprint:
             title=title,
             kind=kind,
             learning_objectives=[f"理解{title}"],
-            teaching_materials=["跟做材料"],
         )
         for index, (title, kind) in enumerate(
             (("概念", "concept"), ("定理", "theorem"), ("例题", "example")),
@@ -224,4 +221,9 @@ def test_mock_workflow_keeps_six_unit_quiz_regression_and_emits_six_content_trac
     assert all(trace.attempts[0].critic_status == "succeeded" for trace in state["content_loop_traces"])
     assert state["content_loop_summary"]["unit_count"] == 6
     assert state["content_loop_summary"]["critic_call_count"] == 6
+    assert len(state["content_artifacts"]) == 6
+    assert all("## 跟做材料" not in artifact.content for artifact in state["content_artifacts"])
+    rendered_nodes = [node for section in state["document"].sections for node in section.children]
+    assert {node.type for node in rendered_nodes}.issubset({"markdown", "callout", "quiz"})
+    assert not any(node.type == "callout" for node in rendered_nodes)
     assert len(state["quiz_artifacts"]) == 6

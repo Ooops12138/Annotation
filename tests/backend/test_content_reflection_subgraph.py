@@ -55,7 +55,6 @@ def _state() -> dict[str, Any]:
         title="测试概念",
         kind="concept",
         learning_objectives=["理解测试概念"],
-        teaching_materials=["跟做材料"],
     )
     task = ContentTask(
         task_id="task-content-subgraph",
@@ -92,9 +91,8 @@ def _state() -> dict[str, Any]:
 def _draft(*, refs: list[str]) -> dict[str, Any]:
     return {
         "title": "测试概念",
-        "content": "先解释定义，再用 $x^2$ 说明一个教材例子。",
-        "material_role": "explanation",
-        "teaching_material": "跟做：按教材步骤代入一个例子，并逐步说明。",
+        "content": "## 讲解\n\n先解释定义，再用 $x^2$ 说明一个教材例子。",
+        "callouts": [],
         "source_refs": refs,
     }
 
@@ -116,11 +114,12 @@ def test_hard_check_revises_before_calling_critic_and_preserves_source_evidence(
     ]
     assert [attempt.route for attempt in trace.attempts] == ["revise", "accept"]
     assert trace.attempts[0].critic_status == "skipped"
-    assert trace.attempts[0].candidate_artifacts[0].source_refs == ["unknown-source"]
+    assert trace.attempts[0].candidate_artifact.source_refs == ["unknown-source"]
     assert trace.attempts[1].generation_stage == "revision"
     assert trace.attempts[1].generation_prompt.startswith("# Agent: revise_content_artifact")
     assert "invalid-source" in trace.attempts[1].generation_prompt
     assert trace.final_status == "accepted"
+    assert len(result["final_artifacts"]) == 1
 
 
 def test_critic_blocking_finding_routes_to_revision() -> None:
@@ -130,7 +129,6 @@ def test_critic_blocking_finding_routes_to_revision() -> None:
             "issues": [
                 {
                     "code": "objective_missing",
-                    "target": "content",
                     "message": "没有解释学习目标。",
                     "suggested_action": "补上目标关联。",
                 }
@@ -157,7 +155,6 @@ def test_warning_only_critic_feedback_is_accepted_and_attached_to_final_artifact
             "issues": [
                 {
                     "code": "beginner_clarity",
-                    "target": "content",
                     "message": "符号说明还可以更清楚。",
                 }
             ]

@@ -97,17 +97,6 @@ def validate_blueprint(
                 )
             )
 
-    if not ({"formula", "theorem", "example"} & set(covered_kinds)):
-        issues.append(
-            ReviewIssue(
-                issue_id="blueprint-missing-teaching-material",
-                category="coverage",
-                severity="warning",
-                message="蓝图尚未表达公式、定理或例题类教学材料。",
-                target_id=blueprint.artifact_id,
-            )
-        )
-
     blocking = any(issue.severity == "blocking" for issue in issues)
     return BlueprintCheckResult(
         status="needs_revision" if blocking else "accepted",

@@ -15,9 +15,16 @@ the Learning Blueprint and textbook excerpts.
   definition, inequality or derivation in it must use explicit LaTeX
   delimiters: `$...$` for inline math and `$$...$$` for display math. Do not
   leave formulas as bare text or Unicode superscripts/subscripts.
-- Keep `formula_latex` as raw KaTeX-compatible LaTeX for the separate formula
-  node, without any `$...$`, `$$...$$`, `\\(...\\)` or `\\[...\\]` wrappers. It
-  does not replace formulas in `explanation`.
+- Put worked examples directly in `explanation` as ordinary Markdown, using
+  headings, prose, lists or bold labels as useful. Do not return separate
+  example or teaching-material fields or node data. A Callout is only for an
+  intentional emphasis in the final document, never a default presentation
+  for an example.
+- The `quiz_*` fields define one interactive exercise only: its question,
+  options, answer and explanation. Do not put teaching material, a worked
+  example or additional explanatory prose in those fields.
+- Markdown math is the only formula presentation path. Do not return a
+  separate formula field or FormulaNode data.
 
 ## JSON schema
 
@@ -26,7 +33,6 @@ the Learning Blueprint and textbook excerpts.
   "title": "string",
   "section_title": "string",
   "explanation": "string",
-  "formula_latex": "string",
   "quiz_question": "string",
   "quiz_options": ["string"],
   "quiz_answer": "string",

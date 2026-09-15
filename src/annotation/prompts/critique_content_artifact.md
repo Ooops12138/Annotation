@@ -12,8 +12,7 @@ Return only valid JSON matching this shape:
 {
   "issues": [
     {
-      "code": "objective_missing|prerequisite_unexplained|required_material_not_followable|beginner_clarity|organization|wording",
-      "target": "content|teaching_material",
+      "code": "objective_missing|prerequisite_unexplained|beginner_clarity|organization|wording",
       "message": "specific learner-facing problem",
       "suggested_action": "specific revision instruction or null"
     }
@@ -28,8 +27,6 @@ verdict, a source reference, or a new claim. In particular:
 - Use `objective_missing` when an explicit learning objective is not taught.
 - Use `prerequisite_unexplained` when a listed direct prerequisite is needed
   but not bridged for a beginner.
-- Use `required_material_not_followable` only when required teaching material
-  lacks a followable sequence of learner actions.
 - Use `beginner_clarity`, `organization`, or `wording` for non-blocking
   teaching improvements.
 
@@ -45,8 +42,8 @@ verdict, a source reference, or a new claim. In particular:
 {{ACCEPTANCE_CRITERIA}}
 ```
 
-## Candidate artifact group
+## Candidate Markdown artifact
 
 ```json
-{{CANDIDATE_ARTIFACTS}}
+{{CANDIDATE_ARTIFACT}}
 ```

@@ -43,9 +43,75 @@ def _load_json(path: str | Path) -> dict[str, Any]:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+def _normalize_legacy_document_node(value: Any) -> Any:
+    """Project retired Document IR nodes into the supported read contract.
+
+    Historical document artifacts remain immutable evidence.  Their retired
+    formula/example nodes are converted only in memory so the API can continue
+    serving them after the renderer contract becomes Markdown/Callout/Quiz.
+    """
+
+    if not isinstance(value, Mapping):
+        return value
+    node = dict(value)
+    node_type = node.get("type")
+    node_id = node.get("id")
+    source_refs = node.get("source_refs")
+    refs = {"source_refs": source_refs} if source_refs is not None else {}
+
+    if node_type == "formula" and isinstance(node_id, str):
+        latex = node.get("latex")
+        if isinstance(latex, str):
+            return {
+                "type": "markdown",
+                "id": node_id,
+                "content": f"$$\n{latex}\n$$",
+                **refs,
+            }
+
+    if node_type == "example" and isinstance(node_id, str):
+        title = node.get("title")
+        problem = node.get("problem")
+        solution = node.get("solution")
+        if isinstance(title, str) and isinstance(problem, str) and isinstance(solution, str):
+            return {
+                "type": "markdown",
+                "id": node_id,
+                "content": f"### {title or '例题'}\n\n**问题**\n\n{problem}\n\n**解析**\n\n{solution}",
+                **refs,
+            }
+
+    return value
+
+
+def _normalize_legacy_document(value: Any) -> Any:
+    if not isinstance(value, Mapping):
+        return value
+    document = dict(value)
+    sections = document.get("sections")
+    if not isinstance(sections, list):
+        return document
+    normalized_sections: list[Any] = []
+    for section in sections:
+        if not isinstance(section, Mapping):
+            normalized_sections.append(section)
+            continue
+        normalized_section = dict(section)
+        children = normalized_section.get("children")
+        if isinstance(children, list):
+            normalized_section["children"] = [
+                _normalize_legacy_document_node(child) for child in children
+            ]
+        normalized_sections.append(normalized_section)
+    document["sections"] = normalized_sections
+    return document
+
+
 def _document_from_path(path: str | Path) -> LearningDocument:
     payload = _load_json(path)
-    return LearningDocument.model_validate(payload.get("document", payload))
+    return LearningDocument.model_validate(
+        _normalize_legacy_document(payload.get("document", payload))
+    )
 
 
 def _review_from_path(path: str | Path | None) -> ReviewReport | None:
@@ -66,6 +132,28 @@ def _safe_id(value: str) -> str:
     return "".join(char if char.isalnum() or char in "-_." else "-" for char in value).strip(".-") or "run"
 
 
+def _mapping_payload(value: Any) -> dict[str, Any] | None:
+    payload = value.model_dump(mode="json") if hasattr(value, "model_dump") else value
+    return dict(payload) if isinstance(payload, Mapping) else None
+
+
+def fact_check_summary(state: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Return the compact A-003 result for API/index consumers."""
+
+    summary = state.get("fact_check_summary")
+    artifact_payload = _mapping_payload(state.get("fact_check_artifact"))
+    if summary is None and artifact_payload is not None:
+        summary = artifact_payload.get("summary")
+    payload = _mapping_payload(summary)
+    result = payload or {}
+    status = state.get("fact_check_status") or (
+        artifact_payload.get("status") if artifact_payload is not None else None
+    )
+    if status and not result.get("final_status"):
+        result["final_status"] = status
+    return result or None
+
+
 def _artifact_path(state: Mapping[str, Any], kind: str) -> str | None:
     if kind == "source":
         source = state.get("source_document")
@@ -78,6 +166,8 @@ def _artifact_path(state: Mapping[str, Any], kind: str) -> str | None:
         return state.get("document_artifact_path")
     if kind == "quiz":
         return state.get("quiz_artifact_path")
+    if kind == "fact_check":
+        return state.get("fact_check_artifact_path")
     if kind == "review":
         return state.get("review_report_path")
     if kind == "run":
@@ -129,7 +219,9 @@ def _content_loop_summary(state: Mapping[str, Any]) -> dict[str, Any] | None:
 def _register_state_artifacts(repo: PersistenceRepository, state: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
     run_id = str(state["run_id"])
     registered: dict[str, dict[str, Any]] = {}
-    for kind in ("source", "blueprint", "content", "quiz", "review", "document", "run"):
+    fact_check_payload = _mapping_payload(state.get("fact_check_artifact"))
+    fact_check_compact_summary = fact_check_summary(state)
+    for kind in ("source", "blueprint", "content", "quiz", "fact_check", "review", "document", "run"):
         raw_path = _artifact_path(state, kind)
         if not raw_path or not Path(raw_path).is_file():
             continue
@@ -150,6 +242,11 @@ def _register_state_artifacts(repo: PersistenceRepository, state: Mapping[str, A
             "review": report.report_id if report is not None else None,
             "content": f"content-{run_id}",
             "quiz": f"quiz-{run_id}",
+            "fact_check": (
+                fact_check_payload.get("artifact_id")
+                if fact_check_payload is not None
+                else f"fact-check-{run_id}"
+            ),
             "run": f"run-{run_id}",
         }[kind]
         artifact_id = f"{kind}-{_safe_id(run_id)}-v{version}"
@@ -159,11 +256,20 @@ def _register_state_artifacts(repo: PersistenceRepository, state: Mapping[str, A
             source.status if kind == "source" and source is not None else
             loop_summary.get("final_status") if kind == "blueprint" and loop_summary else
             content_loop_summary.get("final_status") if kind == "content" and content_loop_summary else
+            str(
+                state.get("fact_check_status")
+                or (fact_check_payload or {}).get("status")
+                or (fact_check_compact_summary or {}).get("final_status")
+                or "accepted"
+            ) if kind == "fact_check" else
             report.status if kind == "review" and report is not None else
             getattr(state.get("quiz_coverage_report"), "status", "accepted") if kind == "quiz" else
             document.status if document is not None and kind == "document" else
             "accepted"
         )
+        metadata = {"source_artifact_id": original_id, "path_role": kind}
+        if kind == "fact_check":
+            metadata["fact_check_summary"] = fact_check_compact_summary
         try:
             registered[kind] = repo.register_artifact(
                 run_id,
@@ -172,7 +278,7 @@ def _register_state_artifacts(repo: PersistenceRepository, state: Mapping[str, A
                 artifact_id=artifact_id,
                 version=version,
                 status=str(artifact_status),
-                metadata={"source_artifact_id": original_id, "path_role": kind},
+                metadata=metadata,
             )
         except Exception:
             # An idempotent retry may already have the same immutable row.
@@ -198,6 +304,7 @@ def persist_workflow_result(
     report = state.get("review_report")
     loop_summary = _blueprint_loop_summary(state)
     content_loop_summary = _content_loop_summary(state)
+    fact_check_compact_summary = fact_check_summary(state)
     workflow_status = str(state.get("workflow_status") or "")
     blueprint_loop_status = str((loop_summary or {}).get("final_status") or "")
     content_loop_status = str(state.get("content_loop_status") or (content_loop_summary or {}).get("final_status") or "")
@@ -260,6 +367,7 @@ def persist_workflow_result(
                 "provider_metadata": dict(state.get("provider_metadata", {})),
                 "blueprint_loop": loop_summary,
                 "content_loop": content_loop_summary,
+                "fact_check_summary": fact_check_compact_summary,
             },
         )
         return {"run": run, "document": None, "document_version": None, "artifacts": artifacts}
@@ -285,6 +393,8 @@ def persist_workflow_result(
             "blueprint_artifact_path": state.get("blueprint_artifact_path"),
             "blueprint_loop": loop_summary,
             "content_loop": content_loop_summary,
+            "fact_check_summary": fact_check_compact_summary,
+            "fact_check_artifact_path": state.get("fact_check_artifact_path"),
         },
     )
     run = repo.update_run(
@@ -306,6 +416,7 @@ def persist_workflow_result(
             "provider_metadata": dict(state.get("provider_metadata", {})),
             "blueprint_loop": loop_summary,
             "content_loop": content_loop_summary,
+            "fact_check_summary": fact_check_compact_summary,
         },
     )
     return {"run": run, "document": db_document, "document_version": db_version, "artifacts": artifacts}
@@ -367,7 +478,9 @@ def load_run_payload(repo: PersistenceRepository, run_id: str) -> dict[str, Any]
     version = repo.get_document_version(version_id) if version_id else None
     loop_summary = (run.get("metadata") or {}).get("blueprint_loop")
     content_loop_summary = (run.get("metadata") or {}).get("content_loop")
+    fact_check_compact_summary = (run.get("metadata") or {}).get("fact_check_summary")
     content_row = next((item for item in artifacts if item.get("kind") == "content"), None)
+    fact_check_row = next((item for item in artifacts if item.get("kind") == "fact_check"), None)
     if loop_summary is None:
         blueprint_row = next((item for item in artifacts if item.get("kind") == "blueprint"), None)
         if blueprint_row:
@@ -407,12 +520,35 @@ def load_run_payload(repo: PersistenceRepository, run_id: str) -> dict[str, Any]
                 content_loop_summary = None
     if content_loop_summary is not None and not content_loop_summary.get("trace_path") and content_row:
         content_loop_summary = {**content_loop_summary, "trace_path": content_row.get("path")}
+    if fact_check_compact_summary is None and fact_check_row:
+        try:
+            fact_check_payload = _load_json(fact_check_row["path"])
+            artifact_payload = fact_check_payload.get("fact_check")
+            fact_check_compact_summary = fact_check_payload.get("summary")
+            if fact_check_compact_summary is None and isinstance(artifact_payload, Mapping):
+                fact_check_compact_summary = artifact_payload.get("summary")
+            if isinstance(fact_check_compact_summary, Mapping):
+                fact_check_compact_summary = dict(fact_check_compact_summary)
+                artifact_status = (
+                    artifact_payload.get("status")
+                    if isinstance(artifact_payload, Mapping)
+                    else None
+                )
+                status = fact_check_payload.get("status") or artifact_status
+                if status and not fact_check_compact_summary.get("final_status"):
+                    fact_check_compact_summary["final_status"] = status
+            elif fact_check_payload.get("status"):
+                fact_check_compact_summary = {"final_status": fact_check_payload["status"]}
+        except (OSError, ValueError, TypeError):
+            fact_check_compact_summary = None
     result: dict[str, Any] = {
         "status": run["status"],
         "run": run,
         "artifacts": artifacts,
         "blueprint_loop": loop_summary,
         "content_loop": content_loop_summary,
+        "fact_check_summary": fact_check_compact_summary,
+        "fact_check_artifact_path": fact_check_row.get("path") if fact_check_row else None,
     }
     if version:
         result.update(load_document_payload(repo, version["document_id"], version=int(version["version"])) or {})
@@ -422,6 +558,7 @@ def load_run_payload(repo: PersistenceRepository, run_id: str) -> dict[str, Any]
 __all__ = [
     "load_document_payload",
     "load_run_payload",
+    "fact_check_summary",
     "new_run_id",
     "persist_workflow_result",
     "repository",

@@ -13,6 +13,10 @@ from annotation.config import (
     STORAGE_DIR,
     blueprint_max_attempts as configured_blueprint_max_attempts,
     content_reflection_max_attempts as configured_content_reflection_max_attempts,
+    fact_check_max_claims_per_unit as configured_fact_check_max_claims_per_unit,
+    fact_check_max_corrections as configured_fact_check_max_corrections,
+    fact_check_web_enabled as configured_fact_check_web_enabled,
+    fact_check_web_query_limit as configured_fact_check_web_query_limit,
 )
 from annotation.domain.artifacts import (
     BlueprintAttemptTrace,
@@ -23,6 +27,7 @@ from annotation.domain.artifacts import (
     ContentTask,
     ContentUnitLoopTrace,
     ContextPack,
+    FactCheckPolicy,
     KnowledgeUnit,
     LearningBlueprint,
     LearningDocument,
@@ -34,6 +39,7 @@ from annotation.providers import ModelProvider, MockProvider, ProviderError, Str
 from annotation.workflow.blueprint_checks import validate_blueprint
 from annotation.workflow.content import build_context_pack, write_content_run_artifact
 from annotation.workflow.content_reflection import build_content_reflection_subgraph
+from annotation.workflow.fact_check import run_fact_check_loop
 from annotation.workflow.content_support import (
     _blocked_content_artifact,
     _content_issue,
@@ -60,10 +66,19 @@ def build_minimal_graph(
     *,
     blueprint_max_attempts: int | None = None,
     content_reflection_max_attempts: int | None = None,
+    fact_check_max_corrections: int | None = None,
+    fact_check_max_claims_per_unit: int | None = None,
+    fact_check_web_enabled: bool | None = None,
 ):
     model_provider = provider or MockProvider()
     max_attempts = configured_blueprint_max_attempts(blueprint_max_attempts)
     content_max_attempts = configured_content_reflection_max_attempts(content_reflection_max_attempts)
+    fact_check_policy = FactCheckPolicy(
+        max_claims_per_unit=configured_fact_check_max_claims_per_unit(fact_check_max_claims_per_unit),
+        max_corrections_per_unit=configured_fact_check_max_corrections(fact_check_max_corrections),
+        web_enabled=configured_fact_check_web_enabled(fact_check_web_enabled),
+        web_query_limit=configured_fact_check_web_query_limit(),
+    )
 
     def ingest(state: WorkflowState) -> dict[str, Any]:
         # Keep the legacy module-level seam so fixture tests and callers can
@@ -309,9 +324,9 @@ def build_minimal_graph(
                 target_id=unit.artifact_id if unit is not None else task.knowledge_unit_id,
                 source_refs=list(pack.omitted_source_refs) if pack is not None and reason == "context_pack_source_over_budget" else [],
             )
-            candidate_artifacts: list[ContentArtifact] = []
+            candidate_artifact: ContentArtifact | None = None
             if unit is not None:
-                candidate_artifacts.append(_blocked_content_artifact(
+                candidate_artifact = _blocked_content_artifact(
                     task=task,
                     unit=unit,
                     context_pack=pack,
@@ -320,17 +335,17 @@ def build_minimal_graph(
                     attempt=0,
                     error=message,
                     issues=[issue],
-                ))
+                )
             check = ContentHardCheckResult(
                 status="blocked",
                 issues=[issue],
-                checked_artifact_id=candidate_artifacts[0].artifact_id if candidate_artifacts else None,
+                checked_artifact_id=candidate_artifact.artifact_id if candidate_artifact is not None else None,
             )
             trace_attempt = ContentAttemptTrace(
                 attempt=0,
                 generation_stage="skipped",
                 generation_status="skipped",
-                candidate_artifacts=candidate_artifacts,
+                candidate_artifact=candidate_artifact,
                 hard_check=check,
                 critic_status="skipped",
                 feedback=[issue],
@@ -348,9 +363,9 @@ def build_minimal_graph(
                 final_status=final_status,
                 final_attempt=0,
                 stop_reason=reason,
-                final_content_artifact_ids=[artifact.artifact_id for artifact in candidate_artifacts],
+                final_content_artifact_id=candidate_artifact.artifact_id if candidate_artifact is not None else None,
             )
-            return trace, candidate_artifacts
+            return trace, [candidate_artifact] if candidate_artifact is not None else []
 
         for task in state.get("content_tasks", []):
             unit = units.get(task.knowledge_unit_id)
@@ -559,6 +574,50 @@ def build_minimal_graph(
             "warnings": _merge_messages(state.get("warnings"), warnings),
         }
 
+    def fact_check_artifacts(state: WorkflowState) -> dict[str, Any]:
+        """Apply A-003 after accepted explanations and quiz structure checks."""
+
+        blueprint = state["blueprint"]
+        result = run_fact_check_loop(
+            model_provider,
+            run_id=state["run_id"],
+            blueprint=blueprint,
+            tasks=state.get("content_tasks", []),
+            context_packs=state.get("context_packs", []),
+            content_artifacts=state.get("content_artifacts", []),
+            quiz_artifacts=state.get("quiz_artifacts", []),
+            source_blocks=state.get("source_blocks", []),
+            valid_source_refs=state.get("source_refs", []),
+            policy=fact_check_policy,
+        )
+        final_quiz_artifacts = result["quiz_artifacts"]
+        quiz_coverage = validate_quiz_coverage(
+            final_quiz_artifacts,
+            blueprint,
+            context_packs={pack.context_pack_id: pack for pack in state.get("context_packs", [])},
+            valid_source_refs=state.get("source_refs", []),
+        )
+        artifact_path = write_content_run_artifact(
+            run_id=state["run_id"],
+            blueprint_version=f"{blueprint.artifact_id}:v{blueprint.version}",
+            tasks=state.get("content_tasks", []),
+            context_packs=state.get("context_packs", []),
+            artifacts=result["content_artifacts"],
+            quiz_artifacts=final_quiz_artifacts,
+            quiz_coverage=quiz_coverage,
+            checks=state.get("content_artifact_checks", {}),
+            provider_metadata=state.get("provider_metadata", {}),
+            content_loop_traces=state.get("content_loop_traces", []),
+            content_loop_summary=dict(state.get("content_loop_summary", {})),
+            root=STORAGE_DIR / "artifacts" / "content",
+        )
+        result.update({
+            "quiz_coverage_report": quiz_coverage,
+            "content_artifact_path": str(artifact_path.resolve()),
+            "content_loop_trace_path": str(artifact_path.resolve()),
+        })
+        return result
+
     def assemble_document_ir(state: WorkflowState) -> dict[str, Any]:
         artifacts = [artifact for artifact in state.get("content_artifacts", []) if artifact.status == "accepted"]
         quiz_artifacts = [artifact for artifact in state.get("quiz_artifacts", []) if artifact.status == "accepted"]
@@ -592,6 +651,7 @@ def build_minimal_graph(
     def review(state: WorkflowState) -> dict[str, Any]:
         document = state["document"]
         issues = list(document.issues)
+        issues.extend(state.get("fact_check_issues", []))
         valid_refs = set(state["source_refs"])
         tasks = state.get("content_tasks", [])
         artifacts = state.get("content_artifacts", [])
@@ -688,6 +748,7 @@ def build_minimal_graph(
         "record_content_blocked_run": record_content_blocked_run,
         "record_content_failed_run": record_content_failed_run,
         "generate_quiz_artifacts": generate_quiz_artifacts,
+        "fact_check_artifacts": fact_check_artifacts,
         "assemble_document_ir": assemble_document_ir,
         "validate_document_ir": validate_document_ir,
         "review": review,
@@ -723,7 +784,8 @@ def build_minimal_graph(
     )
     graph.add_edge("record_content_blocked_run", END)
     graph.add_edge("record_content_failed_run", END)
-    graph.add_edge("generate_quiz_artifacts", "assemble_document_ir")
+    graph.add_edge("generate_quiz_artifacts", "fact_check_artifacts")
+    graph.add_edge("fact_check_artifacts", "assemble_document_ir")
     graph.add_edge("assemble_document_ir", "validate_document_ir")
     graph.add_edge("validate_document_ir", "review")
     graph.add_edge("review", "assemble")
@@ -740,6 +802,9 @@ def run_minimal_workflow(
     document_id: str | None = None,
     blueprint_max_attempts: int | None = None,
     content_reflection_max_attempts: int | None = None,
+    fact_check_max_corrections: int | None = None,
+    fact_check_max_claims_per_unit: int | None = None,
+    fact_check_web_enabled: bool | None = None,
 ) -> WorkflowState:
     initial: WorkflowState = {"run_id": run_id}
     if blueprint:
@@ -755,6 +820,9 @@ def run_minimal_workflow(
         provider,
         blueprint_max_attempts=blueprint_max_attempts,
         content_reflection_max_attempts=content_reflection_max_attempts,
+        fact_check_max_corrections=fact_check_max_corrections,
+        fact_check_max_claims_per_unit=fact_check_max_claims_per_unit,
+        fact_check_web_enabled=fact_check_web_enabled,
     ).invoke(initial)
     # Keep the graph independently testable while ensuring API/CLI callers
     # can reconstruct the result without relying on process memory.

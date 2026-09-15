@@ -28,7 +28,6 @@ from annotation.workflow.content_support import (
     _dedupe_review_issues,
     _mock_content_critique,
     _mock_content_draft,
-    _teaching_material_artifact,
     _unit_context,
 )
 from annotation.workflow.graph import _metadata, _provider_metadata
@@ -64,13 +63,13 @@ def build_content_reflection_subgraph(
             "fixture_adaptation": True,
         }
 
-    def artifact_group(
+    def artifact_from_draft(
         *,
         draft: ContentDraft,
         state: ContentReflectionState,
         attempt: int,
         prompt_version: str,
-    ) -> list[ContentArtifact]:
+    ) -> ContentArtifact:
         task = state["task"]
         unit = state["unit"]
         pack = state["context_pack"]
@@ -86,29 +85,14 @@ def build_content_reflection_subgraph(
             attempt=attempt,
             prompt_version=prompt_version,
         )
-        artifacts = [primary]
-        if unit.teaching_materials:
-            artifacts.append(_teaching_material_artifact(
-                draft=draft,
-                parent=primary,
-                task=task,
-                unit=unit,
-                pack=pack,
-                run_id=state["run_id"],
-                provider_name=provider_name,
-                fixture_adaptation=fixture_adaptation,
-                attempt=attempt,
-                prompt_version=prompt_version,
-                status="draft",
-            ))
-        return artifacts
+        return primary
 
     def generate_candidate(state: ContentReflectionState) -> dict[str, Any]:
         attempt = int(state.get("attempt", 0)) + 1
         task = state["task"]
         unit = state["unit"]
         pack = state["context_pack"]
-        previous = [artifact.model_dump(mode="json") for artifact in state.get("candidate_artifacts", [])]
+        previous = state.get("candidate_artifact")
         is_revision = attempt > 1
         if is_revision:
             prompt = load_prompt(
@@ -116,7 +100,11 @@ def build_content_reflection_subgraph(
                 KNOWLEDGE_UNIT_CONTEXT=_unit_context(unit),
                 CONTEXT_PACK=render_context_pack(pack),
                 ACCEPTANCE_CRITERIA=json.dumps(task.acceptance_criteria, ensure_ascii=False),
-                CANDIDATE_ARTIFACTS=json.dumps(previous, ensure_ascii=False, indent=2),
+                CANDIDATE_ARTIFACT=json.dumps(
+                    previous.model_dump(mode="json") if previous is not None else {},
+                    ensure_ascii=False,
+                    indent=2,
+                ),
                 HARD_CHECK_RESULT=json.dumps(
                     state.get("hard_check").model_dump(mode="json") if state.get("hard_check") else {},
                     ensure_ascii=False,
@@ -148,7 +136,7 @@ def build_content_reflection_subgraph(
             "generation_retryable": False,
             "generation_provider_metadata": {},
             "candidate_draft": None,
-            "candidate_artifacts": [],
+            "candidate_artifact": None,
             "hard_check": None,
             "critic_prompt": None,
             "critic_raw_output": "",
@@ -196,7 +184,7 @@ def build_content_reflection_subgraph(
                 "candidate_draft": draft,
                 "fixture_adaptation": fixture_adaptation,
             })
-            result["candidate_artifacts"] = artifact_group(
+            result["candidate_artifact"] = artifact_from_draft(
                 draft=draft,
                 state={**state, **result},
                 attempt=attempt,
@@ -235,7 +223,7 @@ def build_content_reflection_subgraph(
             unit=state["unit"],
             context_pack=state["context_pack"],
             valid_source_refs=set(state.get("valid_source_refs", [])),
-            candidate_artifacts=list(state.get("candidate_artifacts", [])),
+            candidate_artifact=state.get("candidate_artifact"),
         )
         return {"hard_check": check}
 
@@ -246,12 +234,16 @@ def build_content_reflection_subgraph(
     def critic_candidate(state: ContentReflectionState) -> dict[str, Any]:
         task = state["task"]
         unit = state["unit"]
-        candidates = list(state.get("candidate_artifacts", []))
+        candidate = state.get("candidate_artifact")
         prompt = load_prompt(
             "critique_content_artifact",
             KNOWLEDGE_UNIT_CONTEXT=_unit_context(unit),
             ACCEPTANCE_CRITERIA=json.dumps(task.acceptance_criteria, ensure_ascii=False),
-            CANDIDATE_ARTIFACTS=json.dumps([artifact.model_dump(mode="json") for artifact in candidates], ensure_ascii=False, indent=2),
+            CANDIDATE_ARTIFACT=json.dumps(
+                candidate.model_dump(mode="json") if candidate is not None else {},
+                ensure_ascii=False,
+                indent=2,
+            ),
         )
         result: dict[str, Any] = {
             "critic_prompt": prompt,
@@ -287,13 +279,10 @@ def build_content_reflection_subgraph(
                 metadata = _metadata(response)
                 metadata["agent"] = "critique_content_artifact"
                 raw_output = response.raw_text
-            primary = next((artifact for artifact in candidates if artifact.parent_artifact_id is None), None)
-            teaching = next((artifact for artifact in candidates if artifact.parent_artifact_id == getattr(primary, "artifact_id", None)), None)
             feedback = _critic_review_issues(
                 critique,
                 task=task,
-                primary_artifact=primary,
-                teaching_artifact=teaching,
+                primary_artifact=candidate,
                 attempt=int(state["attempt"]),
             )
             result.update({
@@ -356,8 +345,8 @@ def build_content_reflection_subgraph(
         else:
             route, stop_reason, final_status = "accept", "accepted", "accepted"
 
-        candidates = list(state.get("candidate_artifacts", []))
-        if final_status is not None and not candidates:
+        candidate = state.get("candidate_artifact")
+        if final_status is not None and candidate is None:
             error = state.get("generation_error") or state.get("critic_error") or "内容反思 loop 未生成候选。"
             if not feedback:
                 feedback.append(_content_issue(
@@ -368,7 +357,7 @@ def build_content_reflection_subgraph(
                     message=error,
                     suggested_action="检查模型调用或修订当前知识单元。",
                 ))
-            candidates = [_blocked_content_artifact(
+            candidate = _blocked_content_artifact(
                 task=state["task"],
                 unit=state["unit"],
                 context_pack=state.get("context_pack"),
@@ -377,16 +366,13 @@ def build_content_reflection_subgraph(
                 attempt=attempt,
                 error=error,
                 issues=feedback,
-            )]
-        if route == "accept":
-            for artifact in candidates:
-                artifact.status = "accepted"
-            if candidates:
-                candidates[0].issues = _dedupe_review_issues([*candidates[0].issues, *feedback])
-        elif final_status is not None:
-            for artifact in candidates:
-                artifact.status = "blocked"
-                artifact.issues = _dedupe_review_issues([*artifact.issues, *feedback])
+            )
+        if route == "accept" and candidate is not None:
+            candidate.status = "accepted"
+            candidate.issues = _dedupe_review_issues([*candidate.issues, *feedback])
+        elif final_status is not None and candidate is not None:
+            candidate.status = "blocked"
+            candidate.issues = _dedupe_review_issues([*candidate.issues, *feedback])
 
         trace_attempt = ContentAttemptTrace(
             attempt=attempt,
@@ -395,7 +381,7 @@ def build_content_reflection_subgraph(
             revision_prompt=state.get("revision_prompt"),
             generation_raw_output=state.get("generation_raw_output", ""),
             generation_parsed_output=state.get("generation_parsed_output"),
-            candidate_artifacts=candidates,
+            candidate_artifact=candidate,
             generation_status=generation_status,
             generation_error=state.get("generation_error"),
             generation_error_category=state.get("generation_error_category"),
@@ -426,11 +412,11 @@ def build_content_reflection_subgraph(
                 final_status=final_status,
                 final_attempt=attempt,
                 stop_reason=stop_reason or "max_attempts",
-                final_content_artifact_ids=[artifact.artifact_id for artifact in candidates],
+                final_content_artifact_id=candidate.artifact_id if candidate is not None else None,
             )
             result.update({
                 "content_loop_trace": trace,
-                "final_artifacts": candidates,
+                "final_artifacts": [candidate] if candidate is not None else [],
                 "final_draft": state.get("candidate_draft") if final_status == "accepted" else None,
             })
         return result

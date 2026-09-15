@@ -30,7 +30,7 @@ def _trace(status: str = "accepted") -> dict[str, object]:
     }
 
 
-def test_content_artifact_v2_keeps_trace_path_and_summary(tmp_path) -> None:
+def test_content_artifact_v3_keeps_trace_path_and_summary(tmp_path) -> None:
     summary = {"unit_count": 1, "accepted_count": 1, "final_status": "accepted"}
     path = write_content_run_artifact(
         run_id="content-v2",
@@ -46,7 +46,7 @@ def test_content_artifact_v2_keeps_trace_path_and_summary(tmp_path) -> None:
     )
 
     payload = json.loads(path.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == "content-artifact-v2"
+    assert payload["schema_version"] == "content-artifact-v3"
     assert payload["content_loop_traces"] == [_trace()]
     assert payload["content_loop_summary"]["trace_path"] == str(path.resolve())
     assert summary["trace_path"] == str(path.resolve())

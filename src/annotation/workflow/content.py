@@ -53,7 +53,7 @@ def _compact(text: str, limit: int = 1400) -> str:
 
 
 def _terms(unit: KnowledgeUnit) -> list[str]:
-    values = [unit.title, *unit.learning_objectives, *unit.teaching_materials]
+    values = [unit.title, *unit.learning_objectives]
     terms: list[str] = []
     for value in values:
         for term in re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z]{3,}|\d+", value):
@@ -78,7 +78,6 @@ def select_source_refs(
     *,
     title: str,
     learning_objectives: list[str],
-    teaching_materials: list[str],
     blocks: list[SourceBlock],
     limit: int = 3,
 ) -> list[str]:
@@ -93,7 +92,6 @@ def select_source_refs(
         title=title,
         kind="concept",
         learning_objectives=learning_objectives,
-        teaching_materials=teaching_materials,
     )
     candidates = _lexical_candidates(unit, blocks)
     return [block.source_ref for block in candidates[:limit]]
@@ -194,7 +192,7 @@ def build_context_pack(
 
 
 def _content_loop_summary_from_traces(traces: list[dict[str, Any]]) -> dict[str, Any]:
-    """Build the minimum v2 aggregate when a caller only supplies traces."""
+    """Build the minimum content-loop aggregate when a caller only supplies traces."""
 
     statuses = [str(trace.get("final_status") or trace.get("status") or "") for trace in traces]
     attempts = [attempt for trace in traces for attempt in trace.get("attempts") or []]
@@ -280,7 +278,7 @@ def write_content_run_artifact(
     if content_loop_summary is not None:
         content_loop_summary["trace_path"] = trace_path
     payload = {
-        "schema_version": "content-artifact-v2" if traces or content_loop_summary is not None else "content-artifact-v1",
+        "schema_version": "content-artifact-v3" if traces or content_loop_summary is not None else "content-artifact-v1",
         "run_id": run_id,
         "blueprint_version": blueprint_version,
         "tasks": [task.model_dump(mode="json") for task in tasks],

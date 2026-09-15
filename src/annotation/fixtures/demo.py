@@ -1,8 +1,6 @@
 from annotation.domain.artifacts import (
     CalloutNode,
     DocumentSection,
-    ExampleNode,
-    FormulaNode,
     LearningDocument,
     MarkdownNode,
     QuizNode,
@@ -39,15 +37,18 @@ def demo_document() -> LearningDocument:
                         content="本章从实数系开始。教材把实数视为满足域公理、序公理和完全公理的对象，并用这些性质建立后续数学分析的基础。学习时要区分“如何构造实数”和“实数满足哪些性质”：本章主要关注后者。",
                         source_refs=["src-fixture-p1-b1"],
                     ),
-                    FormulaNode(id="formula-order", latex=r"x<y \Rightarrow x+z<y+z", source_refs=["src-fixture-p1-b2"]),
+                    MarkdownNode(
+                        id="formula-order",
+                        content="$$x<y \\Rightarrow x+z<y+z$$",
+                        source_refs=["src-fixture-p1-b2"],
+                    ),
                     CalloutNode(
                         id="callout-note", tone="info", title="学习提示",
                         content="先掌握集合、子集、区间和有序关系，再进入上界、上确界（记作 $\\sup S$）与完备性。它们是后面极限理论的语言基础。",
                     ),
-                    ExampleNode(
-                        id="example-interval", title="例：区间的端点",
-                        problem="说明开区间 $(a,b)$ 与闭区间 $[a,b]$ 的区别。",
-                        solution="$(a,b)$ 只包含满足 $a<x<b$ 的点，不包含端点；$[a,b]$ 包含满足 $a≤x≤b$ 的全部点。半开区间只包含其中一个端点。",
+                    MarkdownNode(
+                        id="example-interval",
+                        content="### 例题：区间的端点\n\n**问题**：说明开区间 $(a,b)$ 与闭区间 $[a,b]$ 的区别。\n\n**解析**：$(a,b)$ 只包含满足 $a<x<b$ 的点，不包含端点；$[a,b]$ 包含满足 $a\\le x\\le b$ 的全部点。半开区间只包含其中一个端点。",
                         source_refs=["src-fixture-p1-b2"],
                     ),
                 ],
@@ -60,15 +61,14 @@ def demo_document() -> LearningDocument:
                         content="有理数可以写成整数之商；非有理数的实数称为无理数。教材通过上界、最大元和最小上界引出完全公理：非空且有上界的实数集具有最小上界。这个性质解释了为什么实数轴没有‘空隙’，也是许多极限存在性结论的基础。",
                         source_refs=["src-fixture-p3-b1", "src-fixture-p4-b1"],
                     ),
-                    FormulaNode(
+                    MarkdownNode(
                         id="formula-supremum",
-                        latex=r"\alpha=\sup S \iff (\forall x\in S,\ x\le\alpha)\land(\forall\varepsilon>0,\ \exists x\in S,\ \alpha-\varepsilon<x)",
+                        content="$$\\alpha=\\sup S \\iff (\\forall x\\in S,\\ x\\le\\alpha)\\land(\\forall\\varepsilon>0,\\ \\exists x\\in S,\\ \\alpha-\\varepsilon<x)$$",
                         source_refs=["src-fixture-p4-b1"],
                     ),
-                    ExampleNode(
-                        id="example-supremum", title="例：最大元不等于上确界",
-                        problem="比较 $S=[0,1]$ 与 $S=[0,1)$ 的最大元和上确界。",
-                        solution="$[0,1]$ 的最大元和上确界都是 $1$；$[0,1)$ 没有最大元，但上确界仍为 $1$。上确界是所有上界中最小的，不要求它属于集合。",
+                    MarkdownNode(
+                        id="example-supremum",
+                        content="### 例题：最大元不等于上确界\n\n**问题**：比较 $S=[0,1]$ 与 $S=[0,1)$ 的最大元和上确界。\n\n**解析**：$[0,1]$ 的最大元和上确界都是 $1$；$[0,1)$ 没有最大元，但上确界仍为 $1$。上确界是所有上界中最小的，不要求它属于集合。",
                         source_refs=["src-fixture-p4-b1"],
                     ),
                 ],
@@ -81,15 +81,14 @@ def demo_document() -> LearningDocument:
                         content="复数可写成 $z=x+iy$，其中 $x$、$y$ 为实数，$i$ 为满足 $i^2=-1$ 的虚数单位。复数可以在复平面上表示为点或向量，因此加法对应分量相加，绝对值对应从原点到该点的距离。教材特别指出，复数不能按实数那样建立同时满足序公理的全序。",
                         source_refs=["src-fixture-p13-b1", "src-fixture-p14-b1"],
                     ),
-                    FormulaNode(
+                    MarkdownNode(
                         id="formula-complex-modulus",
-                        latex=r"z=x+iy,\qquad |z|=\sqrt{x^2+y^2},\qquad z\overline z=|z|^2",
+                        content="$$z=x+iy,\\qquad |z|=\\sqrt{x^2+y^2},\\qquad z\\overline z=|z|^2$$",
                         source_refs=["src-fixture-p15-b1"],
                     ),
-                    ExampleNode(
-                        id="example-complex", title="例：复数的几何意义",
-                        problem="写出 $z=3+4i$ 的实部、虚部和绝对值。",
-                        solution="实部为 $3$，虚部为 $4$；在复平面上对应点 $(3,4)$，所以 $|z|=\\sqrt{3^2+4^2}=5$。",
+                    MarkdownNode(
+                        id="example-complex",
+                        content="### 例题：复数的几何意义\n\n**问题**：写出 $z=3+4i$ 的实部、虚部和绝对值。\n\n**解析**：实部为 $3$，虚部为 $4$；在复平面上对应点 $(3,4)$，所以 $|z|=\\sqrt{3^2+4^2}=5$。",
                         source_refs=["src-fixture-p14-b1", "src-fixture-p15-b1"],
                     ),
                     QuizNode(

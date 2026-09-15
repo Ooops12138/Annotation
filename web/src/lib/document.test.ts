@@ -5,8 +5,10 @@ import { normalizeLearningDocument, normalizeReviewReport } from './documentAdap
 
 describe('Document IR presentation contract', () => {
   it('keeps the renderer node allow-list explicit', () => {
-    expect(supportedDocumentNodeTypes).toEqual(['markdown', 'formula', 'example', 'callout', 'quiz'])
+    expect(supportedDocumentNodeTypes).toEqual(['markdown', 'callout', 'quiz'])
     expect(isSupportedDocumentNodeType('quiz')).toBe(true)
+    expect(isSupportedDocumentNodeType('formula')).toBe(false)
+    expect(isSupportedDocumentNodeType('example')).toBe(false)
     expect(isSupportedDocumentNodeType('<script>')).toBe(false)
   })
 
@@ -17,7 +19,8 @@ describe('Document IR presentation contract', () => {
     expect(isDocumentNode({ type: 'quiz', id: 'q-duplicate', question: '问题', options: ['A', 'A'], answer: 'A', explanation: '解释' })).toBe(false)
     expect(isDocumentNode({ type: 'quiz', id: 'q-blank-option', question: '问题', options: ['A', ' '], answer: 'A', explanation: '解释' })).toBe(false)
     expect(isDocumentNode({ type: 'quiz', id: 'q-2', question: '问题', options: ['A'], answer: 'A' })).toBe(false)
-    expect(isDocumentNode({ type: 'formula', id: 'f-1', latex: '<script>alert(1)</script>' })).toBe(true)
+    expect(isDocumentNode({ type: 'formula', id: 'f-1', latex: 'x^2' })).toBe(false)
+    expect(isDocumentNode({ type: 'example', id: 'e-1', title: '例题', problem: '题目', solution: '解答' })).toBe(false)
     expect(isDocumentNode({ type: 'html', id: 'x-1', content: '<script>alert(1)</script>' })).toBe(false)
   })
 
@@ -32,13 +35,21 @@ describe('Document IR presentation contract', () => {
     expect(rejectedNodeToReviewIssue(rejected[0]).severity).toBe('blocking')
   })
 
-  it('adapts API payloads without dropping unknown nodes', () => {
+  it('adapts legacy nodes while preserving unknown nodes for review', () => {
     const document = normalizeLearningDocument({
       artifact_id: 'doc-1', document_id: 'doc-1', run_id: 'run-1', version: 1, status: 'published', created_by: 'fixture',
       blueprint_version: 'bp-1:v1', title: '学习文档', source_refs: ['src-1'],
-      sections: [{ id: 'sec-1', title: '第一节', children: [{ type: 'html', id: 'unsafe-1' }] }],
+      sections: [{ id: 'sec-1', title: '第一节', children: [
+        { type: 'formula', id: 'formula-1', latex: 'x^2', source_refs: ['src-1'] },
+        { type: 'example', id: 'example-1', title: '平方', problem: '计算 $2^2$', solution: '$2^2 = 4$' },
+        { type: 'html', id: 'unsafe-1' },
+      ] }],
     })
-    expect(document?.sections[0].children).toHaveLength(1)
+    expect(document?.sections[0].children).toEqual([
+      { type: 'markdown', id: 'formula-1', content: '$$\nx^2\n$$', source_refs: ['src-1'] },
+      { type: 'markdown', id: 'example-1', content: '### 平方\n\n**题目**\n\n计算 $2^2$\n\n**解答**\n\n$2^2 = 4$' },
+      { type: 'html', id: 'unsafe-1' },
+    ])
     expect(normalizeLearningDocument({ title: '缺少契约' })).toBeNull()
   })
 

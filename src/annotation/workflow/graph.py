@@ -20,8 +20,6 @@ from annotation.domain.artifacts import (
     ContentUnitLoopTrace,
     ContextPack,
     DocumentSection,
-    ExampleNode,
-    FormulaNode,
     KnowledgeUnit,
     LearningBlueprint,
     LearningDocument,
@@ -40,6 +38,7 @@ from annotation.workflow.content import select_source_refs
 from annotation.workflow.models import (
     BlueprintDraft,
     BlueprintDraftUnit,
+    CalloutDraft,
     ContentDraft,
     ContentReflectionState,
     DocumentDraft,
@@ -54,17 +53,13 @@ from annotation.workflow.content_support import (
     _content_loop_summary,
     _critic_review_issues,
     _dedupe_review_issues,
-    _focused_teaching_material,
     _formula_format_issues,
-    _is_focused_unit,
     _lossless_refs,
-    _markdown_formula_format_issues,
     _merge_messages,
     _mock_content_critique,
     _mock_content_draft,
     _normalize_refs,
     _plan_content_tasks,
-    _teaching_material_artifact,
     _unescaped_token_count,
     _unit_context,
 )
@@ -145,7 +140,7 @@ def _fallback_document(run_id: str, blueprint: LearningBlueprint, source_documen
     excerpt = " ".join(re.sub(r"\s+", " ", block.text).strip() for block in blocks[:3])[:1200]
     section = DocumentSection(id="section-main", title=blueprint.title, children=[
         MarkdownNode(id="explanation-main", content=f"本节围绕“{blueprint.title}”组织学习。教材摘录：{excerpt or '教材文本未能提取，当前内容需要人工审核。'}", source_refs=refs),
-        FormulaNode(id="formula-main", latex=r"\lim_{x \to a} f(x)=L", source_refs=refs),
+        MarkdownNode(id="formula-main", content="$$\\lim_{x \\to a} f(x)=L$$", source_refs=refs),
         CalloutNode(id="review-note", tone="warning", title="来源与审核提示", content="这是基于教材片段生成的 POC 内容，发布前仍需人工核对定义、公式和例题。"),
         QuizNode(id="quiz-main", question="本节学习内容的首要事实来源是什么？", options=[source_document.title, "未提供来源", "与教材无关的外部资料"], answer=source_document.title, explanation="本 Demo 将教材 PDF 作为主来源，并保留 SourceBlock 引用。", source_refs=refs),
     ])
@@ -298,35 +293,19 @@ def _review_report_for(document: LearningDocument, state: WorkflowState) -> Revi
             ))
     else:
         checks["quiz_integrity"] = "passed" if quiz_nodes or coverage_status == "passed" else "warning"
-    malformed_formulas = [
-        getattr(node, "id", "unknown")
-        for node in nodes
-        if getattr(node, "type", None) == "formula" and not str(getattr(node, "latex", "")).strip()
-    ]
     formula_format_issues = _formula_format_issues(nodes)
     checks["formula_format"] = "blocking" if formula_format_issues else "passed"
-    if malformed_formulas or formula_format_issues:
+    if formula_format_issues:
         checks["formula_integrity"] = "blocking"
-        if malformed_formulas:
-            issues.append(ReviewIssue(
-                issue_id="review-empty-formula",
-                category="formula",
-                severity="blocking",
-                layer="structure",
-                message=f"公式节点缺少 LaTeX 内容：{', '.join(malformed_formulas)}。",
-                target_id=document.document_id,
-                suggested_action="补充原始 LaTeX 公式或将该节点退回内容生成阶段。",
-            ))
-        if formula_format_issues:
-            issues.append(ReviewIssue(
-                issue_id="review-invalid-formula-format",
-                category="formula",
-                severity="blocking",
-                layer="structure",
-                message="；".join(formula_format_issues),
-                target_id=document.document_id,
-                suggested_action="正文公式使用成对的 $...$ 或 $$...$$ 定界符；FormulaNode 的 formula_latex 保持为不带定界符的原始 KaTeX LaTeX，并检查花括号是否配对。",
-            ))
+        issues.append(ReviewIssue(
+            issue_id="review-invalid-formula-format",
+            category="formula",
+            severity="blocking",
+            layer="structure",
+            message="；".join(formula_format_issues),
+            target_id=document.document_id,
+            suggested_action="使用成对的 Markdown 数学定界符，并将公式直接写在 Markdown 正文或提示框内容中。",
+        ))
     else:
         checks["formula_integrity"] = "passed"
     invalid_node_refs = []
@@ -410,39 +389,32 @@ def _assemble_document_from_artifacts(
         for unit_id in artifact.knowledge_unit_ids:
             quiz_by_unit.setdefault(unit_id, []).append(artifact)
     sections: list[DocumentSection] = []
-    units = {unit.artifact_id: unit for unit in blueprint.knowledge_units}
     for index, unit in enumerate(blueprint.knowledge_units, start=1):
         unit_artifacts = by_unit.get(unit.artifact_id, [])
         children: list[Any] = []
         for artifact in unit_artifacts:
-            if artifact.material_role == "example":
-                children.append(ExampleNode(
-                    id=f"{artifact.artifact_id}-example",
-                    title=artifact.title or f"{unit.title}：练习材料",
-                    problem=f"围绕“{unit.title}”完成一次复述、辨析或计算。",
-                    solution=artifact.content,
-                    source_refs=list(artifact.source_refs),
-                ))
-            elif artifact.material_role in {"bridge", "proof", "supplement"}:
-                children.append(CalloutNode(
-                    id=f"{artifact.artifact_id}-callout",
-                    tone="info",
-                    title=artifact.title or "教学材料",
-                    content=artifact.content,
-                    source_refs=list(artifact.source_refs),
-                ))
-            else:
-                children.append(MarkdownNode(id=f"{artifact.artifact_id}-markdown", content=artifact.content, source_refs=list(artifact.source_refs)))
-            formula_latex = artifact.metadata.get("formula_latex")
-            if formula_latex:
-                children.append(FormulaNode(id=f"{artifact.artifact_id}-formula", latex=str(formula_latex), source_refs=list(artifact.source_refs)))
-        if unit.learning_objectives:
-            children.append(CalloutNode(
-                id=f"unit-{unit.artifact_id}-objectives",
-                tone="info",
-                title="学习目标",
-                content="；".join(unit.learning_objectives),
+            children.append(MarkdownNode(
+                id=f"{artifact.artifact_id}-markdown",
+                content=artifact.content,
+                source_refs=list(artifact.source_refs),
             ))
+            raw_callouts = artifact.metadata.get("callouts", [])
+            if not isinstance(raw_callouts, list):
+                continue
+            for callout_index, raw_callout in enumerate(raw_callouts, start=1):
+                # Accepted candidates passed this shape at the reflection
+                # boundary. Retain a defensive guard for legacy/manual data.
+                try:
+                    callout = CalloutDraft.model_validate(raw_callout)
+                except Exception:
+                    continue
+                children.append(CalloutNode(
+                    id=f"{artifact.artifact_id}-callout-{callout_index}",
+                    tone=callout.tone,
+                    title=callout.title,
+                    content=callout.content,
+                    source_refs=list(artifact.source_refs),
+                ))
         # Quiz artifacts are independently checked before assembly.  Keep the
         # learner-facing projection deliberately small and preserve the exact
         # item/source identity in the artifact rather than adding hidden fields
@@ -505,7 +477,6 @@ def _blueprint_from_draft(
                 refs = select_source_refs(
                     title=unit.title,
                     learning_objectives=unit.learning_objectives,
-                    teaching_materials=unit.teaching_materials,
                     blocks=state["source_blocks"],
                 ) or ordered_refs[:3]
                 adapted = True
@@ -528,7 +499,6 @@ def _blueprint_from_draft(
             learning_objectives=list(unit.learning_objectives),
             prerequisites=list(unit.prerequisites),
             related_unit_ids=list(unit.related_unit_ids),
-            teaching_materials=list(unit.teaching_materials),
         ))
     if not units:
         raise ProviderError("blueprint contains no knowledge units", category="schema")
@@ -573,6 +543,9 @@ def build_minimal_graph(
     *,
     blueprint_max_attempts: int | None = None,
     content_reflection_max_attempts: int | None = None,
+    fact_check_max_corrections: int | None = None,
+    fact_check_max_claims_per_unit: int | None = None,
+    fact_check_web_enabled: bool | None = None,
 ):
     """Build the top-level workflow graph while retaining the legacy import path."""
 
@@ -582,6 +555,9 @@ def build_minimal_graph(
         provider,
         blueprint_max_attempts=blueprint_max_attempts,
         content_reflection_max_attempts=content_reflection_max_attempts,
+        fact_check_max_corrections=fact_check_max_corrections,
+        fact_check_max_claims_per_unit=fact_check_max_claims_per_unit,
+        fact_check_web_enabled=fact_check_web_enabled,
     )
 
 
@@ -594,6 +570,9 @@ def run_minimal_workflow(
     document_id: str | None = None,
     blueprint_max_attempts: int | None = None,
     content_reflection_max_attempts: int | None = None,
+    fact_check_max_corrections: int | None = None,
+    fact_check_max_claims_per_unit: int | None = None,
+    fact_check_web_enabled: bool | None = None,
 ) -> WorkflowState:
     """Run the top-level workflow while retaining the legacy import path."""
 
@@ -607,4 +586,7 @@ def run_minimal_workflow(
         document_id=document_id,
         blueprint_max_attempts=blueprint_max_attempts,
         content_reflection_max_attempts=content_reflection_max_attempts,
+        fact_check_max_corrections=fact_check_max_corrections,
+        fact_check_max_claims_per_unit=fact_check_max_claims_per_unit,
+        fact_check_web_enabled=fact_check_web_enabled,
     )

@@ -602,7 +602,6 @@ def _unit_context(unit: KnowledgeUnit) -> str:
         "kind": unit.kind,
         "learning_objectives": unit.learning_objectives,
         "prerequisites": unit.prerequisites,
-        "teaching_materials": unit.teaching_materials,
         "source_refs": unit.source_refs,
     }, ensure_ascii=False, separators=(",", ":"))
 

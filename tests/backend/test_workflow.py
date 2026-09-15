@@ -2,8 +2,8 @@ from annotation.providers import MockProvider
 from annotation.workflow import run_minimal_workflow
 from annotation.workflow.graph import _formula_format_issues, _review_report_for, _source_context
 from annotation.domain.artifacts import (
+    CalloutNode,
     DocumentSection,
-    FormulaNode,
     LearningDocument,
     MarkdownNode,
     QuizNode,
@@ -89,10 +89,11 @@ def test_minimal_langgraph_workflow_produces_traceable_document() -> None:
     assert sum(len(section.children) for section in state["document"].sections) >= 10
     assert len(state["content_tasks"]) == len(state["blueprint"].knowledge_units)
     assert len(state["context_packs"]) == len(state["content_tasks"])
-    assert len(state["content_artifacts"]) >= len(state["content_tasks"])
+    assert len(state["content_artifacts"]) == len(state["content_tasks"])
     assert all(artifact.status == "accepted" for artifact in state["content_artifacts"])
     assert all(artifact.context_pack_id for artifact in state["content_artifacts"])
-    assert any(artifact.material_role == "bridge" for artifact in state["content_artifacts"])
+    assert all(artifact.content_type == "explanation" for artifact in state["content_artifacts"])
+    assert all(task.content_types == ["explanation", "quiz"] for task in state["content_tasks"])
     assert all(task.status == "accepted" for task in state["content_tasks"])
     assert len(state["quiz_artifacts"]) == 6
     assert all(artifact.question_count == len(artifact.questions) for artifact in state["quiz_artifacts"])
@@ -120,19 +121,19 @@ def test_workflow_can_use_a_stable_logical_document_id() -> None:
 
 def test_formula_format_review_keeps_text_math_and_rejects_malformed_math() -> None:
     issues = _formula_format_issues([
-        FormulaNode(id="wrapped", latex="$$x^2$$"),
-        FormulaNode(id="unicode", latex="i²=-1"),
+        MarkdownNode(id="wrapped", content="$$x^2$$"),
+        CalloutNode(id="unicode", tone="info", title="提示", content="i²=-1"),
         MarkdownNode(id="inline", content="解释公式：$x+1$"),
         MarkdownNode(id="unclosed", content="未完成的公式：$x+1"),
         MarkdownNode(id="unicode-text", content="未转换的公式：i²=-1"),
         MarkdownNode(id="code", content="代码示例：`price $5` 和 `i²`。"),
         MarkdownNode(id="bracketed", content=r"行内公式：\(x+1\)。"),
     ])
-    assert any("formula_latex 不应包含" in issue for issue in issues)
-    assert any("公式节点“unicode”包含" in issue for issue in issues)
+    assert any("正文节点“unicode”包含" in issue for issue in issues)
     assert any("正文节点“unclosed”" in issue and "未配对" in issue for issue in issues)
     assert any("正文节点“unicode-text”包含" in issue for issue in issues)
     assert not any("正文节点“inline”" in issue for issue in issues)
+    assert not any("正文节点“wrapped”" in issue for issue in issues)
     assert not any("正文节点“code”" in issue for issue in issues)
     assert not any("正文节点“bracketed”" in issue for issue in issues)
 

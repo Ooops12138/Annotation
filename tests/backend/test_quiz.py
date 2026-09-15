@@ -41,7 +41,6 @@ def _task(unit: KnowledgeUnit, *, quiz_count: int | None = None) -> ContentTask:
         run_id="run-quiz",
         blueprint_version="bp-quiz:v1",
         knowledge_unit_id=unit.artifact_id,
-        content_types=["quiz"],
         quiz_count=quiz_count,
         source_refs=["src-1"],
     )

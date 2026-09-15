@@ -1,4 +1,4 @@
-export const supportedDocumentNodeTypes = ['markdown', 'formula', 'example', 'callout', 'quiz'] as const
+export const supportedDocumentNodeTypes = ['markdown', 'callout', 'quiz'] as const
 
 export type SupportedDocumentNodeType = (typeof supportedDocumentNodeTypes)[number]
 
@@ -23,22 +23,6 @@ export interface MarkdownNode {
   source_refs?: string[]
 }
 
-export interface FormulaNode {
-  type: 'formula'
-  id: string
-  latex: string
-  source_refs?: string[]
-}
-
-export interface ExampleNode {
-  type: 'example'
-  id: string
-  title: string
-  problem: string
-  solution: string
-  source_refs?: string[]
-}
-
 export interface CalloutNode {
   type: 'callout'
   id: string
@@ -58,7 +42,7 @@ export interface QuizNode {
   source_refs?: string[]
 }
 
-export type DocumentNode = MarkdownNode | FormulaNode | ExampleNode | CalloutNode | QuizNode
+export type DocumentNode = MarkdownNode | CalloutNode | QuizNode
 
 export interface DocumentSection {
   type?: 'section'
@@ -113,8 +97,6 @@ export function isDocumentNode(value: unknown): value is DocumentNode {
   if (!optionalRefs) return false
   switch (node.type) {
     case 'markdown': return typeof node.content === 'string'
-    case 'formula': return typeof node.latex === 'string'
-    case 'example': return typeof node.title === 'string' && typeof node.problem === 'string' && typeof node.solution === 'string'
     case 'callout': return isCalloutTone(node.tone) && typeof node.title === 'string' && typeof node.content === 'string'
     case 'quiz': {
       if (typeof node.question !== 'string' || !node.question.trim()) return false

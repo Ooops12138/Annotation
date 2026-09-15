@@ -13,9 +13,7 @@ Return **only valid JSON** matching this exact object shape:
   "sections": [
     {
       "title": "string",
-      "explanation": "string",
-      "formula": "string",
-      "example": "string",
+      "explanation": "complete learner-facing Markdown",
       "source_hint": "string"
     }
   ],
@@ -37,6 +35,9 @@ items from the evidence in the textbook excerpt, including zero when no
 well-supported practice item is appropriate; do not pad the list to reach a
 fixed target. Use only facts in the textbook excerpt; do not invent facts.
 `source_hint` should be a page or section label, not a `source_ref`.
+Put formulas and ordinary worked examples directly in `explanation` as
+Markdown, using `$...$` or `$$...$$` for math. Do not return separate formula
+or example fields.
 
 ## Textbook excerpt
 
