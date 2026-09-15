@@ -2,32 +2,13 @@
 
 Annotation 是一个教材驱动的 AI 学习文档生成项目。
 
-输入一本教材的一章，系统完成：
+输入一本pdf教材，系统完成：
 
 ```text
 教材 → 来源解析 → Learning Blueprint → 学习内容 → 基础审核 → 在线学习文档
 ```
 
-最终页面面向零基础或初学者，重点是循序渐进的讲解、例题、公式、练习、学习路径、教材出处和必要的中性风险/观点提示。项目不是通用教育平台，也不是静态文档导出器。
-
-当前项目有两个并行目标：P0 负责验证一个章节的教材到学习文档闭环；A-* Agent 工程线
-用于练习可观测的状态、反馈和条件路由，不改变 P0 发布门槛。现阶段主链路仍是线性工作流，
-第一个条件回边由 A-001 Blueprint 修订 loop 引入：
-
-```text
-固定工作流：教材 → Blueprint → 内容 → Document IR → 审核 → 发布
-
-A-001 子图：generate → check → route
-                         ├─ accept
-                         ├─ revise → generate
-                         ├─ block
-                         └─ fail
-```
-
-Loop 的完整 prompt、原始模型输出、检查反馈、路由和停止原因只保存在可审计 artifact；
-学习者页面不显示 attempt、模型信息或内部 ID。设计输入见
-[Agent 策划书](<documents/ai_textbook_learning_project_proposal (1).md>)，其中尚未实现的
-能力以 proposal 形式保留，不代表当前已交付。
+最终页面面向零基础或初学者，重点是循序渐进的讲解、例题、公式、练习、和必要的风险/观点提示。
 
 ## 当前技术路线
 
@@ -40,8 +21,6 @@ Loop 的完整 prompt、原始模型输出、检查反馈、路由和停止原�
 - 内容契约：JSON Document IR
 - 公式：KaTeX
 - 测试：pytest + Vitest
-
-VitePress 是完整项目的前端外壳。当前只优先完成一个学习者页面；审核报告、运行状态和原始来源信息通过 API、日志或 Console 调试，不另外建设工作台。
 
 ## 本地运行
 
@@ -128,13 +107,8 @@ Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/workflow/run?run_id=de
 如果本机继承了不可用的 SOCKS 环境代理，可在这次试跑中清除代理变量，或按网络环境
 配置可用的代理；这不是 Annotation 或 DeepSeek provider 的必需依赖。
 
-蓝图阶段现在把 PDF 解析出的全部非空 `SourceBlock` 传给模型，而不是只传前 12 个块。
-对应实现位置是 [`src/annotation/workflow/graph.py`](src/annotation/workflow/graph.py) 的
-`_source_context` 和 `load_or_create_blueprint`。内容生成仍按每个知识单元使用受限
-`ContextPack`，以控制单次请求大小；工作流返回的 blueprint、content artifacts、
-review report 和模型调用记录都保存在 `storage/`。该命令是一次真实集成试跑，仍需
-根据 [docs/evaluation.md](docs/evaluation.md) 做人工抽样，不能仅凭 `published` 状态
-认定教材内容已经完成整章质量验收。
+工作流返回的 blueprint、content artifacts、
+review report 和模型调用记录都保存在 `storage/`。
 
 当前 P0 题目闭环按知识单元生成独立 `QuizArtifact`：题量由 Agent 根据学习目标和
 ContextPack 证据自主决定，可以为 0；题目带唯一答案、解析、目标和教材来源。覆盖矩阵
