@@ -31,7 +31,22 @@ class WorkflowContentProvider:
     def generate_structured(self, request: StructuredGenerationRequest[Any]) -> StructuredGenerationResponse[Any]:
         self.calls.append(request)
         schema_name = request.schema.__name__
-        if schema_name == "ContentDraft":
+        if schema_name == "ContentTaskPlanDraft":
+            payload = {
+                "tasks": [
+                    {
+                        "knowledge_unit_id": unit_id,
+                        "quiz_count": 0,
+                        "source_refs": ["src-1"],
+                        "interactive_component_policy": "skip",
+                        "content_agent_strategy": "single",
+                        "execution_group": index,
+                        "acceptance_criteria": ["使用测试教材证据。"],
+                    }
+                    for index, unit_id in enumerate(self.quiz_unit_ids, start=1)
+                ]
+            }
+        elif schema_name == "ContentDraft":
             payload: dict[str, Any] = {
                 "title": "测试单元",
                 "content": "## 讲解\n\n先解释定义，再用 $x^2$ 说明一个教材例子。",
@@ -56,6 +71,16 @@ class WorkflowContentProvider:
                 "target_objectives": [],
                 "questions": [],
             }
+        elif schema_name == "InteractiveComponentDraft":
+            payload = {
+                "task_id": request.metadata["task_id"],
+                "knowledge_unit_id": request.metadata["knowledge_unit_id"],
+                "context_pack_id": request.metadata["context_pack_id"],
+                "spec": None,
+                "not_needed_reason": "内容反思测试不生成交互组件。",
+            }
+        elif schema_name == "InteractiveComponentCritiqueDraft":
+            payload = {"issues": []}
         else:  # pragma: no cover - makes a new workflow call visible in the test.
             raise AssertionError(f"unexpected schema: {schema_name}")
         value = request.schema.model_validate(payload)
@@ -184,7 +209,7 @@ def test_exhausted_content_loop_blocks_run_and_skips_quiz_and_document(monkeypat
     assert all(trace.final_status == "blocked" for trace in state["content_loop_traces"])
     assert all(len(trace.attempts) == 3 for trace in state["content_loop_traces"])
     assert all(attempt.critic_status == "skipped" for trace in state["content_loop_traces"] for attempt in trace.attempts)
-    assert all(call.schema.__name__ == "ContentDraft" for call in provider.calls)
+    assert all(call.schema.__name__ in {"ContentTaskPlanDraft", "ContentDraft"} for call in provider.calls)
 
 
 def test_context_pack_over_budget_creates_attempt_zero_without_model_calls(monkeypatch) -> None:
@@ -201,7 +226,7 @@ def test_context_pack_over_budget_creates_attempt_zero_without_model_calls(monke
 
     assert state["workflow_status"] == "blocked"
     assert state["content_loop_status"] == "blocked"
-    assert provider.calls == []
+    assert [call.schema.__name__ for call in provider.calls] == ["ContentTaskPlanDraft"]
     assert all(trace.final_status == "blocked" for trace in state["content_loop_traces"])
     assert all(trace.final_attempt == 0 for trace in state["content_loop_traces"])
     assert all(trace.stop_reason == "context_pack_source_over_budget" for trace in state["content_loop_traces"])
@@ -224,6 +249,7 @@ def test_mock_workflow_keeps_six_unit_quiz_regression_and_emits_six_content_trac
     assert len(state["content_artifacts"]) == 6
     assert all("## 跟做材料" not in artifact.content for artifact in state["content_artifacts"])
     rendered_nodes = [node for section in state["document"].sections for node in section.children]
-    assert {node.type for node in rendered_nodes}.issubset({"markdown", "callout", "quiz"})
+    assert {node.type for node in rendered_nodes}.issubset({"markdown", "callout", "quiz", "interactive_component"})
+    assert any(node.type == "interactive_component" for node in rendered_nodes)
     assert not any(node.type == "callout" for node in rendered_nodes)
     assert len(state["quiz_artifacts"]) == 6

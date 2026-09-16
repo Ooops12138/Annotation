@@ -20,6 +20,8 @@ from annotation.domain.artifacts import (
     ContentUnitLoopTrace,
     ContextPack,
     DocumentSection,
+    InteractiveComponentArtifact,
+    InteractiveComponentNode,
     KnowledgeUnit,
     LearningBlueprint,
     LearningDocument,
@@ -379,6 +381,7 @@ def _assemble_document_from_artifacts(
     artifacts: list[ContentArtifact],
     provider_name: str,
     quiz_artifacts: list[QuizArtifact] | None = None,
+    interactive_component_artifacts: list[InteractiveComponentArtifact] | None = None,
 ) -> LearningDocument:
     by_unit: dict[str, list[ContentArtifact]] = {}
     for artifact in artifacts:
@@ -388,6 +391,9 @@ def _assemble_document_from_artifacts(
     for artifact in quiz_artifacts or []:
         for unit_id in artifact.knowledge_unit_ids:
             quiz_by_unit.setdefault(unit_id, []).append(artifact)
+    component_by_unit: dict[str, list[InteractiveComponentArtifact]] = {}
+    for artifact in interactive_component_artifacts or []:
+        component_by_unit.setdefault(artifact.knowledge_unit_id, []).append(artifact)
     sections: list[DocumentSection] = []
     for index, unit in enumerate(blueprint.knowledge_units, start=1):
         unit_artifacts = by_unit.get(unit.artifact_id, [])
@@ -415,6 +421,16 @@ def _assemble_document_from_artifacts(
                     content=callout.content,
                     source_refs=list(artifact.source_refs),
                 ))
+        # A-004 specs are accepted before assembly and remain immutable in the
+        # learner IR. They deliberately sit after the explanation and before
+        # independently generated quiz questions for the same unit.
+        for component_artifact in component_by_unit.get(unit.artifact_id, []):
+            children.append(InteractiveComponentNode(
+                id=f"{component_artifact.artifact_id}-node",
+                artifact_id=component_artifact.artifact_id,
+                spec=component_artifact.spec,
+                source_refs=list(component_artifact.source_refs),
+            ))
         # Quiz artifacts are independently checked before assembly.  Keep the
         # learner-facing projection deliberately small and preserve the exact
         # item/source identity in the artifact rather than adding hidden fields
@@ -436,6 +452,10 @@ def _assemble_document_from_artifacts(
             if ref not in refs:
                 refs.append(ref)
     for artifact in quiz_artifacts or []:
+        for ref in artifact.source_refs:
+            if ref not in refs:
+                refs.append(ref)
+    for artifact in interactive_component_artifacts or []:
         for ref in artifact.source_refs:
             if ref not in refs:
                 refs.append(ref)
@@ -546,6 +566,8 @@ def build_minimal_graph(
     fact_check_max_corrections: int | None = None,
     fact_check_max_claims_per_unit: int | None = None,
     fact_check_web_enabled: bool | None = None,
+    interactive_component_max_attempts: int | None = None,
+    interactive_component_sandbox_runner: Any | None = None,
 ):
     """Build the top-level workflow graph while retaining the legacy import path."""
 
@@ -558,6 +580,8 @@ def build_minimal_graph(
         fact_check_max_corrections=fact_check_max_corrections,
         fact_check_max_claims_per_unit=fact_check_max_claims_per_unit,
         fact_check_web_enabled=fact_check_web_enabled,
+        interactive_component_max_attempts=interactive_component_max_attempts,
+        interactive_component_sandbox_runner=interactive_component_sandbox_runner,
     )
 
 
@@ -573,6 +597,8 @@ def run_minimal_workflow(
     fact_check_max_corrections: int | None = None,
     fact_check_max_claims_per_unit: int | None = None,
     fact_check_web_enabled: bool | None = None,
+    interactive_component_max_attempts: int | None = None,
+    interactive_component_sandbox_runner: Any | None = None,
 ) -> WorkflowState:
     """Run the top-level workflow while retaining the legacy import path."""
 
@@ -589,4 +615,6 @@ def run_minimal_workflow(
         fact_check_max_corrections=fact_check_max_corrections,
         fact_check_max_claims_per_unit=fact_check_max_claims_per_unit,
         fact_check_web_enabled=fact_check_web_enabled,
+        interactive_component_max_attempts=interactive_component_max_attempts,
+        interactive_component_sandbox_runner=interactive_component_sandbox_runner,
     )

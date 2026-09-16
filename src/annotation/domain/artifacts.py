@@ -216,6 +216,9 @@ class ContentTask(BaseModel):
     # is only a hint for deterministic fixtures and compatibility callers.
     quiz_count: int | None = Field(default=None, ge=0, validation_alias=AliasChoices("quiz_count", "quiz_question_count", "question_count"))
     source_refs: list[str] = Field(default_factory=list)
+    interactive_component_policy: Literal["auto", "required", "skip"] = "auto"
+    content_agent_strategy: Literal["single", "parallel"] = "single"
+    execution_group: int = Field(default=1, ge=1)
     acceptance_criteria: list[str] = Field(default_factory=list)
     status: Literal["planned", "generating", "accepted", "needs_revision", "blocked"] = "planned"
 
@@ -579,6 +582,368 @@ class BlueprintLoopTrace(BaseModel):
     artifact_path: str | None = None
 
 
+ComponentType = Literal["interval_line", "complex_plane", "function_graph"]
+
+
+class InteractiveComponentPlan(BaseModel):
+    """The bounded A-004 decision to create one component or none."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    plan_id: str
+    run_id: str
+    status: Literal["planned", "not_needed"]
+    knowledge_unit_id: str | None = None
+    accepted_content_artifact_id: str | None = None
+    source_refs: list[str] = Field(default_factory=list)
+    allowed_component_types: list[ComponentType] = Field(
+        default_factory=lambda: ["interval_line", "complex_plane", "function_graph"]
+    )
+    reason: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_selection(self) -> "InteractiveComponentPlan":
+        if self.status == "planned":
+            if not self.knowledge_unit_id or not self.accepted_content_artifact_id:
+                raise ValueError("a planned component requires a knowledge unit and accepted content artifact")
+            if not self.source_refs:
+                raise ValueError("a planned component requires textbook source refs")
+        return self
+
+
+class InteractiveComponentTask(BaseModel):
+    """Auditable work item for one post-A-003 interactive component."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str
+    plan_id: str
+    run_id: str
+    knowledge_unit_id: str
+    accepted_content_artifact_id: str
+    context_pack_id: str
+    source_refs: list[str] = Field(min_length=1)
+    allowed_component_types: list[ComponentType] = Field(
+        default_factory=lambda: ["interval_line", "complex_plane", "function_graph"]
+    )
+    acceptance_criteria: list[str] = Field(default_factory=list)
+    status: Literal["planned", "generating", "accepted", "needs_revision", "blocked", "not_needed"] = "planned"
+
+
+class ComponentAccessibility(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    aria_label: str = Field(min_length=1, max_length=240)
+    description: str = Field(min_length=1, max_length=1200)
+    observation: str = Field(min_length=1, max_length=1200)
+
+
+class ToggleControlSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["toggle"] = "toggle"
+    control_id: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
+    label: str = Field(min_length=1, max_length=160)
+    default_value: bool = False
+
+
+class RangeControlSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["range"] = "range"
+    control_id: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
+    label: str = Field(min_length=1, max_length=160)
+    minimum: float = Field(allow_inf_nan=False)
+    maximum: float = Field(allow_inf_nan=False)
+    step: float = Field(gt=0, allow_inf_nan=False)
+    default_value: float = Field(allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def validate_bounds(self) -> "RangeControlSpec":
+        if self.minimum >= self.maximum:
+            raise ValueError("range control minimum must be below maximum")
+        if not self.minimum <= self.default_value <= self.maximum:
+            raise ValueError("range control default_value must be inside its bounds")
+        return self
+
+
+ComponentControlSpec = Annotated[Union[ToggleControlSpec, RangeControlSpec], Field(discriminator="kind")]
+
+
+class ComponentTestAction(BaseModel):
+    """A selector-free browser action from the component test DSL."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["toggle", "set_range"]
+    control_id: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
+    value: bool | float
+    expected_text: str = Field(min_length=1, max_length=300)
+
+    @model_validator(mode="after")
+    def validate_action_value(self) -> "ComponentTestAction":
+        if self.action == "toggle" and type(self.value) is not bool:
+            raise ValueError("toggle action value must be a boolean")
+        if self.action == "set_range" and (type(self.value) is bool or not isinstance(self.value, (int, float))):
+            raise ValueError("set_range action value must be numeric")
+        return self
+
+
+class ComponentAnnotation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    annotation_id: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
+    x: float = Field(allow_inf_nan=False)
+    y: float = Field(allow_inf_nan=False)
+    text: str = Field(min_length=1, max_length=240)
+
+
+class InteractiveComponentSpecBase(BaseModel):
+    """Fields rendered as text or controlled JSXGraph primitives only."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    component_id: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
+    title: str = Field(min_length=1, max_length=200)
+    learning_objective: str = Field(min_length=1, max_length=600)
+    source_refs: list[str] = Field(min_length=1)
+    accessibility: ComponentAccessibility
+    controls: list[ComponentControlSpec] = Field(default_factory=list)
+    test_actions: list[ComponentTestAction] = Field(default_factory=list)
+    annotations: list[ComponentAnnotation] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_controls_and_actions(self) -> "InteractiveComponentSpecBase":
+        control_ids = [control.control_id for control in self.controls]
+        if len(control_ids) != len(set(control_ids)):
+            raise ValueError("component control ids must be unique")
+        annotation_ids = [annotation.annotation_id for annotation in self.annotations]
+        if len(annotation_ids) != len(set(annotation_ids)):
+            raise ValueError("component annotation ids must be unique")
+        controls = {control.control_id: control for control in self.controls}
+        for action in self.test_actions:
+            control = controls.get(action.control_id)
+            if control is None:
+                raise ValueError(f"test action references unknown control: {action.control_id}")
+            if action.action == "toggle" and control.kind != "toggle":
+                raise ValueError("toggle action must target a toggle control")
+            if action.action == "set_range" and control.kind != "range":
+                raise ValueError("set_range action must target a range control")
+        return self
+
+
+class IntervalLineSpec(InteractiveComponentSpecBase):
+    component_type: Literal["interval_line"] = "interval_line"
+    interval_start: float = Field(allow_inf_nan=False)
+    interval_end: float = Field(allow_inf_nan=False)
+    left_endpoint: Literal["open", "closed"]
+    right_endpoint: Literal["open", "closed"]
+    supremum: float = Field(allow_inf_nan=False)
+    maximum: float | None = Field(default=None, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def validate_interval_semantics(self) -> "IntervalLineSpec":
+        if self.interval_start >= self.interval_end:
+            raise ValueError("interval_start must be below interval_end")
+        if self.supremum != self.interval_end:
+            raise ValueError("an interval-line supremum must equal interval_end")
+        expected_maximum = self.interval_end if self.right_endpoint == "closed" else None
+        if self.maximum != expected_maximum:
+            raise ValueError("interval-line maximum must match the right endpoint inclusion")
+        return self
+
+
+class ComplexPlanePoint(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    point_id: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
+    real: float = Field(allow_inf_nan=False)
+    imaginary: float = Field(allow_inf_nan=False)
+    label: str = Field(min_length=1, max_length=120)
+
+
+class ComplexPlaneSpec(InteractiveComponentSpecBase):
+    component_type: Literal["complex_plane"] = "complex_plane"
+    points: list[ComplexPlanePoint] = Field(min_length=1, max_length=24)
+
+    @model_validator(mode="after")
+    def validate_points(self) -> "ComplexPlaneSpec":
+        point_ids = [point.point_id for point in self.points]
+        if len(point_ids) != len(set(point_ids)):
+            raise ValueError("complex-plane point ids must be unique")
+        return self
+
+
+class FunctionDomainSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    start: float = Field(allow_inf_nan=False)
+    end: float = Field(allow_inf_nan=False)
+    start_endpoint: Literal["open", "closed"] = "closed"
+    end_endpoint: Literal["open", "closed"] = "closed"
+
+    @model_validator(mode="after")
+    def validate_domain(self) -> "FunctionDomainSpec":
+        if self.start >= self.end:
+            raise ValueError("function domain start must be below end")
+        return self
+
+
+class FunctionGraphSpec(InteractiveComponentSpecBase):
+    component_type: Literal["function_graph"] = "function_graph"
+    formula: str = Field(min_length=1, max_length=500)
+    domain: FunctionDomainSpec
+    sample_points: list[float] = Field(min_length=2, max_length=80)
+    excluded_points: list[float] = Field(default_factory=list, max_length=24)
+    sample_count: int = Field(default=120, ge=20, le=400)
+
+    @model_validator(mode="after")
+    def validate_sampling(self) -> "FunctionGraphSpec":
+        if any(point < self.domain.start or point > self.domain.end for point in self.sample_points):
+            raise ValueError("function sample points must stay in the declared domain")
+        if len(set(self.excluded_points)) != len(self.excluded_points):
+            raise ValueError("function excluded points must be unique")
+        if any(point <= self.domain.start or point >= self.domain.end for point in self.excluded_points):
+            raise ValueError("function excluded points must be strictly inside the declared domain")
+        return self
+
+
+InteractiveComponentSpec = Annotated[
+    Union[IntervalLineSpec, ComplexPlaneSpec, FunctionGraphSpec],
+    Field(discriminator="component_type"),
+]
+
+
+class InteractiveComponentArtifact(ArtifactBase):
+    """One immutable, sandbox-validated component specification."""
+
+    plan_id: str
+    task_id: str
+    knowledge_unit_id: str
+    accepted_content_artifact_id: str
+    context_pack_id: str
+    spec: InteractiveComponentSpec
+    prompt_version: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    artifact_path: str | None = None
+
+
+class InteractiveComponentHardCheckResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["accepted", "needs_revision", "blocked"]
+    issues: list[ReviewIssue] = Field(default_factory=list)
+    checked_artifact_id: str | None = None
+
+
+class InteractiveComponentCriticIssueDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: Literal[
+        "objective_mismatch",
+        "source_mismatch",
+        "mathematical_mismatch",
+        "interaction_mismatch",
+        "accessibility",
+    ]
+    message: str = Field(min_length=1)
+    suggested_action: str | None = None
+
+
+class InteractiveComponentCritiqueDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    issues: list[InteractiveComponentCriticIssueDraft] = Field(default_factory=list)
+
+
+class InteractiveComponentSandboxActionResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: str
+    control_id: str
+    passed: bool
+    detail: str = ""
+
+
+class InteractiveComponentSandboxReport(BaseModel):
+    """Report emitted by the local Playwright renderer sandbox."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["passed", "render_error", "timeout", "assertion_failed", "browser_error", "skipped"]
+    console_errors: list[str] = Field(default_factory=list)
+    dom_snapshot: str = ""
+    accessibility_snapshot: str = ""
+    action_results: list[InteractiveComponentSandboxActionResult] = Field(default_factory=list)
+    screenshot_path: str | None = None
+    network_blocked: bool = False
+    blocked_requests: list[str] = Field(default_factory=list)
+    error: str | None = None
+    duration_ms: int | None = Field(default=None, ge=0)
+
+
+class InteractiveComponentAttemptTrace(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    attempt: int = Field(ge=0)
+    generation_stage: Literal["initial", "revision", "skipped"] = "initial"
+    generation_prompt: str = ""
+    revision_prompt: str | None = None
+    generation_raw_output: str = ""
+    generation_parsed_output: dict[str, Any] | None = None
+    candidate_artifact: InteractiveComponentArtifact | dict[str, Any] | None = None
+    generation_status: Literal["succeeded", "schema_error", "provider_error", "skipped"] = "skipped"
+    generation_error: str | None = None
+    generation_error_category: str | None = None
+    generation_provider_metadata: dict[str, Any] = Field(default_factory=dict)
+    hard_check: InteractiveComponentHardCheckResult | None = None
+    sandbox_report: InteractiveComponentSandboxReport | None = None
+    critic_prompt: str | None = None
+    critic_raw_output: str = ""
+    critic_parsed_output: dict[str, Any] | None = None
+    critic_status: Literal["succeeded", "schema_error", "provider_error", "skipped"] = "skipped"
+    critic_error: str | None = None
+    critic_error_category: str | None = None
+    critic_provider_metadata: dict[str, Any] = Field(default_factory=dict)
+    feedback: list[ReviewIssue] = Field(default_factory=list)
+    route: Literal["accept", "revise", "block", "fail", "not_needed"]
+    stop_reason: Literal[
+        "accepted",
+        "at_risk",
+        "not_needed",
+        "max_attempts",
+        "non_retryable_provider_error",
+        "browser_infrastructure_error",
+        "context_pack_missing",
+    ] | None = None
+
+
+class InteractiveComponentLoopTrace(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    trace_id: str
+    run_id: str
+    plan: InteractiveComponentPlan
+    task_id: str | None = None
+    knowledge_unit_id: str | None = None
+    context_pack_id: str | None = None
+    max_attempts: int = Field(ge=1, le=3)
+    attempts: list[InteractiveComponentAttemptTrace] = Field(default_factory=list)
+    final_status: Literal["accepted", "at_risk", "blocked", "failed", "not_needed"]
+    final_attempt: int = Field(ge=0)
+    stop_reason: Literal[
+        "accepted",
+        "at_risk",
+        "not_needed",
+        "max_attempts",
+        "non_retryable_provider_error",
+        "browser_infrastructure_error",
+        "context_pack_missing",
+    ]
+    final_component_artifact_id: str | None = None
+    artifact_path: str | None = None
+
+
 class MarkdownNode(BaseModel):
     type: Literal["markdown"] = "markdown"
     id: str
@@ -605,7 +970,18 @@ class QuizNode(BaseModel):
     source_refs: list[str] = Field(default_factory=list)
 
 
-DocumentNode = Annotated[Union[MarkdownNode, CalloutNode, QuizNode], Field(discriminator="type")]
+class InteractiveComponentNode(BaseModel):
+    type: Literal["interactive_component"] = "interactive_component"
+    id: str
+    artifact_id: str
+    spec: InteractiveComponentSpec
+    source_refs: list[str] = Field(default_factory=list)
+
+
+DocumentNode = Annotated[
+    Union[MarkdownNode, CalloutNode, QuizNode, InteractiveComponentNode],
+    Field(discriminator="type"),
+]
 
 
 class DocumentSection(BaseModel):

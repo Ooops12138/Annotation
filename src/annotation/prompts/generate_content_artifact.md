@@ -69,6 +69,12 @@ $$|z|=\sqrt{x^2+y^2}$$
 {{KNOWLEDGE_UNIT_CONTEXT}}
 ```
 
+## ContentTask from course architect
+
+```json
+{{CONTENT_TASK}}
+```
+
 ## ContextPack
 
 {{CONTEXT_PACK}}

@@ -101,6 +101,31 @@ def _fact_check_summary(state: Mapping[str, Any]) -> dict[str, Any] | None:
     return result or None
 
 
+def _interactive_component_summary(state: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Return the compact A-004 result without duplicating its full trace."""
+
+    summary = state.get("interactive_component_summary")
+    trace = state.get("interactive_component_loop_trace")
+    payload = _model_dump(summary) if summary is not None else None
+    result = dict(payload) if isinstance(payload, Mapping) else {}
+    if not result and trace is not None:
+        trace_payload = _model_dump(trace)
+        if isinstance(trace_payload, Mapping):
+            result = {
+                "component_count": len(state.get("interactive_component_artifacts", [])),
+                "attempt_count": len(trace_payload.get("attempts") or []),
+                "final_status": trace_payload.get("final_status"),
+                "stop_reason": trace_payload.get("stop_reason"),
+            }
+    status = state.get("interactive_component_status")
+    if status and not result.get("final_status"):
+        result["final_status"] = status
+    path = state.get("interactive_component_artifact_path") or result.get("trace_path")
+    if path:
+        result["trace_path"] = path
+    return result or None
+
+
 def _blueprint_loop_summary(
     state: Mapping[str, Any],
     *,
@@ -241,12 +266,61 @@ def write_fact_check_artifact(state: Mapping[str, Any], *, root: str | Path | No
     return _write_json(path, payload)
 
 
+def write_interactive_component_artifact(state: Mapping[str, Any], *, root: str | Path | None = None) -> Path | None:
+    """Persist the complete A-004 plan, candidates, browser evidence and trace."""
+
+    trace = state.get("interactive_component_loop_trace")
+    summary = _interactive_component_summary(state)
+    plan = state.get("interactive_component_plan")
+    artifacts = list(state.get("interactive_component_artifacts", []))
+    if trace is None and summary is None and plan is None and not artifacts:
+        return None
+    trace_payload = _model_dump(trace) if trace is not None else None
+    run_id = str(
+        state.get("run_id")
+        or (trace_payload.get("run_id") if isinstance(trace_payload, Mapping) else None)
+        or getattr(plan, "run_id", None)
+        or "run"
+    )
+    path = _immutable_path(
+        Path(root or (STORAGE_DIR / "artifacts" / "interactive_components"))
+        / _safe_run_id(run_id)
+        / "interactive-components-v1.json"
+    )
+    artifact_path = str(path.resolve())
+    if trace is not None and hasattr(trace, "artifact_path"):
+        trace.artifact_path = artifact_path
+        trace_payload = _model_dump(trace)
+    elif isinstance(trace, dict):
+        trace["artifact_path"] = artifact_path
+        trace_payload = _model_dump(trace)
+    for artifact in artifacts:
+        if hasattr(artifact, "artifact_path"):
+            artifact.artifact_path = artifact_path
+        elif isinstance(artifact, dict):
+            artifact["artifact_path"] = artifact_path
+    payload = {
+        "schema_version": "interactive-components-v1",
+        "run_id": run_id,
+        "status": state.get("interactive_component_status") or (
+            trace_payload.get("final_status") if isinstance(trace_payload, Mapping) else None
+        ),
+        "summary": summary,
+        "plan": _model_dump(plan) if plan is not None else None,
+        "task": _model_dump(state.get("interactive_component_task")) if state.get("interactive_component_task") is not None else None,
+        "interactive_components": [_model_dump(artifact) for artifact in artifacts],
+        "loop_trace": trace_payload,
+    }
+    return _write_json(path, payload)
+
+
 def write_run_manifest(
     state: Mapping[str, Any],
     *,
     blueprint_path: Path | None,
     document_path: Path | None,
     fact_check_path: Path | None = None,
+    interactive_component_path: Path | None = None,
     root: str | Path | None = None,
 ) -> Path:
     """Write a compact index of the run without duplicating large source text."""
@@ -257,12 +331,15 @@ def write_run_manifest(
     loop_summary = _blueprint_loop_summary(state, trace_path=blueprint_path)
     content_loop_summary = _content_loop_summary(state)
     fact_check_summary = _fact_check_summary(state)
+    interactive_component_summary = _interactive_component_summary(state)
     fact_check_path_value = state.get("fact_check_artifact_path") or (
         str(fact_check_path.resolve()) if fact_check_path else None
     )
     manifest = {
         "schema_version": (
-            "run-manifest-v3"
+            "run-manifest-v4"
+            if interactive_component_summary is not None or interactive_component_path is not None
+            else "run-manifest-v3"
             if fact_check_summary is not None or fact_check_path_value
             else "run-manifest-v2" if content_loop_summary is not None else "run-manifest-v1"
         ),
@@ -278,6 +355,7 @@ def write_run_manifest(
         "source_block_count": len(state.get("source_blocks", [])),
         "content_artifact_count": len(state.get("content_artifacts", [])),
         "quiz_artifact_count": len(state.get("quiz_artifacts", [])),
+        "interactive_component_count": len(state.get("interactive_component_artifacts", [])),
         "quiz_coverage_status": (
             getattr(state.get("quiz_coverage_report"), "status", None)
             if state.get("quiz_coverage_report") is not None
@@ -302,6 +380,12 @@ def write_run_manifest(
     if fact_check_summary is not None or fact_check_path_value:
         manifest["paths"]["fact_check"] = fact_check_path_value
         manifest["fact_check_summary"] = fact_check_summary
+    interactive_component_path_value = state.get("interactive_component_artifact_path") or (
+        str(interactive_component_path.resolve()) if interactive_component_path else None
+    )
+    if interactive_component_summary is not None or interactive_component_path_value:
+        manifest["paths"]["interactive_components"] = interactive_component_path_value
+        manifest["interactive_component_summary"] = interactive_component_summary
     path = _immutable_path(Path(root or (STORAGE_DIR / "artifacts" / "runs")) / _safe_run_id(run_id) / "run.json")
     return _write_json(path, manifest)
 
@@ -323,6 +407,8 @@ def persist_workflow_snapshots(state: dict[str, Any]) -> dict[str, Any]:
     state["quiz_artifact_path"] = str(quiz_path.resolve()) if quiz_path else ""
     fact_check_path = write_fact_check_artifact(state)
     state["fact_check_artifact_path"] = str(fact_check_path.resolve()) if fact_check_path else ""
+    interactive_component_path = write_interactive_component_artifact(state)
+    state["interactive_component_artifact_path"] = str(interactive_component_path.resolve()) if interactive_component_path else ""
     if blueprint_path and _blueprint_loop_payload(state) is not None:
         state["blueprint_trace_path"] = str(blueprint_path.resolve())
         state["blueprint_loop_trace_path"] = str(blueprint_path.resolve())
@@ -331,6 +417,7 @@ def persist_workflow_snapshots(state: dict[str, Any]) -> dict[str, Any]:
         blueprint_path=blueprint_path,
         document_path=document_path,
         fact_check_path=fact_check_path,
+        interactive_component_path=interactive_component_path,
     )
     state["blueprint_artifact_path"] = str(blueprint_path.resolve()) if blueprint_path else ""
     state["document_artifact_path"] = str(document_path.resolve()) if document_path else ""
@@ -343,6 +430,7 @@ __all__ = [
     "write_blueprint_artifact",
     "write_document_artifact",
     "write_fact_check_artifact",
+    "write_interactive_component_artifact",
     "write_quiz_artifact",
     "write_run_manifest",
 ]

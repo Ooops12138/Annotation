@@ -21,6 +21,7 @@ FACT_CHECK_MAX_CORRECTIONS = 2
 FACT_CHECK_MAX_CLAIMS_PER_UNIT = 20
 FACT_CHECK_TEXTBOOK_RESULT_LIMIT = 5
 FACT_CHECK_WEB_QUERY_LIMIT = 10
+INTERACTIVE_COMPONENT_MAX_ATTEMPTS = 3
 
 
 def blueprint_max_attempts(value: int | str | None = None) -> int:
@@ -60,6 +61,23 @@ def content_reflection_max_attempts(value: int | str | None = None) -> int:
     if attempts < 1:
         raise ValueError("CONTENT_REFLECTION_MAX_ATTEMPTS must be at least 1")
     return min(attempts, CONTENT_REFLECTION_MAX_ATTEMPTS)
+
+
+def interactive_component_max_attempts(value: int | str | None = None) -> int:
+    """Return the bounded A-004 generation/revision attempt limit."""
+
+    raw_value: int | str | None = value
+    if raw_value is None:
+        raw_value = os.getenv("INTERACTIVE_COMPONENT_MAX_ATTEMPTS")
+    if raw_value is None or raw_value == "":
+        return INTERACTIVE_COMPONENT_MAX_ATTEMPTS
+    try:
+        attempts = int(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("INTERACTIVE_COMPONENT_MAX_ATTEMPTS must be an integer from 1 to 3") from exc
+    if attempts < 1:
+        raise ValueError("INTERACTIVE_COMPONENT_MAX_ATTEMPTS must be at least 1")
+    return min(attempts, INTERACTIVE_COMPONENT_MAX_ATTEMPTS)
 
 
 def fact_check_max_corrections(value: int | str | None = None) -> int:

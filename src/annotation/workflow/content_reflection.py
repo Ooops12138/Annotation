@@ -98,6 +98,7 @@ def build_content_reflection_subgraph(
             prompt = load_prompt(
                 "revise_content_artifact",
                 KNOWLEDGE_UNIT_CONTEXT=_unit_context(unit),
+                CONTENT_TASK=json.dumps(task.model_dump(mode="json"), ensure_ascii=False, indent=2),
                 CONTEXT_PACK=render_context_pack(pack),
                 ACCEPTANCE_CRITERIA=json.dumps(task.acceptance_criteria, ensure_ascii=False),
                 CANDIDATE_ARTIFACT=json.dumps(
@@ -118,6 +119,7 @@ def build_content_reflection_subgraph(
             prompt = load_prompt(
                 "generate_content_artifact",
                 KNOWLEDGE_UNIT_CONTEXT=_unit_context(unit),
+                CONTENT_TASK=json.dumps(task.model_dump(mode="json"), ensure_ascii=False, indent=2),
                 CONTEXT_PACK=render_context_pack(pack),
                 ACCEPTANCE_CRITERIA=json.dumps(task.acceptance_criteria, ensure_ascii=False),
             )

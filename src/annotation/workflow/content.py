@@ -254,6 +254,7 @@ def write_content_run_artifact(
     checks: dict[str, str],
     provider_metadata: dict[str, Any],
     root: str | Path,
+    content_task_planning_metadata: dict[str, Any] | None = None,
     content_loop_traces: list[Any] | None = None,
     content_loop_summary: dict[str, Any] | None = None,
 ) -> Path:
@@ -293,6 +294,8 @@ def write_content_run_artifact(
         "checks": checks,
         "provider_metadata": provider_metadata,
     }
+    if content_task_planning_metadata is not None:
+        payload["content_task_planning"] = content_task_planning_metadata
     if traces or content_loop_summary is not None:
         payload["content_loop_traces"] = traces
         payload["content_loop_summary"] = content_loop_summary

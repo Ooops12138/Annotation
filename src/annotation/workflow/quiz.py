@@ -609,11 +609,21 @@ def _unit_context(unit: KnowledgeUnit) -> str:
 def build_quiz_prompt(task: ContentTask, unit: KnowledgeUnit, context_pack: ContextPack) -> str:
     """Render the bounded prompt for one quiz structured call."""
 
+    decision = {
+        "quiz_count": task.quiz_count,
+        "instruction": (
+            f"Generate exactly {task.quiz_count} questions."
+            if task.quiz_count is not None
+            else "No fixed question count; decide from objectives and textbook evidence."
+        ),
+        "acceptance_criteria": task.acceptance_criteria,
+    }
     return load_prompt(
         "generate_quiz_artifact",
         KNOWLEDGE_UNIT_CONTEXT=_unit_context(unit),
         CONTEXT_PACK=render_context_pack(context_pack),
         TARGET_OBJECTIVES=json.dumps(unit.learning_objectives, ensure_ascii=False),
+        COURSE_ARCHITECT_DECISION=json.dumps(decision, ensure_ascii=False, indent=2),
     )
 
 
@@ -787,13 +797,22 @@ def generate_quiz_artifact(
                 target_id=artifact.artifact_id,
                 suggested_action="仅使用当前任务知识单元的稳定 ID 重新生成题目。",
             ))
+        if task.quiz_count is not None and selected_count != task.quiz_count:
+            artifact.issues.append(_issue(
+                f"quiz-count-mismatch-{artifact.artifact_id}",
+                category="coverage",
+                severity="blocking",
+                message=f"题目数量与课程架构师指定不一致：期望 {task.quiz_count}，实际 {selected_count}。",
+                target_id=artifact.artifact_id,
+                suggested_action="按当前 ContentTask.quiz_count 重新生成题目，或由课程架构师修改 ContentTask。",
+            ))
         check = validate_quiz_artifact(
             artifact,
             unit=unit,
             context_pack=context_pack,
         )
-        artifact.issues = check.issues
-        artifact.status = "accepted" if check.status == "accepted" else "blocked"
+        artifact.issues = _dedupe_issues([*artifact.issues, *check.issues])
+        artifact.status = "blocked" if any(issue.severity == "blocking" for issue in artifact.issues) else "accepted"
         return artifact
     except ProviderError as exc:
         return blocked_quiz_artifact(

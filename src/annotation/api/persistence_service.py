@@ -154,6 +154,29 @@ def fact_check_summary(state: Mapping[str, Any]) -> dict[str, Any] | None:
     return result or None
 
 
+def interactive_component_summary(state: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Return only A-004 counters and outcome details to normal API clients."""
+
+    summary = state.get("interactive_component_summary")
+    trace = _mapping_payload(state.get("interactive_component_loop_trace"))
+    payload = _mapping_payload(summary)
+    result = payload or {}
+    if not result and trace is not None:
+        result = {
+            "component_count": len(state.get("interactive_component_artifacts", [])),
+            "attempt_count": len(trace.get("attempts") or []),
+            "final_status": trace.get("final_status"),
+            "stop_reason": trace.get("stop_reason"),
+        }
+    status = state.get("interactive_component_status") or (trace.get("final_status") if trace is not None else None)
+    if status and not result.get("final_status"):
+        result["final_status"] = status
+    path = state.get("interactive_component_artifact_path")
+    if path:
+        result["trace_path"] = path
+    return result or None
+
+
 def _artifact_path(state: Mapping[str, Any], kind: str) -> str | None:
     if kind == "source":
         source = state.get("source_document")
@@ -168,6 +191,8 @@ def _artifact_path(state: Mapping[str, Any], kind: str) -> str | None:
         return state.get("quiz_artifact_path")
     if kind == "fact_check":
         return state.get("fact_check_artifact_path")
+    if kind == "interactive_component":
+        return state.get("interactive_component_artifact_path")
     if kind == "review":
         return state.get("review_report_path")
     if kind == "run":
@@ -221,7 +246,9 @@ def _register_state_artifacts(repo: PersistenceRepository, state: Mapping[str, A
     registered: dict[str, dict[str, Any]] = {}
     fact_check_payload = _mapping_payload(state.get("fact_check_artifact"))
     fact_check_compact_summary = fact_check_summary(state)
-    for kind in ("source", "blueprint", "content", "quiz", "fact_check", "review", "document", "run"):
+    interactive_component_trace = _mapping_payload(state.get("interactive_component_loop_trace"))
+    interactive_component_compact_summary = interactive_component_summary(state)
+    for kind in ("source", "blueprint", "content", "quiz", "fact_check", "interactive_component", "review", "document", "run"):
         raw_path = _artifact_path(state, kind)
         if not raw_path or not Path(raw_path).is_file():
             continue
@@ -247,6 +274,11 @@ def _register_state_artifacts(repo: PersistenceRepository, state: Mapping[str, A
                 if fact_check_payload is not None
                 else f"fact-check-{run_id}"
             ),
+            "interactive_component": (
+                interactive_component_trace.get("final_component_artifact_id")
+                if interactive_component_trace is not None and interactive_component_trace.get("final_component_artifact_id")
+                else f"interactive-components-{run_id}"
+            ),
             "run": f"run-{run_id}",
         }[kind]
         artifact_id = f"{kind}-{_safe_id(run_id)}-v{version}"
@@ -262,6 +294,11 @@ def _register_state_artifacts(repo: PersistenceRepository, state: Mapping[str, A
                 or (fact_check_compact_summary or {}).get("final_status")
                 or "accepted"
             ) if kind == "fact_check" else
+            str(
+                state.get("interactive_component_status")
+                or (interactive_component_compact_summary or {}).get("final_status")
+                or "accepted"
+            ) if kind == "interactive_component" else
             report.status if kind == "review" and report is not None else
             getattr(state.get("quiz_coverage_report"), "status", "accepted") if kind == "quiz" else
             document.status if document is not None and kind == "document" else
@@ -270,6 +307,8 @@ def _register_state_artifacts(repo: PersistenceRepository, state: Mapping[str, A
         metadata = {"source_artifact_id": original_id, "path_role": kind}
         if kind == "fact_check":
             metadata["fact_check_summary"] = fact_check_compact_summary
+        if kind == "interactive_component":
+            metadata["interactive_component_summary"] = interactive_component_compact_summary
         try:
             registered[kind] = repo.register_artifact(
                 run_id,
@@ -305,14 +344,22 @@ def persist_workflow_result(
     loop_summary = _blueprint_loop_summary(state)
     content_loop_summary = _content_loop_summary(state)
     fact_check_compact_summary = fact_check_summary(state)
+    interactive_component_compact_summary = interactive_component_summary(state)
     workflow_status = str(state.get("workflow_status") or "")
     blueprint_loop_status = str((loop_summary or {}).get("final_status") or "")
     content_loop_status = str(state.get("content_loop_status") or (content_loop_summary or {}).get("final_status") or "")
+    interactive_component_status = str(
+        state.get("interactive_component_status")
+        or (interactive_component_compact_summary or {}).get("final_status")
+        or ""
+    )
     terminal_status = (
         workflow_status
         if workflow_status in {"blocked", "failed", "succeeded"}
         else content_loop_status
         if content_loop_status in {"blocked", "failed"}
+        else interactive_component_status
+        if interactive_component_status in {"blocked", "failed"}
         else blueprint_loop_status
         if blueprint_loop_status in {"blocked", "failed"}
         else "failed"
@@ -368,6 +415,7 @@ def persist_workflow_result(
                 "blueprint_loop": loop_summary,
                 "content_loop": content_loop_summary,
                 "fact_check_summary": fact_check_compact_summary,
+                "interactive_component_summary": interactive_component_compact_summary,
             },
         )
         return {"run": run, "document": None, "document_version": None, "artifacts": artifacts}
@@ -395,6 +443,8 @@ def persist_workflow_result(
             "content_loop": content_loop_summary,
             "fact_check_summary": fact_check_compact_summary,
             "fact_check_artifact_path": state.get("fact_check_artifact_path"),
+            "interactive_component_summary": interactive_component_compact_summary,
+            "interactive_component_artifact_path": state.get("interactive_component_artifact_path"),
         },
     )
     run = repo.update_run(
@@ -417,6 +467,7 @@ def persist_workflow_result(
             "blueprint_loop": loop_summary,
             "content_loop": content_loop_summary,
             "fact_check_summary": fact_check_compact_summary,
+            "interactive_component_summary": interactive_component_compact_summary,
         },
     )
     return {"run": run, "document": db_document, "document_version": db_version, "artifacts": artifacts}
@@ -479,8 +530,10 @@ def load_run_payload(repo: PersistenceRepository, run_id: str) -> dict[str, Any]
     loop_summary = (run.get("metadata") or {}).get("blueprint_loop")
     content_loop_summary = (run.get("metadata") or {}).get("content_loop")
     fact_check_compact_summary = (run.get("metadata") or {}).get("fact_check_summary")
+    interactive_component_compact_summary = (run.get("metadata") or {}).get("interactive_component_summary")
     content_row = next((item for item in artifacts if item.get("kind") == "content"), None)
     fact_check_row = next((item for item in artifacts if item.get("kind") == "fact_check"), None)
+    interactive_component_row = next((item for item in artifacts if item.get("kind") == "interactive_component"), None)
     if loop_summary is None:
         blueprint_row = next((item for item in artifacts if item.get("kind") == "blueprint"), None)
         if blueprint_row:
@@ -541,6 +594,28 @@ def load_run_payload(repo: PersistenceRepository, run_id: str) -> dict[str, Any]
                 fact_check_compact_summary = {"final_status": fact_check_payload["status"]}
         except (OSError, ValueError, TypeError):
             fact_check_compact_summary = None
+    if interactive_component_compact_summary is None and interactive_component_row:
+        try:
+            component_payload = _load_json(interactive_component_row["path"])
+            interactive_component_compact_summary = component_payload.get("summary")
+            trace_payload = component_payload.get("loop_trace")
+            if interactive_component_compact_summary is None and isinstance(trace_payload, Mapping):
+                interactive_component_compact_summary = {
+                    "component_count": len(component_payload.get("interactive_components") or []),
+                    "attempt_count": len(trace_payload.get("attempts") or []),
+                    "final_status": trace_payload.get("final_status"),
+                    "stop_reason": trace_payload.get("stop_reason"),
+                }
+            if isinstance(interactive_component_compact_summary, Mapping):
+                interactive_component_compact_summary = dict(interactive_component_compact_summary)
+                status = component_payload.get("status") or (
+                    trace_payload.get("final_status") if isinstance(trace_payload, Mapping) else None
+                )
+                if status and not interactive_component_compact_summary.get("final_status"):
+                    interactive_component_compact_summary["final_status"] = status
+                interactive_component_compact_summary.setdefault("trace_path", interactive_component_row.get("path"))
+        except (OSError, ValueError, TypeError):
+            interactive_component_compact_summary = None
     result: dict[str, Any] = {
         "status": run["status"],
         "run": run,
@@ -549,6 +624,8 @@ def load_run_payload(repo: PersistenceRepository, run_id: str) -> dict[str, Any]
         "content_loop": content_loop_summary,
         "fact_check_summary": fact_check_compact_summary,
         "fact_check_artifact_path": fact_check_row.get("path") if fact_check_row else None,
+        "interactive_component_summary": interactive_component_compact_summary,
+        "interactive_component_artifact_path": interactive_component_row.get("path") if interactive_component_row else None,
     }
     if version:
         result.update(load_document_payload(repo, version["document_id"], version=int(version["version"])) or {})
@@ -559,6 +636,7 @@ __all__ = [
     "load_document_payload",
     "load_run_payload",
     "fact_check_summary",
+    "interactive_component_summary",
     "new_run_id",
     "persist_workflow_result",
     "repository",

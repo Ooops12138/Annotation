@@ -6,6 +6,7 @@ import { asDocumentNode, rejectedNodeRecord, resolveNodeRenderer } from '../../l
 import MarkdownBlock from './MarkdownBlock.vue'
 import CalloutBlock from './CalloutBlock.vue'
 import QuizCard from './QuizCard.vue'
+import InteractiveComponentBlock from './InteractiveComponentBlock.vue'
 import SourcePanel from './SourcePanel.vue'
 
 const props = defineProps<{ node: any; index?: number }>()
@@ -25,6 +26,7 @@ onMounted(() => {
     <MarkdownBlock v-if="renderer() === 'markdown'" :content="node.content" />
     <CalloutBlock v-else-if="renderer() === 'callout'" :tone="node.tone" :title="node.title" :content="node.content" />
     <QuizCard v-else-if="renderer() === 'quiz'" :question="node.question" :options="node.options" :answer="node.answer" :explanation="node.explanation" />
+    <InteractiveComponentBlock v-else-if="renderer() === 'interactive_component'" :spec="node.spec" />
     <SourcePanel :source-refs="node.source_refs" />
   </div>
   <div v-else class="annotation-rejected-node" role="alert">

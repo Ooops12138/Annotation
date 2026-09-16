@@ -97,6 +97,8 @@ class MockProvider:
                     "callouts": [],
                     "source_refs": [],
                 }
+            elif request.schema.__name__ == "ContentTaskPlanDraft":
+                payload = {"tasks": []}
         try:
             value = request.schema.model_validate(payload)
         except Exception as exc:

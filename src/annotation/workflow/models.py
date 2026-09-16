@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, TypedDict
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from annotation.domain.artifacts import (
     BlueprintAttemptTrace,
@@ -16,6 +16,14 @@ from annotation.domain.artifacts import (
     ContentTask,
     ContentUnitLoopTrace,
     ContextPack,
+    InteractiveComponentArtifact,
+    InteractiveComponentAttemptTrace,
+    InteractiveComponentHardCheckResult,
+    InteractiveComponentLoopTrace,
+    InteractiveComponentPlan,
+    InteractiveComponentSandboxReport,
+    InteractiveComponentSpec,
+    InteractiveComponentTask,
     KnowledgeUnit,
     LearningBlueprint,
     LearningDocument,
@@ -102,6 +110,28 @@ class ContentDraft(BaseModel):
         return [str(value)]
 
 
+class ContentTaskDraft(BaseModel):
+    """One structured course-architect decision mapped to ContentTask."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    knowledge_unit_id: str = Field(min_length=1)
+    quiz_count: int | None = Field(default=None, ge=0)
+    source_refs: list[str] = Field(default_factory=list)
+    interactive_component_policy: Literal["auto", "required", "skip"] = "auto"
+    content_agent_strategy: Literal["single", "parallel"] = "single"
+    execution_group: int = Field(default=1, ge=1)
+    acceptance_criteria: list[str] = Field(default_factory=list)
+
+
+class ContentTaskPlanDraft(BaseModel):
+    """A-005 course architect output: the ContentTask list itself."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tasks: list[ContentTaskDraft] = Field(default_factory=list)
+
+
 class FactCheckClaimDraft(BaseModel):
     """One claim selected for the bounded A-003 evidence pass."""
 
@@ -138,6 +168,67 @@ class FactCheckAssessmentsDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     assessments: list[FactCheckAssessmentDraft] = Field(default_factory=list)
+
+
+class InteractiveComponentDraft(BaseModel):
+    """A-004 model output: a data specification, never frontend source code."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str = Field(min_length=1)
+    knowledge_unit_id: str = Field(min_length=1)
+    context_pack_id: str = Field(min_length=1)
+    spec: InteractiveComponentSpec | None = None
+    not_needed_reason: str | None = None
+
+    @model_validator(mode="after")
+    def validate_decision(self) -> "InteractiveComponentDraft":
+        if self.spec is None and not (self.not_needed_reason or "").strip():
+            raise ValueError("a component draft without a spec must explain why it is not needed")
+        if self.spec is not None and self.not_needed_reason is not None:
+            raise ValueError("a component draft cannot include both a spec and not_needed_reason")
+        return self
+
+
+class InteractiveComponentState(TypedDict, total=False):
+    """State for one bounded component generation/validation subgraph."""
+
+    run_id: str
+    plan: InteractiveComponentPlan
+    task: InteractiveComponentTask
+    unit: KnowledgeUnit
+    content_artifact: ContentArtifact
+    context_pack: ContextPack
+    valid_source_refs: list[str]
+    max_attempts: int
+    attempt: int
+    attempts: list[InteractiveComponentAttemptTrace]
+    generation_stage: str
+    generation_prompt: str
+    revision_prompt: str | None
+    generation_raw_output: str
+    generation_parsed_output: dict[str, Any] | None
+    generation_status: str
+    generation_error: str | None
+    generation_error_category: str | None
+    generation_retryable: bool
+    generation_provider_metadata: dict[str, Any]
+    candidate_draft: InteractiveComponentDraft | None
+    candidate_artifact: InteractiveComponentArtifact | None
+    hard_check: InteractiveComponentHardCheckResult | None
+    sandbox_report: InteractiveComponentSandboxReport | None
+    critic_prompt: str | None
+    critic_raw_output: str
+    critic_parsed_output: dict[str, Any] | None
+    critic_status: str
+    critic_error: str | None
+    critic_error_category: str | None
+    critic_retryable: bool
+    critic_provider_metadata: dict[str, Any]
+    critic_feedback: list[ReviewIssue]
+    route: str
+    interactive_component_loop_trace: InteractiveComponentLoopTrace
+    final_artifact: InteractiveComponentArtifact | None
 
 
 class ContentReflectionState(TypedDict, total=False):
@@ -207,6 +298,7 @@ class WorkflowState(TypedDict, total=False):
     blueprint_preloaded: bool
     workflow_status: str
     content_tasks: list[ContentTask]
+    content_task_planning_metadata: dict[str, Any]
     context_packs: list[ContextPack]
     content_artifacts: list[ContentArtifact]
     content_loop_traces: list[ContentUnitLoopTrace]
@@ -220,6 +312,13 @@ class WorkflowState(TypedDict, total=False):
     fact_check_summary: dict[str, Any]
     fact_check_status: str
     fact_check_artifact_path: str
+    interactive_component_plan: InteractiveComponentPlan
+    interactive_component_task: InteractiveComponentTask
+    interactive_component_artifacts: list[InteractiveComponentArtifact]
+    interactive_component_loop_trace: InteractiveComponentLoopTrace
+    interactive_component_summary: dict[str, Any]
+    interactive_component_status: str
+    interactive_component_artifact_path: str
     content_artifact_checks: dict[str, str]
     content_artifact_path: str
     quiz_artifact_path: str

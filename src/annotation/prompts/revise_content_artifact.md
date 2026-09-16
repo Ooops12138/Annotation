@@ -48,6 +48,12 @@ to satisfy the schema.
 {{KNOWLEDGE_UNIT_CONTEXT}}
 ```
 
+## ContentTask from course architect
+
+```json
+{{CONTENT_TASK}}
+```
+
 ## ContextPack (the only evidence allowed)
 
 {{CONTEXT_PACK}}

@@ -106,6 +106,16 @@ class ScriptedFactCheckProvider:
                     "source_refs": ["src-1"],
                 }],
             }
+        elif schema_name == "InteractiveComponentDraft":
+            payload = {
+                "task_id": request.metadata["task_id"],
+                "knowledge_unit_id": request.metadata["knowledge_unit_id"],
+                "context_pack_id": request.metadata["context_pack_id"],
+                "spec": None,
+                "not_needed_reason": "事实核查测试不生成交互组件。",
+            }
+        elif schema_name == "InteractiveComponentCritiqueDraft":
+            payload = {"issues": []}
         else:  # pragma: no cover - keeps a new model call visible to this test.
             raise AssertionError(f"unexpected schema: {schema_name}")
         value = request.schema.model_validate(payload)

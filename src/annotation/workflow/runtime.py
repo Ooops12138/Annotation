@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any, Literal
 
 from langgraph.graph import END, START, StateGraph
@@ -17,6 +18,7 @@ from annotation.config import (
     fact_check_max_corrections as configured_fact_check_max_corrections,
     fact_check_web_enabled as configured_fact_check_web_enabled,
     fact_check_web_query_limit as configured_fact_check_web_query_limit,
+    interactive_component_max_attempts as configured_interactive_component_max_attempts,
 )
 from annotation.domain.artifacts import (
     BlueprintAttemptTrace,
@@ -28,6 +30,7 @@ from annotation.domain.artifacts import (
     ContentUnitLoopTrace,
     ContextPack,
     FactCheckPolicy,
+    InteractiveComponentArtifact,
     KnowledgeUnit,
     LearningBlueprint,
     LearningDocument,
@@ -39,13 +42,14 @@ from annotation.providers import ModelProvider, MockProvider, ProviderError, Str
 from annotation.workflow.blueprint_checks import validate_blueprint
 from annotation.workflow.content import build_context_pack, write_content_run_artifact
 from annotation.workflow.content_reflection import build_content_reflection_subgraph
+from annotation.workflow.course_architect import plan_content_tasks_with_architect
 from annotation.workflow.fact_check import run_fact_check_loop
+from annotation.workflow.interactive_components import run_interactive_component_loop
 from annotation.workflow.content_support import (
     _blocked_content_artifact,
     _content_issue,
     _content_loop_summary,
     _merge_messages,
-    _plan_content_tasks,
 )
 from annotation.workflow.graph import (
     _assemble_document_from_artifacts,
@@ -69,6 +73,8 @@ def build_minimal_graph(
     fact_check_max_corrections: int | None = None,
     fact_check_max_claims_per_unit: int | None = None,
     fact_check_web_enabled: bool | None = None,
+    interactive_component_max_attempts: int | None = None,
+    interactive_component_sandbox_runner: Callable[..., Any] | None = None,
 ):
     model_provider = provider or MockProvider()
     max_attempts = configured_blueprint_max_attempts(blueprint_max_attempts)
@@ -79,6 +85,7 @@ def build_minimal_graph(
         web_enabled=configured_fact_check_web_enabled(fact_check_web_enabled),
         web_query_limit=configured_fact_check_web_query_limit(),
     )
+    component_max_attempts = configured_interactive_component_max_attempts(interactive_component_max_attempts)
 
     def ingest(state: WorkflowState) -> dict[str, Any]:
         # Keep the legacy module-level seam so fixture tests and callers can
@@ -268,7 +275,16 @@ def build_minimal_graph(
         return state.get("blueprint_route", "fail")
 
     def plan_content_tasks(state: WorkflowState) -> dict[str, Any]:
-        return {"content_tasks": _plan_content_tasks(state["run_id"], state["blueprint"])}
+        result = plan_content_tasks_with_architect(
+            model_provider,
+            run_id=state["run_id"],
+            blueprint=state["blueprint"],
+        )
+        return {
+            "content_tasks": result["content_tasks"],
+            "content_task_planning_metadata": result.get("content_task_planning_metadata", {}),
+            "warnings": _merge_messages(state.get("warnings"), result.get("warnings", [])),
+        }
 
     def build_context_packs(state: WorkflowState) -> dict[str, Any]:
         blueprint = state["blueprint"]
@@ -471,6 +487,7 @@ def build_minimal_graph(
                 quiz_coverage=None,
                 checks=checks,
                 provider_metadata=provider_metadata,
+                content_task_planning_metadata=state.get("content_task_planning_metadata"),
                 content_loop_traces=traces,
                 content_loop_summary=summary,
                 root=STORAGE_DIR / "artifacts" / "content",
@@ -559,6 +576,7 @@ def build_minimal_graph(
             quiz_coverage=quiz_coverage,
             checks=checks,
             provider_metadata=state.get("provider_metadata", {}),
+            content_task_planning_metadata=state.get("content_task_planning_metadata"),
             content_loop_traces=state.get("content_loop_traces", []),
             content_loop_summary=summary,
             root=STORAGE_DIR / "artifacts" / "content",
@@ -607,6 +625,7 @@ def build_minimal_graph(
             quiz_coverage=quiz_coverage,
             checks=state.get("content_artifact_checks", {}),
             provider_metadata=state.get("provider_metadata", {}),
+            content_task_planning_metadata=state.get("content_task_planning_metadata"),
             content_loop_traces=state.get("content_loop_traces", []),
             content_loop_summary=dict(state.get("content_loop_summary", {})),
             root=STORAGE_DIR / "artifacts" / "content",
@@ -617,6 +636,39 @@ def build_minimal_graph(
             "content_loop_trace_path": str(artifact_path.resolve()),
         })
         return result
+
+    def interactive_component_loop(state: WorkflowState) -> dict[str, Any]:
+        """Run A-004 only after A-003 has finalized content and quiz artifacts."""
+
+        kwargs: dict[str, Any] = {}
+        if interactive_component_sandbox_runner is not None:
+            kwargs["sandbox_runner"] = interactive_component_sandbox_runner
+        return run_interactive_component_loop(
+            model_provider,
+            run_id=state["run_id"],
+            tasks=state.get("content_tasks", []),
+            context_packs=state.get("context_packs", []),
+            content_artifacts=state.get("content_artifacts", []),
+            units=list(state["blueprint"].knowledge_units),
+            valid_source_refs=state.get("source_refs", []),
+            max_attempts=component_max_attempts,
+            **kwargs,
+        )
+
+    def next_interactive_component_route(state: WorkflowState) -> str:
+        status = state.get("interactive_component_status", "failed")
+        return "accept" if status in {"accepted", "at_risk", "not_needed"} else "block" if status == "blocked" else "fail"
+
+    def record_interactive_component_blocked_run(state: WorkflowState) -> dict[str, Any]:
+        return {"workflow_status": "blocked"}
+
+    def record_interactive_component_failed_run(state: WorkflowState) -> dict[str, Any]:
+        trace = state.get("interactive_component_loop_trace")
+        reason = getattr(trace, "stop_reason", None) or "unknown"
+        return {
+            "workflow_status": "failed",
+            "errors": _merge_messages(state.get("errors"), [f"interactive_component_failed: {reason}" ]),
+        }
 
     def assemble_document_ir(state: WorkflowState) -> dict[str, Any]:
         artifacts = [artifact for artifact in state.get("content_artifacts", []) if artifact.status == "accepted"]
@@ -636,6 +688,11 @@ def build_minimal_graph(
             artifacts,
             model_provider.provider,
             quiz_artifacts=quiz_artifacts,
+            interactive_component_artifacts=[
+                artifact
+                for artifact in state.get("interactive_component_artifacts", [])
+                if artifact.status == "accepted"
+            ],
         )
         if state.get("document_id"):
             document.document_id = state["document_id"]
@@ -656,6 +713,7 @@ def build_minimal_graph(
         tasks = state.get("content_tasks", [])
         artifacts = state.get("content_artifacts", [])
         quiz_artifacts = state.get("quiz_artifacts", [])
+        interactive_component_artifacts = state.get("interactive_component_artifacts", [])
         accepted_task_ids = {artifact.task_id for artifact in artifacts if artifact.status == "accepted" and artifact.task_id}
         if tasks and len(accepted_task_ids) != len(tasks):
             missing = [task.task_id for task in tasks if task.task_id not in accepted_task_ids]
@@ -685,6 +743,25 @@ def build_minimal_graph(
                     category="source",
                     severity="blocking",
                     message="题目 artifact 包含无法回溯到本次教材导入的来源引用。",
+                    target_id=artifact.artifact_id,
+                    source_refs=[ref for ref in artifact.source_refs if ref not in valid_refs],
+                ))
+        for artifact in interactive_component_artifacts:
+            issues.extend(list(artifact.issues))
+            if artifact.status == "blocked":
+                issues.append(ReviewIssue(
+                    issue_id=f"review-blocked-interactive-component-{artifact.artifact_id}",
+                    category="coverage",
+                    severity="blocking",
+                    message="交互组件 artifact 被阻塞，不能进入发布文档。",
+                    target_id=artifact.artifact_id,
+                ))
+            if not set(artifact.source_refs).issubset(valid_refs):
+                issues.append(ReviewIssue(
+                    issue_id=f"review-invalid-interactive-component-sources-{artifact.artifact_id}",
+                    category="source",
+                    severity="blocking",
+                    message="交互组件 artifact 包含无法回溯到本次教材导入的来源引用。",
                     target_id=artifact.artifact_id,
                     source_refs=[ref for ref in artifact.source_refs if ref not in valid_refs],
                 ))
@@ -749,6 +826,9 @@ def build_minimal_graph(
         "record_content_failed_run": record_content_failed_run,
         "generate_quiz_artifacts": generate_quiz_artifacts,
         "fact_check_artifacts": fact_check_artifacts,
+        "interactive_component_loop": interactive_component_loop,
+        "record_interactive_component_blocked_run": record_interactive_component_blocked_run,
+        "record_interactive_component_failed_run": record_interactive_component_failed_run,
         "assemble_document_ir": assemble_document_ir,
         "validate_document_ir": validate_document_ir,
         "review": review,
@@ -785,7 +865,18 @@ def build_minimal_graph(
     graph.add_edge("record_content_blocked_run", END)
     graph.add_edge("record_content_failed_run", END)
     graph.add_edge("generate_quiz_artifacts", "fact_check_artifacts")
-    graph.add_edge("fact_check_artifacts", "assemble_document_ir")
+    graph.add_edge("fact_check_artifacts", "interactive_component_loop")
+    graph.add_conditional_edges(
+        "interactive_component_loop",
+        next_interactive_component_route,
+        {
+            "accept": "assemble_document_ir",
+            "block": "record_interactive_component_blocked_run",
+            "fail": "record_interactive_component_failed_run",
+        },
+    )
+    graph.add_edge("record_interactive_component_blocked_run", END)
+    graph.add_edge("record_interactive_component_failed_run", END)
     graph.add_edge("assemble_document_ir", "validate_document_ir")
     graph.add_edge("validate_document_ir", "review")
     graph.add_edge("review", "assemble")
@@ -805,6 +896,8 @@ def run_minimal_workflow(
     fact_check_max_corrections: int | None = None,
     fact_check_max_claims_per_unit: int | None = None,
     fact_check_web_enabled: bool | None = None,
+    interactive_component_max_attempts: int | None = None,
+    interactive_component_sandbox_runner: Callable[..., Any] | None = None,
 ) -> WorkflowState:
     initial: WorkflowState = {"run_id": run_id}
     if blueprint:
@@ -823,6 +916,8 @@ def run_minimal_workflow(
         fact_check_max_corrections=fact_check_max_corrections,
         fact_check_max_claims_per_unit=fact_check_max_claims_per_unit,
         fact_check_web_enabled=fact_check_web_enabled,
+        interactive_component_max_attempts=interactive_component_max_attempts,
+        interactive_component_sandbox_runner=interactive_component_sandbox_runner,
     ).invoke(initial)
     # Keep the graph independently testable while ensuring API/CLI callers
     # can reconstruct the result without relying on process memory.

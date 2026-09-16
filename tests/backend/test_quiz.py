@@ -353,6 +353,46 @@ def test_provider_draft_unit_mismatch_blocks_artifact() -> None:
     assert any(issue.issue_id.startswith("quiz-draft-unit-mismatch") for issue in artifact.issues)
 
 
+def test_architect_question_count_mismatch_blocks_artifact() -> None:
+    unit = _unit()
+
+    class CountMismatchProvider:
+        provider = "deepseek"
+        model = "test"
+        capabilities = type("Capabilities", (), {"max_output_tokens": 2200})()
+
+        def generate_structured(self, request):
+            draft = QuizDraft(
+                knowledge_unit_id=unit.artifact_id,
+                question_count=1,
+                target_objectives=[unit.learning_objectives[0]],
+                questions=[_question(unit, "q-count-1")],
+            )
+            return type(
+                "Response",
+                (),
+                {
+                    "value": draft,
+                    "raw_text": draft.model_dump_json(),
+                    "provider": self.provider,
+                    "model": self.model,
+                    "base_url": None,
+                    "config_version": "test-v1",
+                    "duration_ms": 1,
+                    "usage": {},
+                },
+            )()
+
+    artifact = generate_quiz_artifact(
+        CountMismatchProvider(),
+        task=_task(unit, quiz_count=2),
+        unit=unit,
+        context_pack=_pack(unit),
+    )
+    assert artifact.status == "blocked"
+    assert any(issue.issue_id.startswith("quiz-count-mismatch") for issue in artifact.issues)
+
+
 def test_quiz_prompt_allows_agent_to_select_count() -> None:
     unit = _unit()
     prompt = build_quiz_prompt(_task(unit), unit, _pack(unit))

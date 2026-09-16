@@ -5,8 +5,9 @@ import { normalizeLearningDocument, normalizeReviewReport } from './documentAdap
 
 describe('Document IR presentation contract', () => {
   it('keeps the renderer node allow-list explicit', () => {
-    expect(supportedDocumentNodeTypes).toEqual(['markdown', 'callout', 'quiz'])
+    expect(supportedDocumentNodeTypes).toEqual(['markdown', 'callout', 'quiz', 'interactive_component'])
     expect(isSupportedDocumentNodeType('quiz')).toBe(true)
+    expect(isSupportedDocumentNodeType('interactive_component')).toBe(true)
     expect(isSupportedDocumentNodeType('formula')).toBe(false)
     expect(isSupportedDocumentNodeType('example')).toBe(false)
     expect(isSupportedDocumentNodeType('<script>')).toBe(false)
@@ -22,6 +23,15 @@ describe('Document IR presentation contract', () => {
     expect(isDocumentNode({ type: 'formula', id: 'f-1', latex: 'x^2' })).toBe(false)
     expect(isDocumentNode({ type: 'example', id: 'e-1', title: '例题', problem: '题目', solution: '解答' })).toBe(false)
     expect(isDocumentNode({ type: 'html', id: 'x-1', content: '<script>alert(1)</script>' })).toBe(false)
+    expect(isDocumentNode({
+      type: 'interactive_component', id: 'ic-1', artifact_id: 'artifact-1',
+      spec: {
+        component_type: 'interval_line', component_id: 'line-1', title: '区间', learning_objective: '区分上确界与最大元', source_refs: ['src-1'],
+        accessibility: { aria_label: '区间数轴', description: '右端点开放', observation: '没有最大元' }, controls: [], test_actions: [], annotations: [],
+        interval_start: 0, interval_end: 1, left_endpoint: 'closed', right_endpoint: 'open', supremum: 1, maximum: null,
+      },
+    })).toBe(true)
+    expect(isDocumentNode({ type: 'interactive_component', id: 'ic-unsafe', artifact_id: 'artifact-1', spec: { component_type: 'function_graph', formula: 'import("x")' } })).toBe(false)
   })
 
   it('turns unknown or malformed nodes into visible review records', () => {

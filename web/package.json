@@ -15,14 +15,17 @@
     "@vitejs/plugin-vue": "^5.2.1",
     "@vue/devtools-api": "^8.2.1",
     "dompurify": "^3.4.15",
+    "jsxgraph": "^1.13.3",
     "katex": "^0.18.7",
     "lucide-vue-next": "latest",
     "markdown-it": "^15.0.2",
+    "mathjs": "^15.2.0",
     "pinia": "latest",
     "vite": "^5.4.14",
     "vue": "latest"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/katex": "^0.16.8",
     "@types/markdown-it": "^14.2.0",
     "@types/node": "latest",

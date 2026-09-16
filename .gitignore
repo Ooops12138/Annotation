@@ -12,6 +12,7 @@ docs/
 documents/
 tasks/
 logs/
+output/
 web/node_modules/
 web/dist/
 web/docs/.vitepress/dist/
