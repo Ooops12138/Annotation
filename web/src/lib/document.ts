@@ -130,7 +130,15 @@ export interface FunctionGraphSpec extends BaseInteractiveComponentSpec {
   sample_count: number
 }
 
-export type InteractiveComponentSpec = IntervalLineSpec | ComplexPlaneSpec | FunctionGraphSpec
+export interface GeneratedHtmlSpec extends BaseInteractiveComponentSpec {
+  component_type: 'generated_html'
+  libraries?: Array<'jsxgraph'>
+  html: string
+  css: string
+  javascript: string
+}
+
+export type InteractiveComponentSpec = IntervalLineSpec | ComplexPlaneSpec | FunctionGraphSpec | GeneratedHtmlSpec
 
 export interface InteractiveComponentNode {
   type: 'interactive_component'
@@ -305,6 +313,18 @@ export function isInteractiveComponentSpec(value: unknown): value is Interactive
       && Number.isInteger(value.sample_count)
       && value.sample_count >= 20
       && value.sample_count <= 400
+  }
+  if (value.component_type === 'generated_html') {
+    if (value.libraries !== undefined && (!Array.isArray(value.libraries) || value.libraries.some((library) => library !== 'jsxgraph'))) return false
+    if (!isString(value.html) || typeof value.css !== 'string' || typeof value.javascript !== 'string') return false
+    if (value.html.length > 20_000 || value.css.length > 12_000 || value.javascript.length > 20_000) return false
+    const html = value.html.toLowerCase()
+    if (['<script', '<style', '<iframe', '<object', '<embed'].some((token) => html.includes(token))) return false
+    if (value.css.toLowerCase().includes('</style') || value.javascript.toLowerCase().includes('</script')) return false
+    return value.controls.every((control) => (
+      value.html.includes(`data-component-control="${control.control_id}"`)
+      || value.html.includes(`data-component-control='${control.control_id}'`)
+    ))
   }
   return false
 }

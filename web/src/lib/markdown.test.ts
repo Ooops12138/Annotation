@@ -53,4 +53,22 @@ $$|z|=\\sqrt{x^2+y^2}$$`)
     expect(html).not.toContain('<script>')
     expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;')
   })
+
+  it('hides leaked source ids and internal review notes from learner prose', () => {
+    const html = renderMarkdown([
+      '## 上界、最大元与上确界',
+      '',
+      '设 $S$ 是集合。（srcdoc-acb412de0faf0abc-p7-b0）',
+      '',
+      'ContextPack 没有给出完整推导，因此待核实。',
+      '',
+      '保留这段正常讲解。',
+    ].join('\n'))
+
+    expect(html).toContain('<h2>上界、最大元与上确界</h2>')
+    expect(html).not.toContain('srcdoc-')
+    expect(html).not.toContain('ContextPack')
+    expect(html).not.toContain('待核实')
+    expect(html).toContain('保留这段正常讲解。')
+  })
 })

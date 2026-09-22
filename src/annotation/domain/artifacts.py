@@ -582,7 +582,7 @@ class BlueprintLoopTrace(BaseModel):
     artifact_path: str | None = None
 
 
-ComponentType = Literal["interval_line", "complex_plane", "function_graph"]
+ComponentType = Literal["interval_line", "complex_plane", "function_graph", "generated_html"]
 
 
 class InteractiveComponentPlan(BaseModel):
@@ -597,7 +597,7 @@ class InteractiveComponentPlan(BaseModel):
     accepted_content_artifact_id: str | None = None
     source_refs: list[str] = Field(default_factory=list)
     allowed_component_types: list[ComponentType] = Field(
-        default_factory=lambda: ["interval_line", "complex_plane", "function_graph"]
+        default_factory=lambda: ["interval_line", "complex_plane", "function_graph", "generated_html"]
     )
     reason: str = Field(min_length=1)
 
@@ -624,7 +624,7 @@ class InteractiveComponentTask(BaseModel):
     context_pack_id: str
     source_refs: list[str] = Field(min_length=1)
     allowed_component_types: list[ComponentType] = Field(
-        default_factory=lambda: ["interval_line", "complex_plane", "function_graph"]
+        default_factory=lambda: ["interval_line", "complex_plane", "function_graph", "generated_html"]
     )
     acceptance_criteria: list[str] = Field(default_factory=list)
     status: Literal["planned", "generating", "accepted", "needs_revision", "blocked", "not_needed"] = "planned"
@@ -808,8 +808,35 @@ class FunctionGraphSpec(InteractiveComponentSpecBase):
         return self
 
 
+class GeneratedHtmlSpec(InteractiveComponentSpecBase):
+    """A source-bound HTML/CSS/JS learning component rendered in a sandboxed iframe.
+
+    The three fields are fragments, not a complete document.  The renderer owns
+    the outer document, CSP, and iframe permissions so generated code cannot
+    expand its own browser capabilities.
+    """
+
+    component_type: Literal["generated_html"] = "generated_html"
+    libraries: list[Literal["jsxgraph"]] = Field(default_factory=list, max_length=4)
+    html: str = Field(min_length=1, max_length=20_000)
+    css: str = Field(default="", max_length=12_000)
+    javascript: str = Field(default="", max_length=20_000)
+
+    @model_validator(mode="after")
+    def validate_fragments(self) -> "GeneratedHtmlSpec":
+        lowered_html = self.html.lower()
+        if any(token in lowered_html for token in ("<script", "<style", "<iframe", "<object", "<embed")):
+            raise ValueError("generated_html html must be a markup fragment without executable or nested browsing tags")
+        if "</script" in self.javascript.lower() or "</style" in self.css.lower():
+            raise ValueError("generated component code must not break out of its renderer-owned wrapper")
+        control_ids = {control.control_id for control in self.controls}
+        if any(f'data-component-control="{control_id}"' not in self.html and f"data-component-control='{control_id}'" not in self.html for control_id in control_ids):
+            raise ValueError("generated_html must expose each declared control with data-component-control")
+        return self
+
+
 InteractiveComponentSpec = Annotated[
-    Union[IntervalLineSpec, ComplexPlaneSpec, FunctionGraphSpec],
+    Union[IntervalLineSpec, ComplexPlaneSpec, FunctionGraphSpec, GeneratedHtmlSpec],
     Field(discriminator="component_type"),
 ]
 

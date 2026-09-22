@@ -132,8 +132,13 @@ try {
   report.network_blocked = networkBlocked
   if (!networkBlocked) throw new Error('external network request was not blocked')
 
+  const generatedFrame = spec.component_type === 'generated_html'
+    ? page.frameLocator('iframe.interactive-component-frame')
+    : null
   for (const action of spec.test_actions || []) {
-    const control = page.locator(`[data-component-control="${action.control_id}"]`)
+    const control = generatedFrame
+      ? generatedFrame.locator(`[data-component-control="${action.control_id}"]`)
+      : page.locator(`[data-component-control="${action.control_id}"]`)
     let passed = false
     let detail = ''
     try {
@@ -148,7 +153,11 @@ try {
       } else {
         throw new Error(`unsupported test action: ${action.action}`)
       }
-      await page.waitForFunction((expected) => document.querySelector('#interactive-observation')?.textContent?.includes(expected), action.expected_text, { timeout: timeoutMs })
+      if (generatedFrame) {
+        await generatedFrame.getByText(action.expected_text, { exact: false }).waitFor({ state: 'visible', timeout: timeoutMs })
+      } else {
+        await page.waitForFunction((expected) => document.querySelector('#interactive-observation')?.textContent?.includes(expected), action.expected_text, { timeout: timeoutMs })
+      }
       passed = true
     } catch (error) {
       detail = error instanceof Error ? error.message : String(error)

@@ -107,6 +107,35 @@ def _lossless_refs(values: list[str] | None) -> list[str]:
     return normalized
 
 
+_SOURCE_REF_TOKEN = re.compile(r"`?srcdoc-[A-Za-z0-9_-]+`?")
+_INTERNAL_NOTE_SENTENCE = re.compile(
+    r"[^。！？\n]*(?:ContextPack|待核实|不宜在此凭记忆补全|教材原文.*核对|证据片段)[^。！？\n]*[。！？]?"
+ )
+
+
+def _clean_learner_markdown(value: str) -> str:
+    """Remove pipeline metadata that a model may leak into learner content.
+
+    Traceability remains in ``ContentArtifact.source_refs`` and is rendered by
+    the separate source panel.  This cleanup is intentionally conservative: it
+    removes source-id parentheticals and whole internal-review sentences while
+    leaving ordinary Markdown, formulas and learner-facing prose intact.
+    """
+
+    content = str(value or "")
+    content = re.sub(
+        rf"[（(]\s*{_SOURCE_REF_TOKEN.pattern}(?:\s*[、,，;；]\s*{_SOURCE_REF_TOKEN.pattern})*\s*[）)]",
+        "",
+        content,
+    )
+    content = _SOURCE_REF_TOKEN.sub("", content)
+    content = re.sub(r"[（(]\s*[、,，;；\s]*[）)]", "", content)
+    content = _INTERNAL_NOTE_SENTENCE.sub("", content)
+    content = re.sub(r"[ \t]+([。！？？，、：；])", r"\1", content)
+    content = re.sub(r"\n{3,}", "\n\n", content)
+    return content.strip()
+
+
 def _plan_content_tasks(run_id: str, blueprint: LearningBlueprint) -> list[ContentTask]:
     tasks: list[ContentTask] = []
     blueprint_version = f"{blueprint.artifact_id}:v{blueprint.version}"
@@ -168,7 +197,15 @@ def _content_artifact_from_draft(
     refs = _lossless_refs(draft.source_refs)
     if fixture_adaptation and not refs:
         refs = list(pack.source_refs)
-    content = draft.content.strip()
+    content = _clean_learner_markdown(draft.content)
+    callouts = [
+        {
+            **callout.model_dump(mode="json"),
+            "title": _clean_learner_markdown(callout.title),
+            "content": _clean_learner_markdown(callout.content),
+        }
+        for callout in draft.callouts
+    ]
     return ContentArtifact(
         artifact_id=f"content-{uuid.uuid4().hex[:12]}",
         run_id=run_id,
@@ -187,7 +224,7 @@ def _content_artifact_from_draft(
             "omitted_source_refs": list(pack.omitted_source_refs),
             "retrieval_strategy": list(pack.retrieval_strategy),
             "source_snapshot": pack.source_snapshot,
-            "callouts": [callout.model_dump(mode="json") for callout in draft.callouts],
+            "callouts": callouts,
             "fixture_adaptation": fixture_adaptation,
         },
         content=content,
@@ -509,6 +546,64 @@ def _unit_context(unit: KnowledgeUnit) -> str:
         },
         ensure_ascii=False,
         separators=(",", ":"),
+    )
+
+
+def _content_prompt_task(task: ContentTask) -> str:
+    """Render only the task fields used by the explanation Agent."""
+
+    return json.dumps(
+        {
+            "task_id": task.task_id,
+            "knowledge_unit_id": task.knowledge_unit_id,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+def _content_prompt_unit(unit: KnowledgeUnit) -> str:
+    """Render the explanation Agent's unit view without duplicate source IDs."""
+
+    return json.dumps(
+        {
+            "knowledge_unit_id": unit.artifact_id,
+            "title": unit.title,
+            "kind": unit.kind,
+            "learning_objectives": list(unit.learning_objectives),
+            "prerequisites": list(unit.prerequisites),
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def _interactive_prompt_unit(unit: KnowledgeUnit) -> str:
+    """Render the component Agent's unit view."""
+
+    return json.dumps(
+        {
+            "knowledge_unit_id": unit.artifact_id,
+            "title": unit.title,
+            "learning_objectives": list(unit.learning_objectives),
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def _interactive_prompt_content(artifact: ContentArtifact) -> str:
+    """Render only learner-facing content needed to design a component."""
+
+    return json.dumps(
+        {
+            "artifact_id": artifact.artifact_id,
+            "title": artifact.title,
+            "content": artifact.content,
+            "source_refs": list(artifact.source_refs),
+        },
+        ensure_ascii=False,
+        indent=2,
     )
 
 

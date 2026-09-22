@@ -18,7 +18,7 @@ Return only valid JSON matching this shape:
   "target_objectives": ["exact objective text from the knowledge unit context"],
   "questions": [
     {
-      "question_id": "stable id unique within this quiz artifact",
+      "question_id": "globally unique id in the form <knowledge_unit_id>-quiz-01",
       "knowledge_unit_id": "exact knowledge unit id",
       "target_objectives": ["one or more exact objective strings"],
       "question": "learner-facing question",
@@ -30,6 +30,12 @@ Return only valid JSON matching this shape:
   ]
 }
 ```
+
+Question IDs must be globally unique across the whole run, not merely within
+one artifact. Use the exact knowledge-unit ID as the prefix and a two-digit
+sequence such as `<knowledge_unit_id>-quiz-01`, `<knowledge_unit_id>-quiz-02`.
+Never use generic IDs such as `q1`, `q2`, or `quiz-1`, because another unit may
+produce the same value.
 
 Every question must have a unique answer that appears exactly once in its
 options. The question, options, answer, and explanation must be supported by

@@ -146,7 +146,10 @@ def build_minimal_graph(
             response = model_provider.generate_structured(StructuredGenerationRequest(
                 prompt=prompt,
                 schema=BlueprintDraft,
-                max_output_tokens=3000,
+                # A full chapter can produce a valid blueprint within this
+                # budget. The previous 3000-token cap routinely truncated
+                # DeepSeek responses in the middle of a JSON array.
+                max_output_tokens=6000,
                 metadata={"agent": agent, "run_id": state["run_id"], "attempt": attempt},
             ))
             draft = BlueprintDraft.model_validate(response.value.model_dump(mode="python"))

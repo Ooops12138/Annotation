@@ -161,8 +161,29 @@ function sanitize(html: string): string {
   return html
 }
 
+const sourceRefToken = /`?srcdoc-[A-Za-z0-9_-]+`?/g
+const internalNoteSentence = /[^。！？\n]*(?:ContextPack|待核实|不宜在此凭记忆补全|教材原文[^。！？\n]*核对|证据片段)[^。！？\n]*[。！？]?/g
+
+/**
+ * Keep learner Markdown focused on teaching content. Traceability is carried
+ * by the node's source_refs and shown in SourcePanel, so leaked source IDs or
+ * pipeline-review notes must not become visible prose. This fallback also
+ * protects pages generated before the backend cleanup was added.
+ */
+function cleanLearnerMarkdown(content: string): string {
+  let cleaned = String(content || '')
+  cleaned = cleaned.replace(
+    /[（(]\s*`?srcdoc-[A-Za-z0-9_-]+`?(?:\s*[、,，;；]\s*`?srcdoc-[A-Za-z0-9_-]+`?)*\s*[）)]/g,
+    '',
+  )
+  cleaned = cleaned.replace(sourceRefToken, '')
+  cleaned = cleaned.replace(/[（(]\s*[、,，;；\s]*[）)]/g, '')
+  cleaned = cleaned.replace(internalNoteSentence, '')
+  return cleaned.replace(/\n{3,}/g, '\n\n').trim()
+}
+
 export function renderMarkdown(content: string): string {
-  return sanitize(markdown.render(content || ''))
+  return sanitize(markdown.render(cleanLearnerMarkdown(content)))
 }
 
 /**
@@ -171,5 +192,5 @@ export function renderMarkdown(content: string): string {
  * elements while preserving the same math and sanitization rules.
  */
 export function renderMarkdownInline(content: string): string {
-  return sanitize(markdown.renderInline(content || ''))
+  return sanitize(markdown.renderInline(cleanLearnerMarkdown(content)))
 }

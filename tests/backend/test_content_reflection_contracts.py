@@ -162,22 +162,28 @@ def test_active_content_contract_rejects_retired_material_fields_and_trace_group
 def test_content_reflection_prompts_render_all_auditable_inputs() -> None:
     values = {
         "KNOWLEDGE_UNIT_CONTEXT": '{"knowledge_unit_id":"ku-1"}',
+        "CONTENT_TASK": '{"task_id":"task-1"}',
         "ACCEPTANCE_CRITERIA": '["覆盖学习目标"]',
         "CANDIDATE_ARTIFACT": '{"artifact_id":"content-1"}',
         "CONTEXT_PACK": "[src-1] 教材证据",
         "HARD_CHECK_RESULT": '{"status":"needs_revision"}',
+        "GENERATION_ERROR": "",
         "CRITIQUE_RESULT": '{"issues":[]}',
     }
 
     critic = load_prompt(
         "critique_content_artifact",
-        **{key: values[key] for key in ("KNOWLEDGE_UNIT_CONTEXT", "ACCEPTANCE_CRITERIA", "CANDIDATE_ARTIFACT")},
+        **{key: values[key] for key in ("KNOWLEDGE_UNIT_CONTEXT", "ACCEPTANCE_CRITERIA", "CONTEXT_PACK", "CANDIDATE_ARTIFACT")},
     )
     revision = load_prompt("revise_content_artifact", **values)
 
     assert critic.startswith("# Agent: critique_content_artifact")
     assert "severity" in critic and "route" in critic
+    assert "[src-1] 教材证据" in critic
+    assert "待核实" in critic
     assert "{{CANDIDATE_ARTIFACT}}" not in critic
     assert revision.startswith("# Agent: revise_content_artifact")
     assert "[src-1] 教材证据" in revision
     assert "{{HARD_CHECK_RESULT}}" not in revision
+    assert "{{GENERATION_ERROR}}" not in revision
+    assert "Never add `quiz`" in revision

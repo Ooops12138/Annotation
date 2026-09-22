@@ -8,6 +8,8 @@ from annotation.domain.artifacts import (
     KnowledgeUnit,
 )
 from annotation.workflow.graph import _content_hard_check
+from annotation.workflow.content_support import _content_artifact_from_draft
+from annotation.workflow.models import CalloutDraft, ContentDraft
 
 
 def _unit() -> KnowledgeUnit:
@@ -142,3 +144,33 @@ def test_hard_check_blocks_malformed_optional_callout_metadata() -> None:
     assert f"content-reflection-{task.task_id}-invalid-callouts-{candidate.artifact_id}" in {
         issue.issue_id for issue in result.issues
     }
+
+
+def test_artifact_projection_removes_pipeline_metadata_from_learner_markdown() -> None:
+    draft = ContentDraft(
+        title="测试概念",
+        content=(
+            "## 上界、最大元与上确界\n\n"
+            "设 $S$ 是集合。（srcdoc-acb412de0faf0abc-p7-b0）\n\n"
+            "ContextPack 没有给出完整推导，因此待核实。\n\n"
+            "保留这段正常讲解。"
+        ),
+        callouts=[CalloutDraft(title="提示", tone="info", content="依据（srcdoc-acb412de0faf0abc-p7-b0）。")],
+        source_refs=["src-1"],
+    )
+
+    artifact = _content_artifact_from_draft(
+        draft=draft,
+        task=_task(),
+        unit=_unit(),
+        pack=_pack(),
+        run_id="run-reflection-check",
+        provider_name="test",
+    )
+
+    assert "srcdoc-" not in artifact.content
+    assert "ContextPack" not in artifact.content
+    assert "待核实" not in artifact.content
+    assert "保留这段正常讲解。" in artifact.content
+    assert artifact.metadata["callouts"][0]["content"] == "依据。"
+    assert artifact.source_refs == ["src-1"]

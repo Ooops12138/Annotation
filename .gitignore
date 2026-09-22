@@ -4,6 +4,8 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+.codex/
+.concept-guard.json
 storage/
 results/
 tmp/

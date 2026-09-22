@@ -30,6 +30,14 @@ Create at least 3 knowledge units. Use only facts present in the excerpts; do
 not invent facts or silently rely on outside materials. Every `source_refs`
 item must be copied exactly from a bracketed source ID in the excerpts.
 
+Keep the response compact: create no more than 8 knowledge units, use no more
+than 3 learning objectives and at most 8 **representative seed source
+references** per unit, and do not add summaries, explanations, or any fields
+not shown in the JSON shape above. These source references are an initial
+evidence map, not an exhaustive list of every textbook block needed later.
+Downstream ContextPack construction may retrieve adjacent or keyword-matched
+blocks from the imported textbook, while preserving their exact source IDs.
+
 Give each unit a stable `knowledge_unit_id`. Prefer these IDs in
 `prerequisites` and use `related_unit_ids` only for IDs defined in this same
 response. Older title strings in `prerequisites` remain readable for

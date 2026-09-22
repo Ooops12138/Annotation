@@ -20,6 +20,7 @@ def test_load_content_artifact_prompt_renders_bounded_context() -> None:
     prompt = load_prompt(
         "generate_content_artifact",
         KNOWLEDGE_UNIT_CONTEXT='{"title":"上确界"}',
+        CONTENT_TASK='{"task_id":"task-1"}',
         CONTEXT_PACK="[src-1] 上界",
         ACCEPTANCE_CRITERIA='["覆盖目标"]',
     )

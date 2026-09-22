@@ -30,3 +30,14 @@ onBeforeUnmount(() => {
     <p v-else class="interactive-component-fallback" role="alert">互动图示暂不可用。</p>
   </section>
 </template>
+
+<style scoped>
+:deep(.interactive-component-frame) {
+  display: block;
+  width: 100%;
+  min-height: 360px;
+  border: 1px solid var(--color-border, #d8d4ca);
+  border-radius: 0.5rem;
+  background: white;
+}
+</style>

@@ -21,6 +21,8 @@ from annotation.providers import ModelProvider, ProviderError, StructuredGenerat
 from annotation.workflow.content import render_context_pack
 from annotation.workflow.content_support import (
     _blocked_content_artifact,
+    _content_prompt_task,
+    _content_prompt_unit,
     _content_artifact_from_draft,
     _content_hard_check,
     _content_issue,
@@ -97,8 +99,8 @@ def build_content_reflection_subgraph(
         if is_revision:
             prompt = load_prompt(
                 "revise_content_artifact",
-                KNOWLEDGE_UNIT_CONTEXT=_unit_context(unit),
-                CONTENT_TASK=json.dumps(task.model_dump(mode="json"), ensure_ascii=False, indent=2),
+                KNOWLEDGE_UNIT_CONTEXT=_content_prompt_unit(unit),
+                CONTENT_TASK=_content_prompt_task(task),
                 CONTEXT_PACK=render_context_pack(pack),
                 ACCEPTANCE_CRITERIA=json.dumps(task.acceptance_criteria, ensure_ascii=False),
                 CANDIDATE_ARTIFACT=json.dumps(
@@ -112,14 +114,15 @@ def build_content_reflection_subgraph(
                     indent=2,
                 ),
                 CRITIQUE_RESULT=json.dumps(state.get("critic_parsed_output") or {"issues": []}, ensure_ascii=False, indent=2),
+                GENERATION_ERROR=str(state.get("generation_error") or ""),
             )
             agent = "revise_content_artifact"
             prompt_version = "revise_content_artifact:v1"
         else:
             prompt = load_prompt(
                 "generate_content_artifact",
-                KNOWLEDGE_UNIT_CONTEXT=_unit_context(unit),
-                CONTENT_TASK=json.dumps(task.model_dump(mode="json"), ensure_ascii=False, indent=2),
+                KNOWLEDGE_UNIT_CONTEXT=_content_prompt_unit(unit),
+                CONTENT_TASK=_content_prompt_task(task),
                 CONTEXT_PACK=render_context_pack(pack),
                 ACCEPTANCE_CRITERIA=json.dumps(task.acceptance_criteria, ensure_ascii=False),
             )
@@ -163,7 +166,10 @@ def build_content_reflection_subgraph(
                 response = provider.generate_structured(StructuredGenerationRequest(
                     prompt=prompt,
                     schema=ContentDraft,
-                    max_output_tokens=response_limit(2200),
+                    # Content and revision responses contain learner-facing
+                    # Markdown plus a JSON envelope. A 2200-token cap was
+                    # observed truncating otherwise useful DeepSeek drafts.
+                    max_output_tokens=response_limit(4000),
                     metadata={
                         "agent": agent,
                         "run_id": state["run_id"],
@@ -239,8 +245,9 @@ def build_content_reflection_subgraph(
         candidate = state.get("candidate_artifact")
         prompt = load_prompt(
             "critique_content_artifact",
-            KNOWLEDGE_UNIT_CONTEXT=_unit_context(unit),
+            KNOWLEDGE_UNIT_CONTEXT=_content_prompt_unit(unit),
             ACCEPTANCE_CRITERIA=json.dumps(task.acceptance_criteria, ensure_ascii=False),
+            CONTEXT_PACK=render_context_pack(state["context_pack"]),
             CANDIDATE_ARTIFACT=json.dumps(
                 candidate.model_dump(mode="json") if candidate is not None else {},
                 ensure_ascii=False,

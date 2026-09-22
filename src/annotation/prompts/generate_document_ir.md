@@ -20,6 +20,10 @@ the Learning Blueprint and textbook excerpts.
   example or teaching-material fields or node data. A Callout is only for an
   intentional emphasis in the final document, never a default presentation
   for an example.
+- `explanation` is shown directly to learners. Do not include source IDs,
+  ContextPack/prompt/model/review wording, or internal labels such as `待核实`
+  in the Markdown. Keep source IDs only in the JSON `source_refs` field; they
+  are rendered separately as教材依据.
 - The `quiz_*` fields define one interactive exercise only: its question,
   options, answer and explanation. Do not put teaching material, a worked
   example or additional explanatory prose in those fields.

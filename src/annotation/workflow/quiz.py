@@ -599,10 +599,6 @@ def _unit_context(unit: KnowledgeUnit) -> str:
     return json.dumps({
         "knowledge_unit_id": unit.artifact_id,
         "title": unit.title,
-        "kind": unit.kind,
-        "learning_objectives": unit.learning_objectives,
-        "prerequisites": unit.prerequisites,
-        "source_refs": unit.source_refs,
     }, ensure_ascii=False, separators=(",", ":"))
 
 
@@ -616,7 +612,7 @@ def build_quiz_prompt(task: ContentTask, unit: KnowledgeUnit, context_pack: Cont
             if task.quiz_count is not None
             else "No fixed question count; decide from objectives and textbook evidence."
         ),
-        "acceptance_criteria": task.acceptance_criteria,
+        "acceptance_criteria": list(task.acceptance_criteria),
     }
     return load_prompt(
         "generate_quiz_artifact",

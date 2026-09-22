@@ -8,6 +8,27 @@ button:focus-visible { outline: 3px solid #e76f51; outline-offset: 2px; }
 .annotation-markdown .katex,
 .annotation-rich-text .katex,
 .annotation-rich-text-inline .katex { font-size: 1.05em; }
+.annotation-markdown { color: #3f4642; font: 400 1rem/1.95 "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif; }
+.annotation-markdown > :first-child { margin-top: 0; }
+.annotation-markdown > :last-child { margin-bottom: 0; }
+.annotation-markdown h1,
+.annotation-markdown h2,
+.annotation-markdown h3,
+.annotation-markdown h4 { color: #1c2522; font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif; letter-spacing: -.015em; }
+.annotation-markdown h1 { margin: 2.2rem 0 .8rem; font-size: 1.75rem; line-height: 1.35; }
+.annotation-markdown h2 { margin: 2rem 0 .7rem; font-size: 1.45rem; line-height: 1.4; font-weight: 600; }
+.annotation-markdown h3 { margin: 1.6rem 0 .55rem; font-size: 1.2rem; line-height: 1.45; font-weight: 600; }
+.annotation-markdown h4 { margin: 1.25rem 0 .45rem; font-size: 1.05rem; line-height: 1.5; font-weight: 600; }
+.annotation-markdown p { margin: 0 0 1rem; }
+.annotation-markdown ul,
+.annotation-markdown ol { margin: .45rem 0 1.15rem; padding-left: 1.45rem; }
+.annotation-markdown li + li { margin-top: .35rem; }
+.annotation-markdown blockquote { margin: 1.1rem 0; padding: .7rem 1rem; border-left: 3px solid #b03a2e; background: #f5f1e9; color: #545d58; }
+.annotation-markdown code { padding: .08em .28em; border-radius: .2rem; background: #f0ede6; font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace; font-size: .88em; }
+.annotation-markdown pre { margin: 1rem 0; padding: .9rem 1rem; overflow-x: auto; background: #1f2926; color: #edf2ed; }
+.annotation-markdown pre code { padding: 0; background: transparent; color: inherit; }
+.annotation-markdown hr { margin: 1.6rem 0; border: 0; border-top: 1px solid #d4d0c8; }
+.annotation-markdown a { color: #8b2e24; text-decoration-thickness: .08em; text-underline-offset: .15em; }
 .annotation-inline-formula { white-space: nowrap; }
 .annotation-inline-formula-display { display: block; margin: 1rem 0; overflow-x: auto; text-align: center; white-space: normal; }
 .annotation-rich-text > :first-child { margin-top: 0; }

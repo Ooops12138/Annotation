@@ -11,6 +11,7 @@ from annotation.domain.artifacts import (
     ContextPack,
     FunctionDomainSpec,
     FunctionGraphSpec,
+    GeneratedHtmlSpec,
     InteractiveComponentArtifact,
     InteractiveComponentPlan,
     InteractiveComponentSandboxReport,
@@ -177,6 +178,48 @@ def test_valid_component_is_accepted_after_shared_sandbox_and_critic() -> None:
     assert trace.attempts[0].sandbox_report.status == "passed"
     assert result["final_artifact"].status == "accepted"
     assert [call.schema.__name__ for call in provider.calls] == ["InteractiveComponentDraft", "InteractiveComponentCritiqueDraft"]
+    assert "json" in provider.calls[0].prompt.lower()
+    assert "json" in provider.calls[1].prompt.lower()
+    assert "show-supremum" in provider.calls[0].prompt
+    assert '"issues"' in provider.calls[1].prompt
+    assert "不得输出" in provider.calls[1].prompt
+
+
+def test_unsupported_control_revises_before_browser_sandbox() -> None:
+    def unsupported_control(request: StructuredGenerationRequest[Any]) -> dict[str, Any]:
+        draft = _interval_draft(request)
+        draft["spec"]["controls"] = [{
+            "kind": "range",
+            "control_id": "right-endpoint-toggle",
+            "label": "切换右端点",
+            "minimum": 0,
+            "maximum": 1,
+            "step": 1,
+            "default_value": 1,
+        }]
+        draft["spec"]["test_actions"] = [{
+            "action": "set_range",
+            "control_id": "right-endpoint-toggle",
+            "value": 0,
+            "expected_text": "右端点变为实心点。",
+        }]
+        return draft
+
+    sandbox_calls: list[int] = []
+
+    def sandbox(*_args: Any, **_kwargs: Any) -> InteractiveComponentSandboxReport:
+        sandbox_calls.append(1)
+        return _sandbox_ok()
+
+    provider = ScriptedComponentProvider([unsupported_control, _interval_draft, {"issues": []}])
+    result = build_interactive_component_subgraph(provider, max_attempts=3, sandbox_runner=sandbox).invoke(_state())
+
+    trace = result["interactive_component_loop_trace"]
+    assert [attempt.route for attempt in trace.attempts] == ["revise", "accept"]
+    assert trace.attempts[0].sandbox_report is None
+    assert trace.attempts[0].hard_check is not None
+    assert "show-supremum" in trace.attempts[0].hard_check.issues[0].message
+    assert sandbox_calls == [1]
 
 
 def test_invalid_source_revises_before_browser_or_critic() -> None:
@@ -213,6 +256,31 @@ def test_not_needed_decision_is_preserved_in_trace() -> None:
     assert trace.plan.status == "not_needed"
     assert "静态讲解" in trace.plan.reason
     assert trace.attempts[0].route == "not_needed"
+    assert '"task_id"' in provider.calls[0].prompt
+    assert '"not_needed_reason"' in provider.calls[0].prompt
+    assert "`accepted_content_artifact_id`" in provider.calls[0].prompt
+    assert "必须完全省略 `not_needed_reason`" in provider.calls[0].prompt
+
+
+def test_schema_error_is_passed_to_the_interactive_revision_prompt() -> None:
+    provider = ScriptedComponentProvider([
+        ProviderError("unexpected top-level field", category="schema", raw_output='{"type":"unexpected"}'),
+        lambda request: {
+            "task_id": request.metadata["task_id"],
+            "knowledge_unit_id": request.metadata["knowledge_unit_id"],
+            "context_pack_id": request.metadata["context_pack_id"],
+            "spec": None,
+            "not_needed_reason": "当前教材证据不足以生成受限规格。",
+        },
+    ])
+
+    result = build_interactive_component_subgraph(provider, max_attempts=3, sandbox_runner=_sandbox_ok).invoke(_state())
+
+    trace = result["interactive_component_loop_trace"]
+    assert trace.final_status == "not_needed"
+    assert [attempt.route for attempt in trace.attempts] == ["revise", "not_needed"]
+    assert "unexpected top-level field" in provider.calls[1].prompt
+    assert "{{GENERATION_ERROR}}" not in provider.calls[1].prompt
 
 
 def test_browser_infrastructure_error_fails_without_silent_degradation() -> None:
@@ -279,6 +347,50 @@ def test_function_domain_probes_reject_sqrt_and_unexcluded_hole() -> None:
         )
         assert check.status == "needs_revision"
         assert check.issues[0].category == "formula"
+
+
+def test_generated_html_component_is_source_bound_and_keeps_legacy_renderer_rules() -> None:
+    state = _state()
+    task = state["task"]
+    spec = GeneratedHtmlSpec(
+        component_id="derivative-tangent",
+        title="观察割线趋近切线",
+        learning_objective="拖动横坐标，观察割线斜率如何趋近切线斜率。",
+        source_refs=["src-1"],
+        accessibility=ComponentAccessibility(
+            aria_label="导数切线交互图示",
+            description="滑块控制横坐标，画布显示函数与切线。",
+            observation="移动滑块观察斜率变化。",
+        ),
+        controls=[],
+        test_actions=[],
+        annotations=[],
+        libraries=["jsxgraph"],
+        html='<div id="board" style="width: 320px; height: 220px"></div>',
+        css='#result { color: #0d6b63; }',
+        javascript='JXG.JSXGraph.initBoard("board", {boundingbox: [-3, 3, 3, -3], axis: true});',
+    )
+    artifact = InteractiveComponentArtifact(
+        artifact_id="generated-html-artifact",
+        run_id=task.run_id,
+        version=1,
+        status="checking",
+        source_refs=["src-1"],
+        created_by="test",
+        plan_id=task.plan_id,
+        task_id=task.task_id,
+        knowledge_unit_id=task.knowledge_unit_id,
+        accepted_content_artifact_id=task.accepted_content_artifact_id,
+        context_pack_id=task.context_pack_id,
+        spec=spec,
+    )
+    check = interactive_component_hard_check(
+        task=task,
+        context_pack=state["context_pack"],
+        valid_source_refs={"src-1"},
+        candidate_artifact=artifact,
+    )
+    assert check.status == "accepted"
 
 
 def test_component_snapshot_keeps_full_trace_but_manifest_only_has_summary(tmp_path) -> None:

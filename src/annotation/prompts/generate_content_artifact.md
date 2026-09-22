@@ -22,6 +22,23 @@ Return only valid JSON matching this shape:
 }
 ```
 
+The object must contain exactly the four keys shown above: `title`, `content`,
+`callouts`, and `source_refs`. Do not add `quiz`, `questions`, `options`,
+`answer`, `explanation`, or any other key. Keep the JSON compact and keep the
+main `content` to roughly 900-1600 Chinese characters; do not copy the whole
+ContextPack into the response. Never emit Markdown fences or commentary outside
+the JSON object. Quiz generation is a separate downstream step: any quiz-related
+criterion in the ContentTask is out of scope for this ContentDraft response and
+must not be represented by extra fields.
+
+The `content` and Callout `content` fields are shown directly to learners. Do
+not mention ContextPack, prompts, agents, model output, evidence boundaries,
+source IDs, review status, audit steps, or internal uncertainty labels. Do not
+write `待核实` (or similar pipeline wording) into learner-facing Markdown. If
+the supplied evidence does not support a detail, omit that detail rather than
+filling the gap; traceability is carried separately in `source_refs` and must
+never be rendered inline in the prose.
+
 Every key definition, formula, theorem claim or worked example must be
 supported by one or more exact `source_refs` copied from the ContextPack.
 Keep the explanation focused on the current knowledge unit and its stated
@@ -32,8 +49,9 @@ learning-objective coverage, worked examples, derivations, and step-by-step
 reasoning directly in that Markdown body. Decide what teaching content is
 useful from the knowledge unit and ContextPack; do not create a fixed named
 section merely to satisfy a content category. If the ContextPack omits an
-important step, write `待核实` at that point and preserve the omission for
-review; do not silently complete it from outside knowledge.
+important step, omit the unsupported step rather than silently completing it
+from outside knowledge. Evidence gaps are recorded by the review system, not
+in learner-facing text.
 
 `callouts` is optional. Use it only when a theorem, warning, proof checkpoint,
 or other key point benefits from visual emphasis. Keep ordinary worked examples

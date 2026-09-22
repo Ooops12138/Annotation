@@ -32,7 +32,7 @@ from annotation.domain.artifacts import (
 from annotation.prompt_loader import load_prompt
 from annotation.providers import ModelProvider, ProviderError, StructuredGenerationRequest
 from annotation.workflow.content import render_context_pack
-from annotation.workflow.content_support import _unit_context
+from annotation.workflow.content_support import _interactive_prompt_content, _interactive_prompt_unit
 from annotation.workflow.graph import _metadata, _provider_metadata
 from annotation.workflow.interactive_expression import function_domain_probe_errors
 from annotation.workflow.interactive_sandbox import run_interactive_component_sandbox
@@ -156,8 +156,9 @@ def plan_interactive_component(
         context_pack_id=pack.context_pack_id,
         source_refs=refs,
         acceptance_criteria=[
-            "只输出允许的结构化 JSXGraph 规格，不输出可执行前端代码。",
+            "可选择受控 JSXGraph 规格，或输出由 renderer 在受限 iframe 中执行的 HTML/CSS/JavaScript 片段。",
             "规格必须能用当前教材来源解释，并帮助初学者观察学习目标。",
+            "生成式组件必须把可测试控件标为 data-component-control，且不得依赖网络、父页面或外部资源。",
             "函数图像必须声明受限公式、定义域、端点、采样点和排除点。",
         ],
     )
@@ -272,6 +273,41 @@ def interactive_component_hard_check(
         ))
     if set(candidate.source_refs) != set(spec_refs):
         issues.append(_issue(task=task, suffix="artifact-sources", category="source", severity="blocking", message="组件 artifact 来源与不可变规格不一致。", target_id=candidate.artifact_id))
+    controls = candidate.spec.controls
+    test_actions = candidate.spec.test_actions
+    supported_interval_toggle = (
+        candidate.spec.component_type == "interval_line"
+        and len(controls) == 1
+        and controls[0].kind == "toggle"
+        and controls[0].control_id == "show-supremum"
+        and candidate.spec.right_endpoint == "open"
+        and candidate.spec.maximum is None
+    )
+    supported_toggle_action = (
+        len(test_actions) == 1
+        and test_actions[0].action == "toggle"
+        and test_actions[0].control_id == "show-supremum"
+        and test_actions[0].value is True
+        and test_actions[0].expected_text == "上确界"
+    )
+    if candidate.spec.component_type == "interval_line" and (
+        (not controls and test_actions) or (controls and not (supported_interval_toggle and supported_toggle_action))
+    ):
+        issues.append(_issue(
+            task=task,
+            suffix="unsupported-control",
+            category="logic",
+            severity="blocking",
+            message=(
+                "当前渲染器只支持 interval_line 的 show-supremum 开关；它只能显示上确界标记，"
+                "不能改变区间端点或最大元。"
+            ),
+            target_id=candidate.artifact_id,
+            suggested_action=(
+                "使用空 controls/test_actions，或仅使用 show-supremum toggle，"
+                "并提供 value=true、expected_text=上确界 的唯一测试动作。"
+            ),
+        ))
     if candidate.spec.component_type == "function_graph":
         errors = function_domain_probe_errors(
             candidate.spec.formula,
@@ -363,21 +399,22 @@ def build_interactive_component_subgraph(
         if revision:
             prompt = load_prompt(
                 "revise_interactive_component",
-                KNOWLEDGE_UNIT_CONTEXT=_unit_context(unit),
-                ACCEPTED_CONTENT=json.dumps(state["content_artifact"].model_dump(mode="json"), ensure_ascii=False, indent=2),
+                KNOWLEDGE_UNIT_CONTEXT=_interactive_prompt_unit(unit),
+                ACCEPTED_CONTENT=_interactive_prompt_content(state["content_artifact"]),
                 CONTEXT_PACK=render_context_pack(pack),
                 COMPONENT_TASK=json.dumps(task.model_dump(mode="json"), ensure_ascii=False, indent=2),
                 CANDIDATE_ARTIFACT=json.dumps(previous.model_dump(mode="json") if previous is not None else {}, ensure_ascii=False, indent=2),
                 HARD_CHECK_RESULT=json.dumps(state.get("hard_check").model_dump(mode="json") if state.get("hard_check") else {}, ensure_ascii=False, indent=2),
                 SANDBOX_REPORT=json.dumps(state.get("sandbox_report").model_dump(mode="json") if state.get("sandbox_report") else {}, ensure_ascii=False, indent=2),
                 CRITIQUE_RESULT=json.dumps(state.get("critic_parsed_output") or {"issues": []}, ensure_ascii=False, indent=2),
+                GENERATION_ERROR=str(state.get("generation_error") or ""),
             )
             agent, prompt_version = "revise_interactive_component", "revise_interactive_component:v1"
         else:
             prompt = load_prompt(
                 "generate_interactive_component",
-                KNOWLEDGE_UNIT_CONTEXT=_unit_context(unit),
-                ACCEPTED_CONTENT=json.dumps(state["content_artifact"].model_dump(mode="json"), ensure_ascii=False, indent=2),
+                KNOWLEDGE_UNIT_CONTEXT=_interactive_prompt_unit(unit),
+                ACCEPTED_CONTENT=_interactive_prompt_content(state["content_artifact"]),
                 CONTEXT_PACK=render_context_pack(pack),
                 COMPONENT_TASK=json.dumps(task.model_dump(mode="json"), ensure_ascii=False, indent=2),
             )
@@ -515,8 +552,8 @@ def build_interactive_component_subgraph(
         candidate = state.get("candidate_artifact")
         prompt = load_prompt(
             "critique_interactive_component",
-            KNOWLEDGE_UNIT_CONTEXT=_unit_context(state["unit"]),
-            ACCEPTED_CONTENT=json.dumps(state["content_artifact"].model_dump(mode="json"), ensure_ascii=False, indent=2),
+            KNOWLEDGE_UNIT_CONTEXT=_interactive_prompt_unit(state["unit"]),
+            ACCEPTED_CONTENT=_interactive_prompt_content(state["content_artifact"]),
             CONTEXT_PACK=render_context_pack(state["context_pack"]),
             COMPONENT_TASK=json.dumps(task.model_dump(mode="json"), ensure_ascii=False, indent=2),
             COMPONENT_SPEC=json.dumps(candidate.spec.model_dump(mode="json") if candidate is not None else {}, ensure_ascii=False, indent=2),
