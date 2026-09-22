@@ -335,8 +335,9 @@ def persist_workflow_result(
     book: Mapping[str, Any],
     state: Mapping[str, Any],
     origin: str = "workflow",
+    publish_document: bool = True,
 ) -> dict[str, Any]:
-    """Index a completed workflow and make its document version current."""
+    """Index a completed workflow and optionally publish its document version."""
 
     run_id = str(state["run_id"])
     document = state.get("document")
@@ -419,6 +420,29 @@ def persist_workflow_result(
             },
         )
         return {"run": run, "document": None, "document_version": None, "artifacts": artifacts}
+    if not publish_document:
+        # Offline/mock runs are useful for tests and local previews, but must
+        # not replace the last real model-generated document in the library.
+        run = repo.update_run(
+            run_id,
+            status="succeeded" if not state.get("errors") else "failed",
+            provider=str(state.get("provider_metadata", {}).get("provider", "")),
+            model=str(state.get("provider_metadata", {}).get("model", "")),
+            config_version=str(state.get("provider_metadata", {}).get("config_version", "")),
+            origin=origin,
+            error="; ".join(state.get("errors", [])) or None,
+            metadata={
+                "artifact_ids": {kind: item["artifact_id"] for kind, item in artifacts.items()},
+                "warnings": list(state.get("warnings", [])),
+                "provider_metadata": dict(state.get("provider_metadata", {})),
+                "blueprint_loop": loop_summary,
+                "content_loop": content_loop_summary,
+                "fact_check_summary": fact_check_compact_summary,
+                "interactive_component_summary": interactive_component_compact_summary,
+                "document_published": False,
+            },
+        )
+        return {"run": run, "document": document, "document_version": None, "artifacts": artifacts}
     db_document = repo.create_document(
         str(book["book_id"]),
         document.title,

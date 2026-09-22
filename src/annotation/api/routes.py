@@ -228,7 +228,13 @@ def _execute_run(*, book: dict[str, Any], requested_run_id: str | None = None, o
                 pdf_path=book["stored_path"],
                 document_id=logical_document_id,
             )
-            result = persist_workflow_result(repo, book=book, state=state, origin=origin)
+            result = persist_workflow_result(
+                repo,
+                book=book,
+                state=state,
+                origin=origin,
+                publish_document=provider.provider != "mock",
+            )
             return {"stored": False, "state": state, "result": result}
         except HTTPException:
             raise

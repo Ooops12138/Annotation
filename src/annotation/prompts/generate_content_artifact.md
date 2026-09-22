@@ -23,9 +23,7 @@ Return only valid JSON matching this shape:
 ```
 
 The object must contain exactly the four keys shown above: `title`, `content`,
-`callouts`, and `source_refs`. Do not add `quiz`, `questions`, `options`,
-`answer`, `explanation`, or any other key. Keep the JSON compact and keep the
-main `content` to roughly 900-1600 Chinese characters; do not copy the whole
+`callouts`, and `source_refs`. Keep the JSON compact and keep the main `content` to roughly 900-1600 Chinese characters; do not copy the whole
 ContextPack into the response. Never emit Markdown fences or commentary outside
 the JSON object. Quiz generation is a separate downstream step: any quiz-related
 criterion in the ContentTask is out of scope for this ContentDraft response and
