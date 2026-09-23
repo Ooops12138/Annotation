@@ -24,10 +24,7 @@ Return only valid JSON matching this shape:
 
 The object must contain exactly the four keys shown above: `title`, `content`,
 `callouts`, and `source_refs`. Keep the JSON compact and keep the main `content` to roughly 900-1600 Chinese characters; do not copy the whole
-ContextPack into the response. Never emit Markdown fences or commentary outside
-the JSON object. Quiz generation is a separate downstream step: any quiz-related
-criterion in the ContentTask is out of scope for this ContentDraft response and
-must not be represented by extra fields.
+ContextPack into the response. Never emit Markdown fences or commentary outside the JSON object.
 
 The `content` and Callout `content` fields are shown directly to learners. Do
 not mention ContextPack, prompts, agents, model output, evidence boundaries,
@@ -67,8 +64,7 @@ schema allows it or duplicate ordinary main content there.
   example, write `i^2=-1` as `$i^2=-1$`). Do not guess that arbitrary prose,
   identifiers or code are mathematics; only delimit expressions that are
   intentionally mathematical.
-- Markdown math is the only formula presentation path. Do not return a
-  separate formula field or FormulaNode data. The same delimiter rules apply
+- Markdown math is the only formula presentation path. The same delimiter rules apply
   inside optional Callout content.
 
 Example:

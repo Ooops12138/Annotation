@@ -146,7 +146,7 @@ def test_hard_check_blocks_malformed_optional_callout_metadata() -> None:
     }
 
 
-def test_artifact_projection_removes_pipeline_metadata_from_learner_markdown() -> None:
+def test_artifact_projection_preserves_model_markdown() -> None:
     draft = ContentDraft(
         title="测试概念",
         content=(
@@ -168,9 +168,7 @@ def test_artifact_projection_removes_pipeline_metadata_from_learner_markdown() -
         provider_name="test",
     )
 
-    assert "srcdoc-" not in artifact.content
-    assert "ContextPack" not in artifact.content
-    assert "待核实" not in artifact.content
-    assert "保留这段正常讲解。" in artifact.content
-    assert artifact.metadata["callouts"][0]["content"] == "依据。"
+    assert artifact.content == draft.content
+    assert artifact.metadata["callouts"][0]["title"] == draft.callouts[0].title
+    assert artifact.metadata["callouts"][0]["content"] == draft.callouts[0].content
     assert artifact.source_refs == ["src-1"]

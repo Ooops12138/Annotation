@@ -92,7 +92,7 @@ def _artifact(unit: KnowledgeUnit, *, questions: list[QuizQuestion] | None = Non
         questions=question_items,
         task_id=f"task-{unit.artifact_id}",
         context_pack_id=f"ctx-{unit.artifact_id}",
-        prompt_version="generate_quiz_artifact:v2",
+        prompt_version="generate_quiz_artifact:v3",
     )
 
 
@@ -187,6 +187,23 @@ def test_validation_limits_question_sources_to_context_pack() -> None:
     )
     assert check.status == "blocked"
     assert any(issue.issue_id.startswith("quiz-question-invalid-sources") for issue in check.issues)
+
+
+def test_validation_blocks_unicode_or_bare_quiz_formulas() -> None:
+    unit = _unit()
+    bad = _question(unit, "q-formula").model_copy(update={
+        "options": ["Σₖ₌₁ⁿ aₖbₖ", "$x+y=y+x$"],
+        "answer": "Σₖ₌₁ⁿ aₖbₖ",
+        "explanation": "x + y = y + x 是交换律。",
+    })
+    artifact = _artifact(unit, questions=[bad])
+
+    check = validate_quiz_artifact(artifact, unit=unit, valid_source_refs={"src-1"})
+
+    assert check.status == "blocked"
+    formula_issues = [issue for issue in check.issues if issue.category == "formula"]
+    assert len(formula_issues) >= 2
+    assert all(issue.severity == "blocking" for issue in formula_issues)
 
 
 def test_coverage_matrix_accepts_agent_selected_counts_and_records_objective_gaps() -> None:

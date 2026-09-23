@@ -55,7 +55,6 @@ from annotation.workflow.graph import (
     _assemble_document_from_artifacts,
     _blueprint_from_draft,
     _default_pdf,
-    _fallback_document,
     _metadata,
     _provider_metadata,
     _review_report_for,
@@ -283,11 +282,24 @@ def build_minimal_graph(
             run_id=state["run_id"],
             blueprint=state["blueprint"],
         )
+        metadata = result.get("content_task_planning_metadata", {})
+        status = str(metadata.get("status", "unknown"))
+        planning_errors = []
+        if status != "succeeded":
+            planning_errors.append(f"course_architect_{status}")
         return {
             "content_tasks": result["content_tasks"],
-            "content_task_planning_metadata": result.get("content_task_planning_metadata", {}),
+            "content_task_planning_metadata": metadata,
             "warnings": _merge_messages(state.get("warnings"), result.get("warnings", [])),
+            "errors": _merge_messages(state.get("errors"), planning_errors),
+            "workflow_status": "blocked" if status != "succeeded" else state.get("workflow_status", ""),
         }
+
+    def next_content_task_planning_route(state: WorkflowState) -> str:
+        return "accept" if state.get("content_task_planning_metadata", {}).get("status") == "succeeded" else "block"
+
+    def record_content_task_planning_blocked_run(state: WorkflowState) -> dict[str, Any]:
+        return {"workflow_status": "blocked"}
 
     def build_context_packs(state: WorkflowState) -> dict[str, Any]:
         blueprint = state["blueprint"]
@@ -677,10 +689,7 @@ def build_minimal_graph(
         artifacts = [artifact for artifact in state.get("content_artifacts", []) if artifact.status == "accepted"]
         quiz_artifacts = [artifact for artifact in state.get("quiz_artifacts", []) if artifact.status == "accepted"]
         if not artifacts and not quiz_artifacts:
-            document = _fallback_document(state["run_id"], state["blueprint"], state["source_document"], state["source_blocks"], model_provider.provider)
-            if state.get("document_id"):
-                document.document_id = state["document_id"]
-            return {"document": document}
+            raise ValueError("assemble_document_requires_accepted_artifacts")
         # Assemble from the accepted per-unit artifacts for both real and
         # deterministic providers.  The rich fixture remains available through
         # the dedicated demo endpoint, while workflow output now includes all
@@ -823,6 +832,7 @@ def build_minimal_graph(
         "record_blocked_run": record_blocked_run,
         "record_failed_run": record_failed_run,
         "plan_content_tasks": plan_content_tasks,
+        "record_content_task_planning_blocked_run": record_content_task_planning_blocked_run,
         "build_context_packs": build_context_packs,
         "content_reflection_loops": content_reflection_loops,
         "record_content_blocked_run": record_content_blocked_run,
@@ -854,7 +864,12 @@ def build_minimal_graph(
     )
     graph.add_edge("record_blocked_run", END)
     graph.add_edge("record_failed_run", END)
-    graph.add_edge("plan_content_tasks", "build_context_packs")
+    graph.add_conditional_edges(
+        "plan_content_tasks",
+        next_content_task_planning_route,
+        {"accept": "build_context_packs", "block": "record_content_task_planning_blocked_run"},
+    )
+    graph.add_edge("record_content_task_planning_blocked_run", END)
     graph.add_edge("build_context_packs", "content_reflection_loops")
     graph.add_conditional_edges(
         "content_reflection_loops",

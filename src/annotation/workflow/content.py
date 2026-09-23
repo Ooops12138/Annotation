@@ -74,6 +74,60 @@ def _lexical_candidates(unit: KnowledgeUnit, blocks: Iterable[SourceBlock]) -> l
     return [item[2] for item in scored]
 
 
+def _is_section_heading(block: SourceBlock) -> bool:
+    """Recognize textbook section headings in the parsed source blocks."""
+
+    return bool(re.match(r"^\s*\d+(?:\.\d+)+\s+", block.text or ""))
+
+
+def _section_context_candidates(
+    primary: list[SourceBlock],
+    ordered_blocks: list[SourceBlock],
+) -> list[SourceBlock]:
+    """Expand anchors to the containing textbook section.
+
+    Blueprint/source refs are often section anchors rather than an exhaustive
+    citation list.  A heading such as ``1.2 域公理`` must expose the axiom
+    statements that follow it, otherwise the content agent can only repeat the
+    heading.  The normal context budget still limits how many blocks survive.
+    """
+
+    if not primary or not ordered_blocks:
+        return []
+
+    headings = [index for index, block in enumerate(ordered_blocks) if _is_section_heading(block)]
+    if not headings:
+        return []
+
+    positions = {id(block): index for index, block in enumerate(ordered_blocks)}
+    candidates: list[SourceBlock] = []
+    seen: set[tuple[int, int]] = set()
+    for block in primary:
+        position = positions.get(id(block))
+        if position is None:
+            continue
+        preceding = [index for index in headings if index <= position]
+        following = [index for index in headings if index > position]
+        heading_index: int | None = preceding[-1] if preceding else None
+        if _is_section_heading(block):
+            heading_index = position
+        # A summary immediately before a section heading belongs to that
+        # upcoming section (for example, the three-block introduction to the
+        # real-number axioms).  Otherwise use the containing heading.
+        if not _is_section_heading(block) and following and following[0] - position <= 4:
+            heading_index = following[0]
+        if heading_index is None:
+            continue
+        next_headings = [index for index in headings if index > heading_index]
+        end = next_headings[0] if next_headings else len(ordered_blocks)
+        for candidate in ordered_blocks[heading_index:end]:
+            key = (candidate.page_number, candidate.block_index)
+            if key not in seen:
+                seen.add(key)
+                candidates.append(candidate)
+    return candidates
+
+
 def select_source_refs(
     *,
     title: str,
@@ -123,7 +177,12 @@ def build_context_pack(
         primary = _lexical_candidates(unit, ordered_blocks)[:3]
 
     candidates: list[tuple[str, SourceBlock]] = [("source_refs", block) for block in primary]
+    section_candidates = _section_context_candidates(primary, ordered_blocks)
     primary_keys = {(block.page_number, block.block_index) for block in primary}
+    for block in section_candidates:
+        if (block.page_number, block.block_index) not in primary_keys:
+            candidates.append(("section_context", block))
+            primary_keys.add((block.page_number, block.block_index))
     for block in primary:
         for neighbor in ordered_blocks:
             if neighbor.page_number == block.page_number and abs(neighbor.block_index - block.block_index) <= 1:

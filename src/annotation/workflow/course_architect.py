@@ -8,7 +8,6 @@ from typing import Any, Iterable
 from annotation.domain.artifacts import ContentTask, LearningBlueprint
 from annotation.prompt_loader import load_prompt
 from annotation.providers import ModelProvider, ProviderError, StructuredGenerationRequest
-from annotation.workflow.content_support import _plan_content_tasks
 from annotation.workflow.graph import _metadata, _provider_metadata
 from annotation.workflow.models import ContentTaskDraft, ContentTaskPlanDraft
 
@@ -74,6 +73,7 @@ def _tasks_from_draft(
     units = list(blueprint.knowledge_units)
     drafts_by_unit: dict[str, ContentTaskDraft] = {}
     warnings: list[str] = []
+    missing_units: list[str] = []
     for item in draft.tasks:
         if item.knowledge_unit_id in drafts_by_unit:
             warnings.append(f"course_architect_duplicate_task:{item.knowledge_unit_id}")
@@ -86,11 +86,13 @@ def _tasks_from_draft(
         item = drafts_by_unit.get(unit.artifact_id)
         if item is None:
             warnings.append(f"course_architect_missing_task:{unit.artifact_id}")
+            missing_units.append(unit.artifact_id)
         allowed_refs = set(unit.source_refs)
         source_refs = _unique(ref for ref in (item.source_refs if item is not None else unit.source_refs) if ref in allowed_refs)
         dropped_refs = [ref for ref in (item.source_refs if item is not None else []) if ref not in allowed_refs]
         if dropped_refs:
             warnings.append(f"course_architect_dropped_source_refs:{unit.artifact_id}:{','.join(dropped_refs)}")
+            warnings.append(f"course_architect_revision_required:{unit.artifact_id}:invalid_source_refs")
         criteria = _unique([
             *(_default_criteria(unit, item)),
             *((item.acceptance_criteria if item is not None else []) or []),
@@ -111,6 +113,9 @@ def _tasks_from_draft(
     unknown_units = [item.knowledge_unit_id for item in draft.tasks if item.knowledge_unit_id not in {unit.artifact_id for unit in units}]
     for unit_id in unknown_units:
         warnings.append(f"course_architect_unknown_unit:{unit_id}")
+        warnings.append(f"course_architect_revision_required:{unit_id}:unknown_unit")
+    if missing_units:
+        warnings.append(f"course_architect_revision_required:{','.join(missing_units)}")
     return tasks, warnings
 
 
@@ -179,6 +184,8 @@ def plan_content_tasks_with_architect(
             metadata.update(_metadata(response))
         tasks, planning_warnings = _tasks_from_draft(run_id=run_id, blueprint=blueprint, draft=draft)
         warnings.extend(planning_warnings)
+        if any(item.startswith("course_architect_revision_required:") for item in planning_warnings):
+            status = "needs_revision"
         metadata.update({
             "status": status,
             "raw_output": raw_output,
@@ -191,7 +198,7 @@ def plan_content_tasks_with_architect(
         }
     except ProviderError as exc:
         status = "schema_error" if getattr(exc, "category", "provider") == "schema" else "provider_error"
-        warnings.append(f"course_architect_fallback:{status}:{exc}")
+        warnings.append(f"course_architect_blocked:{status}:{exc}")
         metadata.update({
             **_provider_metadata(provider),
             "status": status,
@@ -201,7 +208,7 @@ def plan_content_tasks_with_architect(
         })
     except Exception as exc:
         status = "runtime_error"
-        warnings.append(f"course_architect_fallback:{status}:{exc}")
+        warnings.append(f"course_architect_blocked:{status}:{exc}")
         metadata.update({
             **_provider_metadata(provider),
             "status": status,
@@ -211,7 +218,7 @@ def plan_content_tasks_with_architect(
         })
 
     return {
-        "content_tasks": _plan_content_tasks(run_id, blueprint),
+        "content_tasks": [],
         "content_task_planning_metadata": metadata,
         "warnings": warnings,
     }

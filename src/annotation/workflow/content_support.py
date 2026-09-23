@@ -107,35 +107,6 @@ def _lossless_refs(values: list[str] | None) -> list[str]:
     return normalized
 
 
-_SOURCE_REF_TOKEN = re.compile(r"`?srcdoc-[A-Za-z0-9_-]+`?")
-_INTERNAL_NOTE_SENTENCE = re.compile(
-    r"[^。！？\n]*(?:ContextPack|待核实|不宜在此凭记忆补全|教材原文.*核对|证据片段)[^。！？\n]*[。！？]?"
- )
-
-
-def _clean_learner_markdown(value: str) -> str:
-    """Remove pipeline metadata that a model may leak into learner content.
-
-    Traceability remains in ``ContentArtifact.source_refs`` and is rendered by
-    the separate source panel.  This cleanup is intentionally conservative: it
-    removes source-id parentheticals and whole internal-review sentences while
-    leaving ordinary Markdown, formulas and learner-facing prose intact.
-    """
-
-    content = str(value or "")
-    content = re.sub(
-        rf"[（(]\s*{_SOURCE_REF_TOKEN.pattern}(?:\s*[、,，;；]\s*{_SOURCE_REF_TOKEN.pattern})*\s*[）)]",
-        "",
-        content,
-    )
-    content = _SOURCE_REF_TOKEN.sub("", content)
-    content = re.sub(r"[（(]\s*[、,，;；\s]*[）)]", "", content)
-    content = _INTERNAL_NOTE_SENTENCE.sub("", content)
-    content = re.sub(r"[ \t]+([。！？？，、：；])", r"\1", content)
-    content = re.sub(r"\n{3,}", "\n\n", content)
-    return content.strip()
-
-
 def _plan_content_tasks(run_id: str, blueprint: LearningBlueprint) -> list[ContentTask]:
     tasks: list[ContentTask] = []
     blueprint_version = f"{blueprint.artifact_id}:v{blueprint.version}"
@@ -197,12 +168,12 @@ def _content_artifact_from_draft(
     refs = _lossless_refs(draft.source_refs)
     if fixture_adaptation and not refs:
         refs = list(pack.source_refs)
-    content = _clean_learner_markdown(draft.content)
+    content = draft.content
     callouts = [
         {
             **callout.model_dump(mode="json"),
-            "title": _clean_learner_markdown(callout.title),
-            "content": _clean_learner_markdown(callout.content),
+            "title": callout.title,
+            "content": callout.content,
         }
         for callout in draft.callouts
     ]

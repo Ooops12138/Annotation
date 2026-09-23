@@ -22,6 +22,29 @@ button:focus-visible { outline: 3px solid #e76f51; outline-offset: 2px; }
 .annotation-markdown p { margin: 0 0 1rem; }
 .annotation-markdown ul,
 .annotation-markdown ol { margin: .45rem 0 1.15rem; padding-left: 1.45rem; }
+.annotation-markdown ul { list-style: none; }
+.annotation-markdown ol { list-style: none; counter-reset: annotation-list; }
+.annotation-markdown ul > li,
+.annotation-markdown ol > li { position: relative; }
+.annotation-markdown ul > li::before {
+  content: "•";
+  position: absolute;
+  left: -1.05rem;
+  color: #b03a2e;
+  font-size: .9em;
+}
+.annotation-markdown ol > li { counter-increment: annotation-list; }
+.annotation-markdown ol > li::before {
+  content: counter(annotation-list) ".";
+  position: absolute;
+  left: -1.45rem;
+  color: #b03a2e;
+  font: .82em/1.95 "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+}
+.annotation-markdown ul ul { list-style: none; }
+.annotation-markdown ol ol { list-style: none; counter-reset: annotation-list-nested; }
+.annotation-markdown ol ol > li { counter-increment: annotation-list-nested; }
+.annotation-markdown ol ol > li::before { content: counter(annotation-list-nested, lower-alpha) "."; }
 .annotation-markdown li + li { margin-top: .35rem; }
 .annotation-markdown blockquote { margin: 1.1rem 0; padding: .7rem 1rem; border-left: 3px solid #b03a2e; background: #f5f1e9; color: #545d58; }
 .annotation-markdown code { padding: .08em .28em; border-radius: .2rem; background: #f0ede6; font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace; font-size: .88em; }

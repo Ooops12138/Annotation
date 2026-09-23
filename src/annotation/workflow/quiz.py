@@ -8,6 +8,7 @@ objective and source references needed by the review and rendering layers.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterable, Mapping
 from typing import Any, Literal
 
@@ -28,7 +29,7 @@ from annotation.providers.models import ModelProvider, ProviderError, Structured
 from annotation.workflow.content import render_context_pack
 
 
-QUIZ_PROMPT_VERSION = "generate_quiz_artifact:v2"
+QUIZ_PROMPT_VERSION = "generate_quiz_artifact:v3"
 # There is intentionally no default or minimum quiz size.  The agent decides
 # how many evidence-supported items are useful for a unit, including zero.
 DEFAULT_QUIZ_COUNT: int | None = None
@@ -135,6 +136,28 @@ def _context_refs(context_pack: ContextPack) -> list[str]:
         *context_pack.source_refs,
         *(excerpt.source_ref for excerpt in context_pack.excerpts),
     ])
+
+
+_QUIZ_UNICODE_MATH = re.compile(r"[Σ∑√∞≤≥≠≈∂∫∏∈∉⊂⊆⊕×÷±]|[₀₁₂₃₄₅₆₇₈₉⁰¹²³⁴⁵⁶⁷⁸⁹]")
+_QUIZ_BARE_FORMULA = re.compile(
+    r"(?<![A-Za-z])(?:[A-Za-z](?:\s*[_^]?\s*[A-Za-z0-9]+)?\s*)"
+    r"(?:=|≤|≥|<|>|\+|−|-|\*|/|\^)(?:\s*[A-Za-z0-9(){}._^+\-*/=<>≤≥]+)"
+)
+
+
+def _quiz_formula_format_issue(value: str) -> str | None:
+    """Return a learner-facing field's formula-format violation, if any."""
+
+    text = str(value or "")
+    if _QUIZ_UNICODE_MATH.search(text):
+        return "包含未用 LaTeX 定界的 Unicode 数学符号或上下标"
+    # Remove valid inline math before looking for a bare ASCII formula. This
+    # intentionally checks only equation/operator-shaped fragments so normal
+    # prose such as "选项 A" remains valid.
+    outside = re.sub(r"\$[^$\n]+\$", "", text)
+    if _QUIZ_BARE_FORMULA.search(outside):
+        return "包含未放入 `$...$` 的裸公式"
+    return None
 
 
 def validate_quiz_artifact(
@@ -391,6 +414,22 @@ def validate_quiz_artifact(
                 message="答案解析不能为空。",
                 target_id=question_id,
             ))
+        for field_name, field_value in (
+            ("question", question.question),
+            *(('option', option) for option in options),
+            ("answer", question.answer),
+            ("explanation", question.explanation),
+        ):
+            formula_issue = _quiz_formula_format_issue(field_value)
+            if formula_issue:
+                question_issues.append(_issue(
+                    f"quiz-invalid-formula-format-{artifact.artifact_id}-{question_id}-{field_name}",
+                    category="formula",
+                    severity="blocking",
+                    message=f"题目{field_name} {formula_issue}。所有公式必须使用 `$...$` Markdown 数学定界符。",
+                    target_id=question_id,
+                    suggested_action="将公式改写为 LaTeX 并放入 `$...$`，然后重新生成该题。",
+                ))
         if not question.source_refs:
             question_issues.append(_issue(
                 f"quiz-question-missing-sources-{artifact.artifact_id}-{question_id}",
@@ -602,9 +641,16 @@ def _unit_context(unit: KnowledgeUnit) -> str:
     }, ensure_ascii=False, separators=(",", ":"))
 
 
-def build_quiz_prompt(task: ContentTask, unit: KnowledgeUnit, context_pack: ContextPack) -> str:
+def build_quiz_prompt(
+    task: ContentTask,
+    unit: KnowledgeUnit,
+    context_pack: ContextPack,
+    *,
+    revision_feedback: Iterable[str] = (),
+) -> str:
     """Render the bounded prompt for one quiz structured call."""
 
+    feedback = list(revision_feedback)
     decision = {
         "quiz_count": task.quiz_count,
         "instruction": (
@@ -620,6 +666,13 @@ def build_quiz_prompt(task: ContentTask, unit: KnowledgeUnit, context_pack: Cont
         CONTEXT_PACK=render_context_pack(context_pack),
         TARGET_OBJECTIVES=json.dumps(unit.learning_objectives, ensure_ascii=False),
         COURSE_ARCHITECT_DECISION=json.dumps(decision, ensure_ascii=False, indent=2),
+        REVISION_FEEDBACK=(
+            "## Required revision\n\nThe previous quiz failed deterministic validation. "
+            "Correct every issue below and return a complete replacement JSON object:\n\n"
+            + "\n".join(f"- {message}" for message in feedback)
+            if feedback
+            else ""
+        ),
     )
 
 
@@ -631,7 +684,6 @@ def _mock_quiz_draft(
     """Produce a stable offline approximation of an agent-selected count."""
 
     refs = _context_refs(context_pack)
-    evidence = context_pack.excerpts[0].text.strip() if context_pack.excerpts else "教材片段"
     objectives = list(unit.learning_objectives)
     # An explicit task value is a fixture/compatibility hint.  Normal tasks
     # leave it unset, so the mock chooses based on available objectives and
@@ -643,7 +695,7 @@ def _mock_quiz_draft(
     for index in range(count):
         target = target_one if index % 2 == 0 else target_two
         options = [
-            f"教材片段支持：{evidence[:72]}",
+            "当前 ContextPack 中的教材片段直接支持该说法",
             "该说法没有得到当前教材片段支持",
             "只能依据未提供的外部资料判断",
         ]
@@ -651,10 +703,10 @@ def _mock_quiz_draft(
             question_id=f"{unit.artifact_id}-quiz-{index + 1:02d}",
             knowledge_unit_id=unit.artifact_id,
             target_objectives=[target],
-            question=f"关于“{unit.title}”的目标“{target}”，下列哪项可由当前教材依据支持？",
+            question=f"关于“{unit.title}”，下列哪项可由当前教材依据支持？",
             options=options,
             answer=options[0],
-            explanation=f"当前 ContextPack 的教材片段直接支持该表述；本题对应学习目标“{target}”。",
+            explanation="当前 ContextPack 的教材片段直接支持该表述。",
             source_refs=refs,
         ))
     return QuizDraft(
@@ -722,116 +774,73 @@ def generate_quiz_artifact(
     unit: KnowledgeUnit,
     context_pack: ContextPack,
     run_id: str | None = None,
+    max_attempts: int = 2,
 ) -> QuizArtifact:
-    """Generate one quiz set for one unit; mock stays deterministic and local."""
-
-    prompt = build_quiz_prompt(task, unit, context_pack)
+    """Generate, hard-check, and revise one quiz set within a bounded loop."""
     provider_name = str(getattr(provider, "provider", "unknown"))
-    metadata: dict[str, Any] = {
-        "agent": "generate_quiz_artifact",
-        "task_id": task.task_id,
-        "context_pack_id": context_pack.context_pack_id,
-        "requested_question_count": task.quiz_count,
-    }
-    raw_response = ""
-    try:
-        # Built-in mock fixtures intentionally do not consume a structured
-        # provider call; this keeps existing Blueprint call-count tests stable.
-        if provider_name == "mock":
-            draft = _mock_quiz_draft(unit, context_pack, task.quiz_count)
-            metadata.update({
-                "provider": "mock",
-                "model": getattr(provider, "model", "fixture-model"),
-                "config_version": getattr(provider, "config_version", "mock-v1"),
-                "duration_ms": 0,
-                "usage": {},
-            })
-            raw_response = draft.model_dump_json()
-        else:
-            response = provider.generate_structured(StructuredGenerationRequest(
-                prompt=prompt,
-                schema=QuizDraft,
-                max_output_tokens=min(2200, getattr(getattr(provider, "capabilities", None), "max_output_tokens", 2200) or 2200),
-                metadata=metadata,
-            ))
-            # Keep the provider payload before validating the typed draft so a
-            # later schema/domain failure can still be audited and retried.
-            raw_response = str(getattr(response, "raw_text", "") or "")
-            draft = QuizDraft.model_validate(response.value.model_dump(mode="python"))
-            response_data = _response_metadata(response)
-            metadata.update(response_data)
-            raw_response = raw_response or draft.model_dump_json()
-        selected_count = draft.question_count if draft.question_count is not None else len(draft.questions)
-        metadata["question_count"] = selected_count
-        metadata["question_count_source"] = "agent_declared" if draft.question_count is not None else "inferred_from_questions"
-        artifact = QuizArtifact(
-            artifact_id=f"quiz-{task.task_id}",
-            run_id=run_id or task.run_id,
-            version=1,
-            status="draft",
-            source_refs=_context_refs(context_pack),
-            created_by=f"provider:{metadata.get('provider', provider_name)}",
-            knowledge_unit_ids=[unit.artifact_id],
-            target_objectives=_dedupe([
-                *draft.target_objectives,
-                *(objective for question in draft.questions for objective in question.target_objectives),
-            ]),
-            questions=list(draft.questions),
-            question_count=selected_count,
-            task_id=task.task_id,
-            context_pack_id=context_pack.context_pack_id,
-            prompt_version=QUIZ_PROMPT_VERSION,
-            generation_metadata={**metadata, "prompt": prompt},
-            raw_response=raw_response,
-        )
-        if draft.knowledge_unit_id != unit.artifact_id:
-            artifact.issues.append(_issue(
-                f"quiz-draft-unit-mismatch-{artifact.artifact_id}",
-                category="coverage",
-                severity="blocking",
-                message="题目生成响应的 knowledge_unit_id 与当前任务单元不一致。",
-                target_id=artifact.artifact_id,
-                suggested_action="仅使用当前任务知识单元的稳定 ID 重新生成题目。",
-            ))
-        if task.quiz_count is not None and selected_count != task.quiz_count:
-            artifact.issues.append(_issue(
-                f"quiz-count-mismatch-{artifact.artifact_id}",
-                category="coverage",
-                severity="blocking",
-                message=f"题目数量与课程架构师指定不一致：期望 {task.quiz_count}，实际 {selected_count}。",
-                target_id=artifact.artifact_id,
-                suggested_action="按当前 ContentTask.quiz_count 重新生成题目，或由课程架构师修改 ContentTask。",
-            ))
-        check = validate_quiz_artifact(
-            artifact,
-            unit=unit,
-            context_pack=context_pack,
-        )
-        artifact.issues = _dedupe_issues([*artifact.issues, *check.issues])
-        artifact.status = "blocked" if any(issue.severity == "blocking" for issue in artifact.issues) else "accepted"
-        return artifact
-    except ProviderError as exc:
-        return blocked_quiz_artifact(
-            task=task,
-            unit=unit,
-            context_pack=context_pack,
-            run_id=run_id,
-            provider_name=provider_name,
-            raw_response=str(getattr(exc, "raw_output", "") or raw_response),
-            error=str(exc),
-            generation_metadata={**metadata, "error_category": getattr(exc, "category", "provider")},
-        )
-    except Exception as exc:
-        return blocked_quiz_artifact(
-            task=task,
-            unit=unit,
-            context_pack=context_pack,
-            run_id=run_id,
-            provider_name=provider_name,
-            raw_response=raw_response,
-            error=str(exc),
-            generation_metadata={**metadata, "error_category": "runtime"},
-        )
+    attempts: list[dict[str, Any]] = []
+    feedback: list[str] = []
+    last: QuizArtifact | None = None
+    for attempt in range(1, max(1, max_attempts) + 1):
+        prompt = build_quiz_prompt(task, unit, context_pack, revision_feedback=feedback)
+        metadata: dict[str, Any] = {
+            "agent": "generate_quiz_artifact", "task_id": task.task_id,
+            "context_pack_id": context_pack.context_pack_id, "attempt": attempt,
+            "stage": "initial" if attempt == 1 else "revision",
+        }
+        raw_response = ""
+        try:
+            if provider_name == "mock":
+                draft = _mock_quiz_draft(unit, context_pack, task.quiz_count)
+                metadata.update({"provider": "mock", "model": getattr(provider, "model", "fixture-model"), "config_version": getattr(provider, "config_version", "mock-v1"), "duration_ms": 0, "usage": {}})
+                raw_response = draft.model_dump_json()
+            else:
+                response = provider.generate_structured(StructuredGenerationRequest(
+                    prompt=prompt,
+                    schema=QuizDraft,
+                    max_output_tokens=min(2200, getattr(getattr(provider, "capabilities", None), "max_output_tokens", 2200) or 2200),
+                    metadata=metadata,
+                ))
+                raw_response = str(getattr(response, "raw_text", "") or "")
+                draft = QuizDraft.model_validate(response.value.model_dump(mode="python"))
+                metadata.update(_response_metadata(response))
+                raw_response = raw_response or draft.model_dump_json()
+            count = draft.question_count if draft.question_count is not None else len(draft.questions)
+            metadata["question_count"] = count
+            metadata["question_count_source"] = "agent_declared" if draft.question_count is not None else "inferred_from_questions"
+            artifact = QuizArtifact(
+                artifact_id=f"quiz-{task.task_id}", run_id=run_id or task.run_id, version=1, status="draft",
+                source_refs=_context_refs(context_pack), created_by=f"provider:{metadata.get('provider', provider_name)}",
+                knowledge_unit_ids=[unit.artifact_id],
+                target_objectives=_dedupe([*draft.target_objectives, *(o for q in draft.questions for o in q.target_objectives)]),
+                questions=list(draft.questions), question_count=count, task_id=task.task_id,
+                context_pack_id=context_pack.context_pack_id, prompt_version=QUIZ_PROMPT_VERSION,
+                generation_metadata={**metadata, "prompt": prompt}, raw_response=raw_response,
+            )
+            if draft.knowledge_unit_id != unit.artifact_id:
+                artifact.issues.append(_issue(f"quiz-draft-unit-mismatch-{artifact.artifact_id}", category="coverage", severity="blocking", message="题目生成响应的 knowledge_unit_id 与当前任务单元不一致。", target_id=artifact.artifact_id))
+            if task.quiz_count is not None and count != task.quiz_count:
+                artifact.issues.append(_issue(f"quiz-count-mismatch-{artifact.artifact_id}", category="coverage", severity="blocking", message=f"题目数量与课程架构师指定不一致：期望 {task.quiz_count}，实际 {count}。", target_id=artifact.artifact_id))
+            check = validate_quiz_artifact(artifact, unit=unit, context_pack=context_pack)
+            artifact.issues = _dedupe_issues([*artifact.issues, *check.issues])
+            blocking = [issue for issue in artifact.issues if issue.severity == "blocking"]
+            artifact.status = "blocked" if blocking else "accepted"
+            attempts.append({"attempt": attempt, "stage": metadata["stage"], "prompt": prompt, "raw_response": raw_response, "status": artifact.status, "issues": [i.model_dump(mode="json") for i in artifact.issues]})
+            artifact.generation_metadata["attempts"] = attempts
+            artifact.generation_metadata["final_attempt"] = attempt
+            last = artifact
+            if artifact.status == "accepted" or provider_name == "mock":
+                return artifact
+            feedback = [issue.message for issue in blocking]
+        except ProviderError as exc:
+            last = blocked_quiz_artifact(task=task, unit=unit, context_pack=context_pack, run_id=run_id, provider_name=provider_name, raw_response=str(getattr(exc, "raw_output", "") or raw_response), error=str(exc), generation_metadata={**metadata, "error_category": getattr(exc, "category", "provider")})
+            if not bool(getattr(exc, "retryable", False) or getattr(exc, "category", "provider") == "schema"):
+                return last
+            feedback = [str(exc)]
+        except Exception as exc:
+            return blocked_quiz_artifact(task=task, unit=unit, context_pack=context_pack, run_id=run_id, provider_name=provider_name, raw_response=raw_response, error=str(exc), generation_metadata={**metadata, "error_category": "runtime"})
+    assert last is not None
+    return last
 
 
 # Compatibility aliases keep the contract discoverable to callers that use

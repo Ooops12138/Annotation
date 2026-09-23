@@ -45,7 +45,7 @@ describe('Document IR presentation contract', () => {
     expect(rejectedNodeToReviewIssue(rejected[0]).severity).toBe('blocking')
   })
 
-  it('adapts legacy nodes while preserving unknown nodes for review', () => {
+  it('preserves legacy nodes for the backend migration boundary', () => {
     const document = normalizeLearningDocument({
       artifact_id: 'doc-1', document_id: 'doc-1', run_id: 'run-1', version: 1, status: 'published', created_by: 'fixture',
       blueprint_version: 'bp-1:v1', title: '学习文档', source_refs: ['src-1'],
@@ -56,8 +56,8 @@ describe('Document IR presentation contract', () => {
       ] }],
     })
     expect(document?.sections[0].children).toEqual([
-      { type: 'markdown', id: 'formula-1', content: '$$\nx^2\n$$', source_refs: ['src-1'] },
-      { type: 'markdown', id: 'example-1', content: '### 平方\n\n**题目**\n\n计算 $2^2$\n\n**解答**\n\n$2^2 = 4$' },
+      { type: 'formula', id: 'formula-1', latex: 'x^2', source_refs: ['src-1'] },
+      { type: 'example', id: 'example-1', title: '平方', problem: '计算 $2^2$', solution: '$2^2 = 4$' },
       { type: 'html', id: 'unsafe-1' },
     ])
     expect(normalizeLearningDocument({ title: '缺少契约' })).toBeNull()

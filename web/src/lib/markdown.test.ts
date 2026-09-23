@@ -54,7 +54,7 @@ $$|z|=\\sqrt{x^2+y^2}$$`)
     expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;')
   })
 
-  it('hides leaked source ids and internal review notes from learner prose', () => {
+  it('renders source ids and review text as supplied because rendering is read-only', () => {
     const html = renderMarkdown([
       '## 上界、最大元与上确界',
       '',
@@ -66,9 +66,9 @@ $$|z|=\\sqrt{x^2+y^2}$$`)
     ].join('\n'))
 
     expect(html).toContain('<h2>上界、最大元与上确界</h2>')
-    expect(html).not.toContain('srcdoc-')
-    expect(html).not.toContain('ContextPack')
-    expect(html).not.toContain('待核实')
+    expect(html).toContain('srcdoc-acb412de0faf0abc-p7-b0')
+    expect(html).toContain('ContextPack')
+    expect(html).toContain('待核实')
     expect(html).toContain('保留这段正常讲解。')
   })
 })

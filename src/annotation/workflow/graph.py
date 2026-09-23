@@ -134,24 +134,6 @@ def fixture_blueprint(run_id: str = "run-demo-001") -> LearningBlueprint:
     return _fallback_blueprint(run_id, document, blocks)
 
 
-def _fallback_document(run_id: str, blueprint: LearningBlueprint, source_document: SourceDocument, blocks: list[SourceBlock], provider_name: str) -> LearningDocument:
-    # Keep provenance on the artifact, but do not copy an entire chapter's
-    # source index into every rendered node.  The UI presents these refs to a
-    # learner, so a short deterministic sample is the appropriate fallback.
-    refs = (blueprint.source_refs or [block.source_ref for block in blocks])[:5]
-    excerpt = " ".join(re.sub(r"\s+", " ", block.text).strip() for block in blocks[:3])[:1200]
-    section = DocumentSection(id="section-main", title=blueprint.title, children=[
-        MarkdownNode(id="explanation-main", content=f"本节围绕“{blueprint.title}”组织学习。教材摘录：{excerpt or '教材文本未能提取，当前内容需要人工审核。'}", source_refs=refs),
-        MarkdownNode(id="formula-main", content="$$\\lim_{x \\to a} f(x)=L$$", source_refs=refs),
-        CalloutNode(id="review-note", tone="warning", title="来源与审核提示", content="这是基于教材片段生成的 POC 内容，发布前仍需人工核对定义、公式和例题。"),
-        QuizNode(id="quiz-main", question="本节学习内容的首要事实来源是什么？", options=[source_document.title, "未提供来源", "与教材无关的外部资料"], answer=source_document.title, explanation="本 Demo 将教材 PDF 作为主来源，并保留 SourceBlock 引用。", source_refs=refs),
-    ])
-    return LearningDocument(
-        artifact_id=f"doc-{uuid.uuid4().hex[:12]}", document_id=f"doc-{run_id}", blueprint_version=f"{blueprint.artifact_id}:v{blueprint.version}",
-        run_id=run_id, version=1, status="draft", source_refs=refs, created_by=f"provider:{provider_name}:fallback", title=blueprint.title, sections=[section],
-    )
-
-
 def _mock_document_from_fixture(
     run_id: str,
     blueprint: LearningBlueprint,
@@ -406,14 +388,12 @@ def _assemble_document_from_artifacts(
             ))
             raw_callouts = artifact.metadata.get("callouts", [])
             if not isinstance(raw_callouts, list):
-                continue
+                raise ValueError(f"invalid_callouts:{artifact.artifact_id}:expected_list")
             for callout_index, raw_callout in enumerate(raw_callouts, start=1):
-                # Accepted candidates passed this shape at the reflection
-                # boundary. Retain a defensive guard for legacy/manual data.
                 try:
                     callout = CalloutDraft.model_validate(raw_callout)
-                except Exception:
-                    continue
+                except Exception as exc:
+                    raise ValueError(f"invalid_callout:{artifact.artifact_id}:{callout_index}:{exc}") from exc
                 children.append(CalloutNode(
                     id=f"{artifact.artifact_id}-callout-{callout_index}",
                     tone=callout.tone,
@@ -443,7 +423,7 @@ def _assemble_document_from_artifacts(
                     options=list(question.options),
                     answer=question.answer,
                     explanation=question.explanation,
-                    source_refs=list(question.source_refs or quiz_artifact.source_refs),
+                    source_refs=list(question.source_refs),
                 ))
         sections.append(DocumentSection(id=f"section-{index:03d}", title=unit.title, children=children))
     refs: list[str] = []

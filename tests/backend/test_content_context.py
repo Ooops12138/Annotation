@@ -97,3 +97,47 @@ def test_context_pack_records_omitted_required_sources_when_budget_is_tiny() -> 
     assert estimate_tokens("abcd") == 1
     assert pack.source_refs == []
     assert pack.omitted_source_refs == ["src-1", "src-2"]
+
+
+def test_context_pack_expands_section_anchor_to_following_text() -> None:
+    blocks = [
+        _block("src-intro", 0, "1.1 引言"),
+        _block("src-summary", 1, "实数满足下文所列的公理。"),
+        _block("src-section", 2, "1.2 域公理"),
+        _block("src-axiom-1", 3, "公理1 加法和乘法满足交换律。"),
+        _block("src-axiom-2", 4, "公理2 加法和乘法满足结合律。"),
+        _block("src-next", 5, "1.3 序公理"),
+        _block("src-order", 6, "公理6 关系满足三歧性。"),
+    ]
+    unit = KnowledgeUnit(
+        artifact_id="ku-field",
+        run_id="run-context",
+        version=1,
+        status="accepted",
+        created_by="test",
+        title="实数公理",
+        kind="concept",
+        learning_objectives=["理解域公理"],
+        source_refs=["src-section"],
+    )
+    blueprint = LearningBlueprint(
+        artifact_id="bp-section",
+        run_id="run-context",
+        version=1,
+        status="accepted",
+        created_by="test",
+        title="测试章节",
+        knowledge_units=[unit],
+    )
+    task = ContentTask(
+        task_id="task-section-001",
+        run_id="run-context",
+        blueprint_version="bp-section:v1",
+        knowledge_unit_id=unit.artifact_id,
+        source_refs=["src-section"],
+    )
+
+    pack = build_context_pack(task, unit, blueprint, blocks, context_window=1000, reserved_output_tokens=300, safety_margin_tokens=0)
+
+    assert pack.source_refs[:3] == ["src-section", "src-axiom-1", "src-axiom-2"]
+    assert "src-next" not in pack.source_refs
