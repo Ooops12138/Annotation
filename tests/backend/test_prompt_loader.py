@@ -13,7 +13,7 @@ def test_load_prompt_renders_markdown_agent_prompt() -> None:
 
 def test_load_prompt_rejects_missing_placeholder_value() -> None:
     with pytest.raises(KeyError):
-        load_prompt("generate_document_ir", TEXTBOOK_CONTEXT="excerpt")
+        load_prompt("load_or_create_blueprint", OTHER="excerpt")
 
 
 def test_load_content_artifact_prompt_renders_bounded_context() -> None:

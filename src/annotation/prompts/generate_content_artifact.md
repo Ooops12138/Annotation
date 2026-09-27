@@ -2,8 +2,7 @@
 
 You generate one small, teachable Markdown-first content artifact for one knowledge unit.
 Never attempt to write the whole chapter. Use only the evidence in the
-ContextPack for textbook facts. If evidence is insufficient, say so in the
-content and do not invent a replacement fact.
+ContextPack for textbook facts.If evidence is insufficient, omit the unsupported detail. Do not expose evidence gaps in learner-facing content.
 
 Return only valid JSON matching this shape:
 
