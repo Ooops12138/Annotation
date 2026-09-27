@@ -40,16 +40,18 @@ every axiom, proof step, or terminology from the prerequisite.
 
 The ContextPack below is the complete evidence boundary for this call. It may
 contain visibly truncated or fragmentary textbook excerpts. When an objective
-or prerequisite detail is not fully present in that evidence, an explicit
-`待核实` marker is the correct handling: never emit `objective_missing` or
-`prerequisite_unexplained` merely because the missing detail cannot be verified.
-Treat that situation as a non-blocking `organization` or `wording` concern at
-most. Likewise, a candidate's explicit definition, property statement, or
-short prerequisite bridge counts even when it is not labelled with the same
-number or wording as the textbook. Use a blocking code only when the candidate
-omits material that is both required and directly supported by a complete
-ContextPack excerpt, or gives no prerequisite bridge at all. Return at most two
-concrete issues.
+or prerequisite detail is not fully present in that evidence, do not require
+the candidate to add a `待核实` marker or other pipeline wording. The evidence
+gap belongs in artifact metadata and review issues, not in learner-facing
+Markdown. Never emit `objective_missing` or `prerequisite_unexplained` merely
+because the missing detail cannot be verified. Treat that situation as no
+teaching-quality issue unless the candidate makes an unsupported claim; do not
+invent a replacement issue solely to mention the evidence gap. Likewise, a
+candidate's explicit definition, property statement, or short prerequisite
+bridge counts even when it is not labelled with the same number or wording as
+the textbook. Use a blocking code only when the candidate omits material that
+is both required and directly supported by a complete ContextPack excerpt, or
+gives no prerequisite bridge at all. Return at most two concrete issues.
 
 ## Knowledge unit
 

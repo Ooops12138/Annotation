@@ -180,7 +180,8 @@ def test_content_reflection_prompts_render_all_auditable_inputs() -> None:
     assert critic.startswith("# Agent: critique_content_artifact")
     assert "severity" in critic and "route" in critic
     assert "[src-1] 教材证据" in critic
-    assert "待核实" in critic
+    assert "do not require" in critic
+    assert "gap belongs in artifact metadata" in critic
     assert "{{CANDIDATE_ARTIFACT}}" not in critic
     assert revision.startswith("# Agent: revise_content_artifact")
     assert "[src-1] 教材证据" in revision
