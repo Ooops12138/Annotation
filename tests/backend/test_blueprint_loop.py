@@ -82,29 +82,25 @@ def test_first_pass_accepts_with_one_blueprint_call(monkeypatch) -> None:
     assert trace.attempts[0].raw_output
 
 
-def test_blocking_then_revised_blueprint_uses_back_edge(monkeypatch) -> None:
+def test_empty_blueprint_sources_do_not_trigger_revision(monkeypatch) -> None:
     provider = SequenceProvider([_payload(refs=[]), _payload()])
     state = _run(monkeypatch, provider)
 
-    assert len(provider.calls) == 2
+    assert len(provider.calls) == 1
     assert state["workflow_status"] == "accepted"
     trace = state["blueprint_loop_trace"]
-    assert [attempt.route for attempt in trace.attempts] == ["revise", "accept"]
-    assert trace.attempts[1].prompt.startswith("# Agent: revise_blueprint")
-    assert "blueprint-missing-source" in trace.attempts[1].prompt
+    assert [attempt.route for attempt in trace.attempts] == ["accept"]
 
 
-def test_three_blocking_attempts_are_blocked_without_document(monkeypatch) -> None:
+def test_empty_blueprint_sources_are_optional_metadata(monkeypatch) -> None:
     provider = SequenceProvider([_payload(refs=[]), _payload(refs=[]), _payload(refs=[])])
     state = _run(monkeypatch, provider)
 
-    assert len(provider.calls) == 3
-    assert state["workflow_status"] == "blocked"
-    assert "document" not in state
+    assert len(provider.calls) == 1
+    assert state["workflow_status"] == "accepted"
     trace = state["blueprint_loop_trace"]
-    assert trace.final_status == "blocked"
-    assert trace.stop_reason == "max_attempts"
-    assert trace.attempts[-1].route == "block"
+    assert trace.final_status == "accepted"
+    assert trace.attempts[-1].route == "accept"
 
 
 def test_warning_only_does_not_revise(monkeypatch) -> None:
@@ -118,13 +114,13 @@ def test_warning_only_does_not_revise(monkeypatch) -> None:
     assert all(issue.severity == "warning" for issue in state["blueprint_loop_trace"].attempts[0].check.issues)
 
 
-def test_real_provider_source_refs_are_not_lexically_repaired(monkeypatch) -> None:
+def test_blueprint_sources_do_not_constrain_retrieval(monkeypatch) -> None:
     provider = SequenceProvider([_payload(refs=["not-in-textbook"])])
     state = _run(monkeypatch, provider, attempts=1)
 
-    assert state["workflow_status"] == "blocked"
+    assert state["workflow_status"] == "accepted"
     assert state["blueprint"].knowledge_units[0].source_refs == ["not-in-textbook"]
-    assert state["blueprint_loop_trace"].attempts[0].check.issues[0].category == "source"
+    assert not state["blueprint_loop_trace"].attempts[0].check.issues
 
 
 def test_schema_and_provider_errors_keep_distinct_terminal_statuses(monkeypatch) -> None:
@@ -193,12 +189,12 @@ def test_preloaded_blueprint_is_checked_without_model_call(monkeypatch) -> None:
 
 
 def test_trace_artifact_contains_loop_and_run_summary(monkeypatch) -> None:
-    provider = SequenceProvider([_payload(refs=[]), _payload()])
+    provider = SequenceProvider([_payload(refs=[])])
     state = _run(monkeypatch, provider)
 
     blueprint_payload = json.loads(open(state["blueprint_artifact_path"], encoding="utf-8").read())
     run_payload = json.loads(open(state["run_manifest_path"], encoding="utf-8").read())
     assert blueprint_payload["schema_version"] == "blueprint-artifact-v2"
-    assert len(blueprint_payload["loop_trace"]["attempts"]) == 2
-    assert run_payload["blueprint_loop"]["attempt_count"] == 2
+    assert len(blueprint_payload["loop_trace"]["attempts"]) == 1
+    assert run_payload["blueprint_loop"]["attempt_count"] == 1
     assert run_payload["blueprint_loop"]["trace_path"] == state["blueprint_trace_path"]

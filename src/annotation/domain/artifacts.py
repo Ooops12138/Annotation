@@ -493,6 +493,7 @@ class ContentAttemptTrace(BaseModel):
         "attempts_exhausted",
         "non_retryable_provider_error",
         "context_pack_missing",
+        "context_pack_empty",
         "context_pack_source_over_budget",
         "upstream_failure",
     ] | None = None
@@ -540,6 +541,7 @@ class ContentUnitLoopTrace(BaseModel):
         "attempts_exhausted",
         "non_retryable_provider_error",
         "context_pack_missing",
+        "context_pack_empty",
         "context_pack_source_over_budget",
         "upstream_failure",
     ]

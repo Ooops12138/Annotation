@@ -12,7 +12,6 @@ Return only valid JSON matching this shape:
     {
       "knowledge_unit_id": "exact id from the blueprint",
       "quiz_count": 0,
-      "source_refs": ["exact source_ref from that knowledge unit"],
       "interactive_component_policy": "auto|required|skip",
       "content_agent_strategy": "single|parallel",
       "execution_group": 1,
@@ -39,9 +38,6 @@ Decision rules:
   sequential generation.
 - `execution_group` groups tasks that can be generated together after their
   prerequisites are already covered. Use lower numbers for prerequisite units.
-- `source_refs` must be copied from that knowledge unit. If a unit has no
-  source_refs, return an empty array and include an acceptance criterion that
-  the downstream agent must mark missing evidence instead of inventing facts.
 - `acceptance_criteria` must be concrete, source-bound, and useful to content,
   quiz, and component agents. Do not include vague project-management text.
 

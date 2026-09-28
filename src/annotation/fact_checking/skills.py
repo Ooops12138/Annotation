@@ -187,7 +187,7 @@ def _text_hashes(database: DatabaseTarget, source_refs: Sequence[str]) -> dict[s
 
 
 class SQLiteFts5TextbookDatabaseSearchSkill:
-    """Source-scoped adapter over the project's existing local SQLite FTS5 index."""
+    """Local SQLite FTS5 textbook search, with an optional source scope."""
 
     name = "textbook-database-search"
     version = "v1"
@@ -211,7 +211,7 @@ class SQLiteFts5TextbookDatabaseSearchSkill:
         self,
         query: str,
         *,
-        allowed_source_refs: Iterable[str],
+        allowed_source_refs: Iterable[str] | None = None,
         limit: int = 5,
     ) -> SearchResult:
         query = _normalized_query(query)
@@ -231,28 +231,31 @@ class SQLiteFts5TextbookDatabaseSearchSkill:
                 code=SearchErrorCode.EMPTY_SOURCE_SCOPE,
                 message="allowed_source_refs must be an iterable of source references",
             )
-        try:
-            allowed_scope = frozenset(
-                source_ref.strip()
-                for source_ref in allowed_source_refs
-                if isinstance(source_ref, str) and source_ref.strip()
-            )
-        except TypeError:
-            return _invalid_result(
-                name=self.name,
-                version=self.version,
-                query=query,
-                code=SearchErrorCode.EMPTY_SOURCE_SCOPE,
-                message="allowed_source_refs must be an iterable of source references",
-            )
-        if not allowed_scope:
-            return _invalid_result(
-                name=self.name,
-                version=self.version,
-                query=query,
-                code=SearchErrorCode.EMPTY_SOURCE_SCOPE,
-                message="allowed_source_refs must contain at least one source reference",
-            )
+        if allowed_source_refs is None:
+            allowed_scope: frozenset[str] | None = None
+        else:
+            try:
+                allowed_scope = frozenset(
+                    source_ref.strip()
+                    for source_ref in allowed_source_refs
+                    if isinstance(source_ref, str) and source_ref.strip()
+                )
+            except TypeError:
+                return _invalid_result(
+                    name=self.name,
+                    version=self.version,
+                    query=query,
+                    code=SearchErrorCode.EMPTY_SOURCE_SCOPE,
+                    message="allowed_source_refs must be an iterable of source references",
+                )
+            if not allowed_scope:
+                return _invalid_result(
+                    name=self.name,
+                    version=self.version,
+                    query=query,
+                    code=SearchErrorCode.EMPTY_SOURCE_SCOPE,
+                    message="allowed_source_refs must contain at least one source reference when supplied",
+                )
         effective_limit = _validated_limit(limit, self._max_results)
         if effective_limit is None:
             return _invalid_result(
@@ -272,10 +275,14 @@ class SQLiteFts5TextbookDatabaseSearchSkill:
                 message="query must contain searchable text",
             )
         try:
-            # Ask the existing FTS adapter for its maximum bounded candidate set,
-            # then enforce the run-specific source scope before returning evidence.
+            # Ask the existing FTS adapter for its maximum bounded candidate set.
+            # A caller may optionally narrow results to a known subset, while
+            # content retrieval searches the entire imported textbook.
             hits = search_source_blocks(self._database, fts_query, limit=_MAX_FTS_CANDIDATES)
-            scoped_hits = [hit for hit in hits if hit.source_ref in allowed_scope][:effective_limit]
+            scoped_hits = [
+                hit for hit in hits
+                if allowed_scope is None or hit.source_ref in allowed_scope
+            ][:effective_limit]
             text_hashes = _text_hashes(self._database, [hit.source_ref for hit in scoped_hits])
         except sqlite3.Error:
             return _error_result(
@@ -320,7 +327,27 @@ class SQLiteFts5TextbookDatabaseSearchSkill:
             query=query,
             status=SearchStatus.OK if evidence else SearchStatus.NO_RESULTS,
             evidence=evidence,
-            filtered_count=len(hits) - len(scoped_hits),
+            filtered_count=(len(hits) - len(scoped_hits)) if allowed_scope is not None else 0,
+        )
+
+
+class DisabledVectorTextbookSearchTool:
+    """Explicit vector-search tool placeholder until its backend is selected."""
+
+    name = "disabled-vector-textbook-search"
+    version = "v1"
+
+    def search(self, query: str, *, limit: int = 5) -> SearchResult:
+        del limit
+        query = _normalized_query(query) or ""
+        return SearchResult(
+            skill_name=self.name,
+            skill_version=self.version,
+            query=query,
+            status=SearchStatus.DISABLED,
+            available=False,
+            error_code=SearchErrorCode.DISABLED_BY_CONFIGURATION,
+            error_message="vector textbook search is not configured",
         )
 
 

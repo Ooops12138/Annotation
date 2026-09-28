@@ -54,7 +54,20 @@ class ScriptedFactCheckProvider:
     def generate_structured(self, request: StructuredGenerationRequest[Any]) -> StructuredGenerationResponse[Any]:
         self.calls.append(request)
         schema_name = request.schema.__name__
-        if schema_name == "FactCheckClaimsDraft":
+        if schema_name == "ContentTaskPlanDraft":
+            blueprint_section = request.prompt.split("## Learning Blueprint", maxsplit=1)[-1]
+            unit_ids = list(dict.fromkeys(re.findall(r'"knowledge_unit_id":\s*"([^"]+)"', blueprint_section)))
+            payload = {
+                "tasks": [{
+                    "knowledge_unit_id": unit_id,
+                    "quiz_count": 0,
+                    "interactive_component_policy": "skip",
+                    "content_agent_strategy": "single",
+                    "execution_group": index,
+                    "acceptance_criteria": ["基于教材检索结果解释概念。"],
+                } for index, unit_id in enumerate(unit_ids, start=1)],
+            }
+        elif schema_name == "FactCheckClaimsDraft":
             target_section = request.prompt.split("## Checkable targets", maxsplit=1)[-1]
             target_ids = list(dict.fromkeys(re.findall(r'"target_id":\s*"([^"]+)"', target_section)))
             round_number = int(request.metadata["round"])

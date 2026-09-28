@@ -30,8 +30,10 @@ def test_blocked_loop_keeps_previous_document_version_current(monkeypatch, tmp_p
     before = repo.get_current_document_version("doc-stable-loop")
     assert before is not None
 
+    invalid = _payload()
+    invalid["knowledge_units"][0]["prerequisites"] = ["missing-unit"]
     blocked = run_minimal_workflow(
-        provider=SequenceProvider([_payload(refs=[]), _payload(refs=[]), _payload(refs=[])]),
+        provider=SequenceProvider([invalid, invalid, invalid]),
         run_id="persist-blocked-loop",
         document_id="doc-stable-loop",
     )
@@ -58,7 +60,7 @@ def test_get_run_route_returns_loop_summary_and_trace_path(monkeypatch, tmp_path
     book = repo.register_book(pdf)
     run_id = "api-persistence-loop"
     state = run_minimal_workflow(
-        provider=SequenceProvider([_payload(refs=[]), _payload()]),
+        provider=SequenceProvider([_payload(refs=[])]),
         run_id=run_id,
         pdf_path=pdf,
     )
@@ -76,7 +78,7 @@ def test_get_run_route_returns_loop_summary_and_trace_path(monkeypatch, tmp_path
     assert response.status_code == 200
     payload = response.json()
     loop = payload["blueprint_loop"]
-    assert loop["attempt_count"] == 2
+    assert loop["attempt_count"] == 1
     assert loop["final_status"] == "accepted"
     assert loop["trace_path"] == state["blueprint_trace_path"]
     assert "attempts" not in loop

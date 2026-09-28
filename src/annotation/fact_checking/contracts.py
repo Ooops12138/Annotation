@@ -112,7 +112,7 @@ class SearchResult:
 
 @runtime_checkable
 class TextbookDatabaseSearchSkill(Protocol):
-    """Search only the current run's allowed textbook source references."""
+    """Search the current textbook, optionally narrowed to source references."""
 
     name: str
     version: str
@@ -121,9 +121,29 @@ class TextbookDatabaseSearchSkill(Protocol):
         self,
         query: str,
         *,
-        allowed_source_refs: Iterable[str],
+        allowed_source_refs: Iterable[str] | None = None,
         limit: int = 5,
     ) -> SearchResult: ...
+
+
+@runtime_checkable
+class TextbookSearchTool(Protocol):
+    """Provider-neutral textbook retrieval tool for content generation."""
+
+    name: str
+    version: str
+
+    def search(self, query: str, *, limit: int = 5) -> SearchResult: ...
+
+
+@runtime_checkable
+class VectorTextbookSearchTool(Protocol):
+    """Replaceable vector retrieval tool over indexed textbook blocks."""
+
+    name: str
+    version: str
+
+    def search(self, query: str, *, limit: int = 5) -> SearchResult: ...
 
 
 @runtime_checkable

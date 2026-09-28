@@ -123,7 +123,9 @@ def _plan_content_tasks(run_id: str, blueprint: LearningBlueprint) -> list[Conte
             blueprint_version=blueprint_version,
             knowledge_unit_id=unit.artifact_id,
             content_types=["explanation", "quiz"],
-            source_refs=list(unit.source_refs),
+            # Retrieval discovers the evidence used by this task. Blueprint
+            # source refs are planning hints, not an allowlist for generation.
+            source_refs=[],
             acceptance_criteria=criteria,
         ))
     return tasks

@@ -64,7 +64,7 @@ def test_context_pack_prioritizes_declared_refs_and_neighbors() -> None:
     assert "[src-1" in render_context_pack(pack)
 
 
-def test_context_pack_records_omitted_required_sources_when_budget_is_tiny() -> None:
+def test_context_pack_does_not_treat_task_sources_as_required() -> None:
     blocks = [_block("src-1", 1, "上确界。" * 900), _block("src-2", 2, "完全性。" * 900)]
     unit = KnowledgeUnit(
         artifact_id="ku-tiny",
@@ -96,10 +96,10 @@ def test_context_pack_records_omitted_required_sources_when_budget_is_tiny() -> 
     assert pack.input_budget_tokens == 50
     assert estimate_tokens("abcd") == 1
     assert pack.source_refs == []
-    assert pack.omitted_source_refs == ["src-1", "src-2"]
+    assert pack.omitted_source_refs == []
 
 
-def test_context_pack_expands_section_anchor_to_following_text() -> None:
+def test_context_pack_retrieves_from_objectives_without_task_sources() -> None:
     blocks = [
         _block("src-intro", 0, "1.1 引言"),
         _block("src-summary", 1, "实数满足下文所列的公理。"),
@@ -115,10 +115,10 @@ def test_context_pack_expands_section_anchor_to_following_text() -> None:
         version=1,
         status="accepted",
         created_by="test",
-        title="实数公理",
+        title="域公理",
         kind="concept",
         learning_objectives=["理解域公理"],
-        source_refs=["src-section"],
+        source_refs=[],
     )
     blueprint = LearningBlueprint(
         artifact_id="bp-section",
@@ -134,10 +134,10 @@ def test_context_pack_expands_section_anchor_to_following_text() -> None:
         run_id="run-context",
         blueprint_version="bp-section:v1",
         knowledge_unit_id=unit.artifact_id,
-        source_refs=["src-section"],
+        source_refs=[],
     )
 
     pack = build_context_pack(task, unit, blueprint, blocks, context_window=1000, reserved_output_tokens=300, safety_margin_tokens=0)
 
-    assert pack.source_refs[:3] == ["src-section", "src-axiom-1", "src-axiom-2"]
-    assert "src-next" not in pack.source_refs
+    assert "src-section" in pack.source_refs
+    assert "src-axiom-1" in pack.source_refs

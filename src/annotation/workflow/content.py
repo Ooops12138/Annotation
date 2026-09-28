@@ -74,60 +74,6 @@ def _lexical_candidates(unit: KnowledgeUnit, blocks: Iterable[SourceBlock]) -> l
     return [item[2] for item in scored]
 
 
-def _is_section_heading(block: SourceBlock) -> bool:
-    """Recognize textbook section headings in the parsed source blocks."""
-
-    return bool(re.match(r"^\s*\d+(?:\.\d+)+\s+", block.text or ""))
-
-
-def _section_context_candidates(
-    primary: list[SourceBlock],
-    ordered_blocks: list[SourceBlock],
-) -> list[SourceBlock]:
-    """Expand anchors to the containing textbook section.
-
-    Blueprint/source refs are often section anchors rather than an exhaustive
-    citation list.  A heading such as ``1.2 域公理`` must expose the axiom
-    statements that follow it, otherwise the content agent can only repeat the
-    heading.  The normal context budget still limits how many blocks survive.
-    """
-
-    if not primary or not ordered_blocks:
-        return []
-
-    headings = [index for index, block in enumerate(ordered_blocks) if _is_section_heading(block)]
-    if not headings:
-        return []
-
-    positions = {id(block): index for index, block in enumerate(ordered_blocks)}
-    candidates: list[SourceBlock] = []
-    seen: set[tuple[int, int]] = set()
-    for block in primary:
-        position = positions.get(id(block))
-        if position is None:
-            continue
-        preceding = [index for index in headings if index <= position]
-        following = [index for index in headings if index > position]
-        heading_index: int | None = preceding[-1] if preceding else None
-        if _is_section_heading(block):
-            heading_index = position
-        # A summary immediately before a section heading belongs to that
-        # upcoming section (for example, the three-block introduction to the
-        # real-number axioms).  Otherwise use the containing heading.
-        if not _is_section_heading(block) and following and following[0] - position <= 4:
-            heading_index = following[0]
-        if heading_index is None:
-            continue
-        next_headings = [index for index in headings if index > heading_index]
-        end = next_headings[0] if next_headings else len(ordered_blocks)
-        for candidate in ordered_blocks[heading_index:end]:
-            key = (candidate.page_number, candidate.block_index)
-            if key not in seen:
-                seen.add(key)
-                candidates.append(candidate)
-    return candidates
-
-
 def select_source_refs(
     *,
     title: str,
@@ -161,7 +107,7 @@ def build_context_pack(
     reserved_output_tokens: int = 2200,
     safety_margin_tokens: int = 400,
 ) -> ContextPack:
-    """Select primary evidence first, then bounded neighbors and lexical hits."""
+    """Retrieve task evidence from the imported textbook, then add neighbors."""
 
     effective_window = context_window or 12000
     input_budget = max(0, effective_window - reserved_output_tokens - safety_margin_tokens)
@@ -169,20 +115,18 @@ def build_context_pack(
     # character.  Three characters per estimated token is intentionally
     # conservative and leaves room for prompt/schema overhead.
     char_budget = input_budget * 3
-    by_ref = {block.source_ref: block for block in blocks}
     ordered_blocks = sorted(blocks, key=lambda block: (block.page_number, block.block_index))
 
-    primary = [by_ref[ref] for ref in task.source_refs if ref in by_ref]
+    # Do not use task/Blueprint refs as a source allowlist.  The unit's title
+    # and objectives query the complete imported textbook; refs selected below
+    # become the auditable provenance for the generated artifact.
+    primary = _lexical_candidates(unit, ordered_blocks)[:8]
+    primary_strategy = "keyword_retrieval"
     if not primary:
-        primary = _lexical_candidates(unit, ordered_blocks)[:3]
-
-    candidates: list[tuple[str, SourceBlock]] = [("source_refs", block) for block in primary]
-    section_candidates = _section_context_candidates(primary, ordered_blocks)
+        primary = ordered_blocks[:3]
+        primary_strategy = "document_fallback"
+    candidates: list[tuple[str, SourceBlock]] = [(primary_strategy, block) for block in primary]
     primary_keys = {(block.page_number, block.block_index) for block in primary}
-    for block in section_candidates:
-        if (block.page_number, block.block_index) not in primary_keys:
-            candidates.append(("section_context", block))
-            primary_keys.add((block.page_number, block.block_index))
     for block in primary:
         for neighbor in ordered_blocks:
             if neighbor.page_number == block.page_number and abs(neighbor.block_index - block.block_index) <= 1:
@@ -204,12 +148,8 @@ def build_context_pack(
         if not text:
             continue
         if len(text) > char_budget:
-            if block.source_ref in task.source_refs and block.source_ref not in omitted_refs:
-                omitted_refs.append(block.source_ref)
             continue
         if used_chars + len(text) > char_budget and excerpts:
-            if block.source_ref in task.source_refs and block.source_ref not in omitted_refs:
-                omitted_refs.append(block.source_ref)
             continue
         excerpts.append(ContextExcerpt(source_ref=block.source_ref, page_number=block.page_number, block_index=block.block_index, text=text))
         selected_refs.append(block.source_ref)
@@ -219,10 +159,6 @@ def build_context_pack(
         if used_chars >= char_budget:
             break
 
-    for ref in task.source_refs:
-        if ref not in selected_refs and ref not in omitted_refs:
-            omitted_refs.append(ref)
-
     by_id = {candidate.artifact_id: candidate for candidate in blueprint.knowledge_units}
     by_title = {candidate.title: candidate for candidate in blueprint.knowledge_units}
     prerequisites = []
@@ -230,6 +166,7 @@ def build_context_pack(
         candidate = by_id.get(prerequisite) or by_title.get(prerequisite)
         if candidate is not None and candidate.title not in prerequisites:
             prerequisites.append(candidate.title)
+    by_ref = {block.source_ref: block for block in blocks}
     snapshot_material = "|".join(f"{excerpt.source_ref}:{by_ref[excerpt.source_ref].text_hash}" for excerpt in excerpts if excerpt.source_ref in by_ref)
     source_snapshot = hashlib.sha256(snapshot_material.encode("utf-8")).hexdigest() if snapshot_material else None
     rendered_chars = sum(len(excerpt.text) for excerpt in excerpts)
@@ -245,7 +182,7 @@ def build_context_pack(
         estimated_input_tokens=math.ceil(rendered_chars / 4),
         input_budget_tokens=input_budget,
         omitted_source_refs=omitted_refs,
-        retrieval_strategy=strategies or ["source_refs"],
+        retrieval_strategy=strategies or ["keyword_retrieval"],
         source_snapshot=source_snapshot,
     )
 

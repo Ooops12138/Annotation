@@ -95,8 +95,8 @@ def test_course_architect_generates_structured_content_tasks() -> None:
     assert tasks[0].quiz_count == 2
     assert tasks[0].interactive_component_policy == "required"
     assert tasks[0].content_agent_strategy == "parallel"
-    assert tasks[0].source_refs == ["src-1"]
-    assert any("dropped_source_refs" in warning for warning in result["warnings"])
+    assert tasks[0].source_refs == []
+    assert not any("dropped_source_refs" in warning for warning in result["warnings"])
     assert "说明上确界与最大元的差别。" in tasks[0].acceptance_criteria
 
 

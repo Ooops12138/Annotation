@@ -9,6 +9,7 @@ from annotation.domain.artifacts import ContentTask, LearningBlueprint
 from annotation.prompt_loader import load_prompt
 from annotation.providers import ModelProvider, ProviderError, StructuredGenerationRequest
 from annotation.workflow.graph import _metadata, _provider_metadata
+from annotation.workflow.content_support import _plan_content_tasks
 from annotation.workflow.models import ContentTaskDraft, ContentTaskPlanDraft
 
 
@@ -26,7 +27,6 @@ def _blueprint_context(blueprint: LearningBlueprint) -> str:
                     "learning_objectives": list(unit.learning_objectives),
                     "prerequisites": list(unit.prerequisites),
                     "related_unit_ids": list(unit.related_unit_ids),
-                    "source_refs": list(unit.source_refs),
                 }
                 for unit in blueprint.knowledge_units
             ],
@@ -87,12 +87,6 @@ def _tasks_from_draft(
         if item is None:
             warnings.append(f"course_architect_missing_task:{unit.artifact_id}")
             missing_units.append(unit.artifact_id)
-        allowed_refs = set(unit.source_refs)
-        source_refs = _unique(ref for ref in (item.source_refs if item is not None else unit.source_refs) if ref in allowed_refs)
-        dropped_refs = [ref for ref in (item.source_refs if item is not None else []) if ref not in allowed_refs]
-        if dropped_refs:
-            warnings.append(f"course_architect_dropped_source_refs:{unit.artifact_id}:{','.join(dropped_refs)}")
-            warnings.append(f"course_architect_revision_required:{unit.artifact_id}:invalid_source_refs")
         criteria = _unique([
             *(_default_criteria(unit, item)),
             *((item.acceptance_criteria if item is not None else []) or []),
@@ -104,7 +98,7 @@ def _tasks_from_draft(
             knowledge_unit_id=unit.artifact_id,
             content_types=["explanation", "quiz"],
             quiz_count=item.quiz_count if item is not None else None,
-            source_refs=source_refs,
+            source_refs=[],
             interactive_component_policy=item.interactive_component_policy if item is not None else "auto",
             content_agent_strategy=item.content_agent_strategy if item is not None else "single",
             execution_group=item.execution_group if item is not None else index,
@@ -129,8 +123,7 @@ def _mock_task_plan(blueprint: LearningBlueprint) -> ContentTaskPlanDraft:
         )
         tasks.append(ContentTaskDraft(
             knowledge_unit_id=unit.artifact_id,
-            quiz_count=objective_count if unit.source_refs else None,
-            source_refs=list(unit.source_refs),
+            quiz_count=objective_count or None,
             interactive_component_policy="auto" if wants_component else "skip",
             content_agent_strategy="single",
             execution_group=index,
@@ -218,7 +211,7 @@ def plan_content_tasks_with_architect(
         })
 
     return {
-        "content_tasks": [],
+        "content_tasks": _plan_content_tasks(run_id, blueprint),
         "content_task_planning_metadata": metadata,
         "warnings": warnings,
     }

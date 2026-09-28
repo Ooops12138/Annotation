@@ -229,7 +229,7 @@ def test_context_pack_over_budget_creates_attempt_zero_without_model_calls(monke
     assert [call.schema.__name__ for call in provider.calls] == ["ContentTaskPlanDraft"]
     assert all(trace.final_status == "blocked" for trace in state["content_loop_traces"])
     assert all(trace.final_attempt == 0 for trace in state["content_loop_traces"])
-    assert all(trace.stop_reason == "context_pack_source_over_budget" for trace in state["content_loop_traces"])
+    assert all(trace.stop_reason == "context_pack_empty" for trace in state["content_loop_traces"])
     assert all(trace.attempts[0].generation_status == "skipped" for trace in state["content_loop_traces"])
 
 

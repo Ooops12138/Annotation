@@ -49,26 +49,9 @@ def validate_blueprint(
                     target_id=unit.artifact_id,
                 )
             )
-        if not unit.source_refs:
-            issues.append(
-                ReviewIssue(
-                    issue_id=f"blueprint-missing-source-{unit.artifact_id}",
-                    category="source",
-                    severity="blocking",
-                    message=f"知识单元“{unit.title}”缺少教材来源。",
-                    target_id=unit.artifact_id,
-                )
-            )
-        elif not set(unit.source_refs).issubset(valid_source_refs):
-            issues.append(
-                ReviewIssue(
-                    issue_id=f"blueprint-invalid-source-{unit.artifact_id}",
-                    category="source",
-                    severity="blocking",
-                    message=f"知识单元“{unit.title}”包含无效 source_ref。",
-                    target_id=unit.artifact_id,
-                )
-            )
+        # Blueprint refs are optional planning hints.  Actual source
+        # traceability is established by the retrieval result used by content
+        # generation, not by requiring this early plan to enumerate blocks.
         unresolved = [
             prerequisite
             for prerequisite in unit.prerequisites

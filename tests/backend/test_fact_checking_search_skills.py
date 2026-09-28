@@ -5,12 +5,15 @@ import sqlite3
 from annotation.domain.artifacts import SourceBlock
 from annotation.fact_checking import (
     DeterministicMockWebResourceSearchSkill,
+    DisabledVectorTextbookSearchTool,
     DisabledWebResourceSearchSkill,
     EvidenceKind,
     SearchErrorCode,
     SearchStatus,
     SQLiteFts5TextbookDatabaseSearchSkill,
     TextbookDatabaseSearchSkill,
+    TextbookSearchTool,
+    VectorTextbookSearchTool,
     WebResourceSearchSkill,
     WebSearchCandidate,
     normalize_https_url,
@@ -103,6 +106,25 @@ def test_textbook_skill_returns_stable_request_and_database_errors() -> None:
         SearchErrorCode.DATABASE_ERROR,
         False,
     )
+
+
+def test_textbook_tool_can_search_the_full_imported_textbook() -> None:
+    skill = SQLiteFts5TextbookDatabaseSearchSkill(_indexed_connection())
+
+    result = skill.search("completeness axiom", limit=2)
+
+    assert isinstance(skill, TextbookSearchTool)
+    assert {item.source_ref for item in result.evidence} == {"src-allowed", "src-denied"}
+
+
+def test_vector_textbook_tool_is_explicitly_disabled_before_selection() -> None:
+    tool = DisabledVectorTextbookSearchTool()
+
+    result = tool.search("completeness axiom")
+
+    assert isinstance(tool, VectorTextbookSearchTool)
+    assert result.status == SearchStatus.DISABLED
+    assert result.error_code == SearchErrorCode.DISABLED_BY_CONFIGURATION
 
 
 def test_disabled_web_skill_exposes_disabled_availability_without_network() -> None:

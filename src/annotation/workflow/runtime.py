@@ -341,7 +341,7 @@ def build_minimal_graph(
             task: ContentTask,
             unit: KnowledgeUnit | None,
             pack: ContextPack | None,
-            reason: Literal["context_pack_missing", "context_pack_source_over_budget", "upstream_failure"],
+            reason: Literal["context_pack_missing", "context_pack_empty", "context_pack_source_over_budget", "upstream_failure"],
             message: str,
             final_status: Literal["blocked", "skipped"],
         ) -> tuple[ContentUnitLoopTrace, list[ContentArtifact]]:
@@ -428,6 +428,21 @@ def build_minimal_graph(
                 task.status = "blocked"
                 checks[task.task_id] = "blocked"
                 warnings.append(f"content_context_pack_missing:{task.task_id}")
+                traces.append(trace)
+                artifacts.extend(final_artifacts)
+                continue
+            if not pack.excerpts:
+                trace, final_artifacts = preflight_trace(
+                    task=task,
+                    unit=unit,
+                    pack=pack,
+                    reason="context_pack_empty",
+                    message="教材检索未返回可用证据，未调用模型。",
+                    final_status="blocked",
+                )
+                task.status = "blocked"
+                checks[task.task_id] = "blocked"
+                warnings.append(f"content_context_pack_empty:{task.task_id}")
                 traces.append(trace)
                 artifacts.extend(final_artifacts)
                 continue
