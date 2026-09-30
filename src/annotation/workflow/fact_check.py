@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sqlite3
 import uuid
 from collections.abc import Iterable
@@ -473,6 +474,24 @@ def _search_web(skill: WebResourceSearchSkill, claim: FactCheckClaim) -> tuple[l
         return [], "web:error"
 
 
+def _context_pack_evidence(context_pack: ContextPack) -> tuple[list[FactCheckEvidence], str]:
+    """Use evidence already recorded by content generation first."""
+    allowed = set(context_pack.source_refs)
+    excerpts = [excerpt for excerpt in context_pack.excerpts if excerpt.source_ref in allowed and excerpt.text.strip()]
+    evidence = [
+        FactCheckEvidence(
+            evidence_id=hashlib.sha256(f"context:{excerpt.source_ref}:{excerpt.text}".encode()).hexdigest()[:24],
+            source_kind="textbook",
+            provider="context-pack",
+            locator=f"page:{excerpt.page_number};block:{excerpt.block_index}",
+            text=excerpt.text,
+            source_ref=excerpt.source_ref,
+        )
+        for excerpt in excerpts
+    ]
+    return evidence, "context_pack:used" if evidence else "context_pack:empty"
+
+
 def _check_unit(
     provider: ModelProvider,
     *,
@@ -485,6 +504,7 @@ def _check_unit(
     valid_source_refs: set[str],
     textbook_skill: TextbookDatabaseSearchSkill,
     web_skill: WebResourceSearchSkill,
+    additional_retrieval_enabled: bool,
 ) -> tuple[ContentArtifact, QuizArtifact | None, FactCheckUnitTrace, list[ReviewIssue], bool]:
     current_content = content
     current_quiz = quiz
@@ -519,7 +539,9 @@ def _check_unit(
                     judgement="该陈述属于观点，不作为教材事实纠正。", route="annotate", stop_reason="stance",
                 ))
                 continue
-            textbook, reason = _search_textbook(textbook_skill, claim, valid_source_refs, policy.textbook_result_limit)
+            textbook, reason = _context_pack_evidence(context_pack)
+            if not textbook and additional_retrieval_enabled:
+                textbook, reason = _search_textbook(textbook_skill, claim, valid_source_refs, policy.textbook_result_limit)
             evidence[claim.claim_id] = (textbook, [], [reason])
             factual_claims.append(claim)
 
@@ -533,7 +555,7 @@ def _check_unit(
         )
         assessments.extend(checked)
 
-        if policy.web_enabled and not assessment_error:
+        if policy.web_enabled and additional_retrieval_enabled and not assessment_error:
             follow_up = [
                 claim for claim in factual_claims
                 if next((item for item in checked if item.claim_id == claim.claim_id), None)
@@ -659,6 +681,10 @@ def run_fact_check_loop(
     policy: FactCheckPolicy,
     textbook_search_skill: TextbookDatabaseSearchSkill | None = None,
     web_search_skill: WebResourceSearchSkill | None = None,
+    # Direct callers retain the historical fallback behavior; the runtime
+    # reads FACT_CHECK_ADDITIONAL_RETRIEVAL_ENABLED and passes the explicit
+    # production policy.
+    additional_retrieval_enabled: bool = True,
 ) -> dict[str, Any]:
     """Check accepted artifacts against the current textbook and return replacements."""
 
@@ -700,7 +726,7 @@ def run_fact_check_loop(
                 continue
             quiz_position = quiz_index.get(task.task_id)
             quiz = final_quiz[quiz_position] if quiz_position is not None and final_quiz[quiz_position].status == "accepted" else None
-            if textbook_search_skill is None:
+            if textbook_search_skill is None and not pack.excerpts:
                 traces.append(FactCheckUnitTrace(
                     trace_id=f"fact-check-trace-{uuid.uuid4().hex[:12]}", run_id=run_id, task_id=task.task_id,
                     knowledge_unit_id=unit.artifact_id, max_corrections=policy.max_corrections_per_unit,
@@ -723,6 +749,7 @@ def run_fact_check_loop(
                 valid_source_refs=valid_refs,
                 textbook_skill=textbook_search_skill,
                 web_skill=web_skill,
+                additional_retrieval_enabled=additional_retrieval_enabled,
             )
             final_content[position] = checked_content
             if quiz_position is not None and checked_quiz is not None:

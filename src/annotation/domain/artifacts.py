@@ -243,6 +243,20 @@ class ContextExcerpt(BaseModel):
     text: str
 
 
+class RetrievalCall(BaseModel):
+    """Immutable audit record for one textbook retrieval tool invocation."""
+
+    model_config = ConfigDict(extra="forbid")
+    call_id: str
+    tool_name: str
+    tool_version: str
+    query: str
+    limit: int = Field(ge=1)
+    status: str
+    returned_excerpts: list[ContextExcerpt] = Field(default_factory=list)
+    selected_source_refs: list[str] = Field(default_factory=list)
+
+
 class ContextPack(BaseModel):
     """The bounded, auditable input assembled for one model call."""
 
@@ -260,6 +274,8 @@ class ContextPack(BaseModel):
     omitted_source_refs: list[str] = Field(default_factory=list)
     retrieval_strategy: list[str] = Field(default_factory=list)
     source_snapshot: str | None = None
+    retrieval_calls: list[RetrievalCall] = Field(default_factory=list)
+    audit_version: str = "retrieval-audit-v1"
 
 
 class ReviewIssue(BaseModel):
@@ -485,6 +501,8 @@ class ContentAttemptTrace(BaseModel):
     critic_error: str | None = None
     critic_error_category: str | None = None
     critic_provider_metadata: dict[str, Any] = Field(default_factory=dict)
+    retrieval_decision: dict[str, Any] | None = None
+    retrieval_calls: list[RetrievalCall] = Field(default_factory=list)
     feedback: list[ReviewIssue] = Field(default_factory=list)
     route: Literal["accept", "revise", "block", "fail"]
     stop_reason: Literal[

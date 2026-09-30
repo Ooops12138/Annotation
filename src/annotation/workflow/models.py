@@ -110,6 +110,15 @@ class ContentDraft(BaseModel):
         return [str(value)]
 
 
+class RetrievalDecision(BaseModel):
+    """Queries chosen by the content agent before learner-facing generation."""
+
+    model_config = ConfigDict(extra="forbid")
+    textbook_queries: list[str] = Field(default_factory=list, max_length=4)
+    web_queries: list[str] = Field(default_factory=list, max_length=2)
+    stop_after_retrieval: bool = True
+
+
 class ContentTaskDraft(BaseModel):
     """One structured course-architect decision mapped to ContentTask."""
 
@@ -269,6 +278,10 @@ class ContentReflectionState(TypedDict, total=False):
     content_loop_trace: ContentUnitLoopTrace
     final_draft: ContentDraft | None
     final_artifacts: list[ContentArtifact]
+    source_blocks: list[SourceBlock]
+    blueprint: LearningBlueprint
+    retrieval_service: Any
+    retrieval_decision: RetrievalDecision | None
 
 
 class WorkflowState(TypedDict, total=False):

@@ -15,10 +15,11 @@ from annotation.domain.artifacts import (
     ContentTask,
     ContentUnitLoopTrace,
     KnowledgeUnit,
+    RetrievalCall,
 )
 from annotation.prompt_loader import load_prompt
 from annotation.providers import ModelProvider, ProviderError, StructuredGenerationRequest
-from annotation.workflow.content import render_context_pack
+from annotation.workflow.content import build_context_pack, render_context_pack
 from annotation.workflow.content_support import (
     _blocked_content_artifact,
     _content_prompt_task,
@@ -33,7 +34,7 @@ from annotation.workflow.content_support import (
     _unit_context,
 )
 from annotation.workflow.graph import _metadata, _provider_metadata
-from annotation.workflow.models import ContentDraft, ContentReflectionState
+from annotation.workflow.models import ContentDraft, ContentReflectionState, RetrievalDecision
 
 def build_content_reflection_subgraph(
     provider: ModelProvider,
@@ -89,7 +90,56 @@ def build_content_reflection_subgraph(
         )
         return primary
 
+    def plan_and_retrieve(state: ContentReflectionState) -> tuple[ContentReflectionState, dict[str, Any]]:
+        """Let the content agent choose bounded textbook/web queries first."""
+        task = state["task"]
+        unit = state["unit"]
+        plan = RetrievalDecision(textbook_queries=[unit.title, *unit.learning_objectives][:4], web_queries=[])
+        queries: list[tuple[str, str]] = []
+        pack = state["context_pack"]
+        for round_number in range(2):
+            if provider_name != "mock":
+                prompt = load_prompt(
+                    "content_agent_retrieval",
+                    KNOWLEDGE_UNIT_CONTEXT=_content_prompt_unit(unit),
+                    CONTENT_TASK=_content_prompt_task(task),
+                    RETRIEVAL_CONTEXT=render_context_pack(pack),
+                )
+                response = provider.generate_structured(StructuredGenerationRequest(
+                    prompt=prompt,
+                    schema=RetrievalDecision,
+                    max_output_tokens=response_limit(900),
+                    metadata={"agent": "content_agent", "phase": "retrieval_decision", "run_id": state["run_id"], "task_id": task.task_id, "round": round_number + 1},
+                ))
+                plan = RetrievalDecision.model_validate(response.value.model_dump(mode="python"))
+            round_queries = [("textbook", query) for query in plan.textbook_queries]
+            round_queries.extend(("web", query) for query in plan.web_queries)
+            queries.extend(item for item in round_queries if item not in queries)
+            pack = build_context_pack(
+                task, unit, state["blueprint"], state.get("source_blocks", []),
+                search_tool=state.get("retrieval_service"), retrieval_queries=queries,
+            )
+            if plan.stop_after_retrieval:
+                break
+        return {
+            **state,
+            "context_pack": pack,
+            "retrieval_decision": plan,
+            "valid_source_refs": list(dict.fromkeys([*state.get("valid_source_refs", []), *pack.source_refs])),
+        }, {"retrieval_decision": plan, "context_pack": pack}
+
     def generate_candidate(state: ContentReflectionState) -> dict[str, Any]:
+        retrieval_result: dict[str, Any] = {}
+        # The production graph supplies a retrieval service. Direct subgraph
+        # fixture callers retain the prebuilt ContextPack contract.
+        if state.get("retrieval_service") is not None and "scripted" not in provider_name:
+            try:
+                planned_state, retrieval_result = plan_and_retrieve(state)
+                state = planned_state
+            except ProviderError:
+                raise
+            except Exception as exc:
+                return {"generation_status": "provider_error", "generation_error": str(exc), "generation_error_category": "retrieval"}
         attempt = int(state.get("attempt", 0)) + 1
         task = state["task"]
         unit = state["unit"]
@@ -152,6 +202,7 @@ def build_content_reflection_subgraph(
             "critic_retryable": False,
             "critic_provider_metadata": {},
             "critic_feedback": [],
+            **retrieval_result,
         }
         try:
             # Mock/Sequence fixtures intentionally remain local.  This keeps
@@ -403,6 +454,11 @@ def build_content_reflection_subgraph(
             critic_error=state.get("critic_error"),
             critic_error_category=state.get("critic_error_category"),
             critic_provider_metadata=dict(state.get("critic_provider_metadata", {})),
+            retrieval_decision=(
+                state.get("retrieval_decision").model_dump(mode="json")
+                if state.get("retrieval_decision") is not None else None
+            ),
+            retrieval_calls=list(state.get("context_pack").retrieval_calls if state.get("context_pack") is not None else []),
             feedback=_dedupe_review_issues(feedback),
             route=route,
             stop_reason=stop_reason,

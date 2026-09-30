@@ -137,6 +137,13 @@ class TextbookSearchTool(Protocol):
 
 
 @runtime_checkable
+class UnifiedRetrievalTool(Protocol):
+    """One bounded interface for textbook and optional web evidence."""
+
+    def search(self, query: str, *, source: str = "textbook", limit: int = 5) -> SearchResult: ...
+
+
+@runtime_checkable
 class VectorTextbookSearchTool(Protocol):
     """Replaceable vector retrieval tool over indexed textbook blocks."""
 

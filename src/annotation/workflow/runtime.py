@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+import os
 import uuid
 from pathlib import Path
 from collections.abc import Callable
@@ -16,9 +18,11 @@ from annotation.config import (
     content_reflection_max_attempts as configured_content_reflection_max_attempts,
     fact_check_max_claims_per_unit as configured_fact_check_max_claims_per_unit,
     fact_check_max_corrections as configured_fact_check_max_corrections,
+    fact_check_additional_retrieval_enabled as configured_fact_check_additional_retrieval_enabled,
     fact_check_web_enabled as configured_fact_check_web_enabled,
     fact_check_web_query_limit as configured_fact_check_web_query_limit,
     interactive_component_max_attempts as configured_interactive_component_max_attempts,
+    rag_enabled,
 )
 from annotation.domain.artifacts import (
     BlueprintAttemptTrace,
@@ -63,6 +67,8 @@ from annotation.workflow.graph import (
 from annotation.workflow.models import BlueprintDraft, WorkflowState
 from annotation.workflow.persistence import persist_workflow_snapshots
 from annotation.workflow.quiz import blocked_quiz_artifact, generate_quiz_artifact, validate_quiz_coverage
+from annotation.fact_checking import SQLiteFts5TextbookDatabaseSearchSkill, web_search_skill_from_env
+from annotation.retrieval import HybridTextbookSearchTool, LlamaIndexChromaTextbookSearchTool, UnifiedRetrievalService, index_source_blocks
 
 def build_minimal_graph(
     provider: ModelProvider | None = None,
@@ -84,6 +90,7 @@ def build_minimal_graph(
         web_enabled=configured_fact_check_web_enabled(fact_check_web_enabled),
         web_query_limit=configured_fact_check_web_query_limit(),
     )
+    additional_fact_retrieval = configured_fact_check_additional_retrieval_enabled()
     component_max_attempts = configured_interactive_component_max_attempts(interactive_component_max_attempts)
 
     def ingest(state: WorkflowState) -> dict[str, Any]:
@@ -308,15 +315,22 @@ def build_minimal_graph(
         context_window = getattr(capabilities, "context_window", None)
         packs: list[ContextPack] = []
         warnings: list[str] = []
+        # Content retrieval and A-003 fact checking use the same bounded FTS5
+        # implementation. The connection is per workflow visit and contains
+        # only the current imported textbook blocks.
+        connection = sqlite3.connect(":memory:")
+        index_source_blocks(connection, state["source_blocks"])
+        textbook_tool = SQLiteFts5TextbookDatabaseSearchSkill(connection)
         for task in state.get("content_tasks", []):
             unit = units.get(task.knowledge_unit_id)
             if not unit:
                 warnings.append(f"content_task_missing_unit: {task.task_id}")
                 continue
-            pack = build_context_pack(task, unit, blueprint, state["source_blocks"], context_window=context_window)
+            pack = build_context_pack(task, unit, blueprint, state["source_blocks"], context_window=context_window, search_tool=textbook_tool)
             packs.append(pack)
             if pack.omitted_source_refs:
                 warnings.append(f"context_pack_omitted_sources:{task.task_id}:{','.join(pack.omitted_source_refs)}")
+        connection.close()
         return {"context_packs": packs, "warnings": _merge_messages(state.get("warnings"), warnings)}
 
     def content_reflection_loops(state: WorkflowState) -> dict[str, Any]:
@@ -331,10 +345,24 @@ def build_minimal_graph(
         )
         artifacts: list[ContentArtifact] = []
         traces: list[ContentUnitLoopTrace] = []
+        updated_packs = list(state.get("context_packs", []))
         checks: dict[str, str] = {}
         warnings: list[str] = []
         provider_metadata: dict[str, Any] = dict(state.get("provider_metadata", {}))
         upstream_failed = False
+        retrieval_connection = sqlite3.connect(":memory:")
+        index_source_blocks(retrieval_connection, state.get("source_blocks", []))
+        textbook_tool = SQLiteFts5TextbookDatabaseSearchSkill(retrieval_connection)
+        if rag_enabled():
+            vector_tool = LlamaIndexChromaTextbookSearchTool(
+                state.get("source_blocks", []),
+                persist_directory=os.getenv("RAG_CHROMA_PATH", "storage/chroma"),
+            )
+            textbook_tool = HybridTextbookSearchTool(textbook_tool, vector_tool)
+        retrieval_service = UnifiedRetrievalService(
+            textbook_tool,
+            web_search_skill_from_env(),
+        )
 
         def preflight_trace(
             *,
@@ -467,12 +495,19 @@ def build_minimal_graph(
                 "task": task,
                 "unit": unit,
                 "context_pack": pack,
-                "valid_source_refs": list(state.get("source_refs", [])),
+                "valid_source_refs": list(dict.fromkeys([*state.get("source_refs", []), *pack.source_refs])),
                 "max_attempts": content_max_attempts,
                 "fixture_adaptation": getattr(model_provider, "provider", "") == "mock",
                 "attempts": [],
+                "source_blocks": state.get("source_blocks", []),
+                "blueprint": blueprint,
+                "retrieval_service": retrieval_service,
             })
             trace = result["content_loop_trace"]
+            generated_pack = result.get("context_pack")
+            if generated_pack is not None:
+                updated_packs = [pack for pack in updated_packs if pack.task_id != task.task_id]
+                updated_packs.append(generated_pack)
             final_artifacts = list(result.get("final_artifacts", []))
             traces.append(trace)
             artifacts.extend(final_artifacts)
@@ -492,9 +527,11 @@ def build_minimal_graph(
                     provider_metadata = dict(metadata)
 
         summary = _content_loop_summary(traces)
+        retrieval_connection.close()
         status = summary["final_status"]
         result: dict[str, Any] = {
             "content_tasks": state.get("content_tasks", []),
+            "context_packs": updated_packs,
             "content_artifacts": artifacts,
             "content_loop_traces": traces,
             "content_loop_summary": summary,
@@ -511,7 +548,7 @@ def build_minimal_graph(
                 run_id=state["run_id"],
                 blueprint_version=f"{blueprint.artifact_id}:v{blueprint.version}",
                 tasks=state.get("content_tasks", []),
-                context_packs=state.get("context_packs", []),
+                context_packs=updated_packs,
                 artifacts=artifacts,
                 quiz_artifacts=[],
                 quiz_coverage=None,
@@ -637,6 +674,8 @@ def build_minimal_graph(
             source_blocks=state.get("source_blocks", []),
             valid_source_refs=state.get("source_refs", []),
             policy=fact_check_policy,
+            web_search_skill=web_search_skill_from_env(),
+            additional_retrieval_enabled=additional_fact_retrieval,
         )
         final_quiz_artifacts = result["quiz_artifacts"]
         quiz_coverage = validate_quiz_coverage(

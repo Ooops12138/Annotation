@@ -21,6 +21,11 @@ FACT_CHECK_MAX_CORRECTIONS = 2
 FACT_CHECK_MAX_CLAIMS_PER_UNIT = 20
 FACT_CHECK_TEXTBOOK_RESULT_LIMIT = 5
 FACT_CHECK_WEB_QUERY_LIMIT = 10
+FACT_CHECK_ADDITIONAL_RETRIEVAL_ENABLED = False
+WEB_SEARCH_PROVIDER = "tavily"
+WEB_SEARCH_ENDPOINT = "https://api.tavily.com/search"
+WEB_SEARCH_TIMEOUT_SECONDS = 10.0
+WEB_SEARCH_MAX_RESULTS = 5
 INTERACTIVE_COMPONENT_MAX_ATTEMPTS = 3
 
 
@@ -147,6 +152,61 @@ def fact_check_web_query_limit(value: int | str | None = None) -> int:
     if queries < 0:
         raise ValueError("FACT_CHECK_WEB_QUERY_LIMIT must be at least 0")
     return min(queries, 20)
+
+
+def fact_check_additional_retrieval_enabled(value: bool | str | None = None) -> bool:
+    raw_value = value if value is not None else os.getenv("FACT_CHECK_ADDITIONAL_RETRIEVAL_ENABLED")
+    if isinstance(raw_value, bool):
+        return raw_value
+    if raw_value is None or raw_value == "":
+        return FACT_CHECK_ADDITIONAL_RETRIEVAL_ENABLED
+    normalized = str(raw_value).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError("FACT_CHECK_ADDITIONAL_RETRIEVAL_ENABLED must be a boolean")
+
+
+def web_search_enabled(value: bool | str | None = None) -> bool:
+    return fact_check_web_enabled(value if value is not None else os.getenv("WEB_SEARCH_ENABLED"))
+
+
+def web_search_allowed_domains() -> list[str]:
+    raw = os.getenv("WEB_SEARCH_ALLOWED_DOMAINS", "")
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def web_search_timeout_seconds() -> float:
+    return float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", str(WEB_SEARCH_TIMEOUT_SECONDS)))
+
+
+def web_search_max_results() -> int:
+    return max(1, min(int(os.getenv("WEB_SEARCH_MAX_RESULTS", str(WEB_SEARCH_MAX_RESULTS))), 100))
+
+
+def rag_enabled() -> bool:
+    return str(os.getenv("RAG_ENABLED", "false")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def embedding_provider_name() -> str:
+    return (os.getenv("RAG_EMBEDDING_PROVIDER") or "local").strip().lower()
+
+
+def embedding_config() -> dict[str, str]:
+    provider = embedding_provider_name()
+    if provider == "local":
+        model_path = (os.getenv("RAG_EMBEDDING_MODEL_PATH") or "").strip()
+        if not model_path:
+            raise ValueError("RAG_EMBEDDING_MODEL_PATH is required for local embeddings")
+        return {"provider": provider, "model_path": model_path}
+    if provider in {"api", "openai-compatible"}:
+        api_key = (os.getenv("RAG_EMBEDDING_API_KEY") or "").strip()
+        model = (os.getenv("RAG_EMBEDDING_API_MODEL") or "").strip()
+        if not api_key or not model:
+            raise ValueError("RAG_EMBEDDING_API_KEY and RAG_EMBEDDING_API_MODEL are required for API embeddings")
+        return {"provider": "api", "api_key": api_key, "model": model, "base_url": os.getenv("RAG_EMBEDDING_API_BASE_URL", "")}
+    raise ValueError("RAG_EMBEDDING_PROVIDER must be local or api")
 
 
 def first_book_pdf() -> Path:

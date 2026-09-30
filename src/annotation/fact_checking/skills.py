@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 import sqlite3
+import httpx
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
@@ -528,6 +529,65 @@ class ProviderBackedWebResourceSearchSkill:
                 "provider_version": getattr(self._provider, "version", "unknown"),
             },
         )
+
+
+class TavilyWebSearchProvider:
+    """Small HTTP adapter for Tavily's JSON search endpoint."""
+
+    name = "tavily"
+    version = "v1"
+
+    def __init__(self, *, api_key: str, endpoint: str = "https://api.tavily.com/search") -> None:
+        self._api_key = api_key
+        self._endpoint = endpoint
+
+    def search(self, *, query: str, limit: int, timeout_seconds: float) -> Sequence[WebSearchCandidate]:
+        response = httpx.post(
+            self._endpoint,
+            json={"api_key": self._api_key, "query": query, "max_results": limit, "include_answer": False},
+            timeout=timeout_seconds,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        return [
+            WebSearchCandidate(
+                url=item.get("url", ""),
+                title=item.get("title", ""),
+                excerpt=item.get("content", ""),
+                rank=index,
+            )
+            for index, item in enumerate(payload.get("results", []), start=1)
+            if isinstance(item, Mapping)
+        ]
+
+
+def web_search_skill_from_env() -> WebResourceSearchSkill:
+    """Build the configured web skill; disabled is the safe default."""
+    from annotation.config import (
+        web_search_allowed_domains,
+        web_search_enabled,
+        web_search_max_results,
+        web_search_timeout_seconds,
+    )
+    import os
+
+    if not web_search_enabled() or not os.getenv("WEB_SEARCH_API_KEY"):
+        return DisabledWebResourceSearchSkill()
+    provider = (os.getenv("WEB_SEARCH_PROVIDER") or "tavily").strip().lower()
+    if provider != "tavily":
+        raise ValueError(f"unsupported WEB_SEARCH_PROVIDER: {provider}")
+    domains = web_search_allowed_domains()
+    if not domains:
+        return DisabledWebResourceSearchSkill()
+    return ProviderBackedWebResourceSearchSkill(
+        TavilyWebSearchProvider(
+            api_key=os.environ["WEB_SEARCH_API_KEY"],
+            endpoint=os.getenv("WEB_SEARCH_ENDPOINT", "https://api.tavily.com/search"),
+        ),
+        allowed_domains=domains,
+        timeout_seconds=web_search_timeout_seconds(),
+        max_results=web_search_max_results(),
+    )
 
 
 class DeterministicMockWebSearchProvider:

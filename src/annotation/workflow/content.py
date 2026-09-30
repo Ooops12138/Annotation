@@ -21,8 +21,11 @@ from annotation.domain.artifacts import (
     ContentTask,
     KnowledgeUnit,
     LearningBlueprint,
+    RetrievalCall,
     SourceBlock,
 )
+from annotation.fact_checking.contracts import TextbookSearchTool
+from annotation.retrieval import InMemoryTextbookSearchTool
 
 
 def estimate_tokens(text: str) -> int:
@@ -106,8 +109,16 @@ def build_context_pack(
     context_window: int | None = None,
     reserved_output_tokens: int = 2200,
     safety_margin_tokens: int = 400,
+    search_tool: TextbookSearchTool | None = None,
+    retrieval_queries: list[str] | list[tuple[str, str]] | None = None,
 ) -> ContextPack:
-    """Retrieve task evidence from the imported textbook, then add neighbors."""
+    """Retrieve task evidence through a provider-neutral tool and audit it.
+
+    ``retrieval_queries`` represents the content agent's search decisions. A
+    caller may supply multiple queries (and therefore multiple tool calls);
+    the resulting calls and selected excerpts are retained in the ContextPack.
+    The legacy block-based path remains available through the in-memory tool.
+    """
 
     effective_window = context_window or 12000
     input_budget = max(0, effective_window - reserved_output_tokens - safety_margin_tokens)
@@ -116,27 +127,74 @@ def build_context_pack(
     # conservative and leaves room for prompt/schema overhead.
     char_budget = input_budget * 3
     ordered_blocks = sorted(blocks, key=lambda block: (block.page_number, block.block_index))
-
-    # Do not use task/Blueprint refs as a source allowlist.  The unit's title
-    # and objectives query the complete imported textbook; refs selected below
-    # become the auditable provenance for the generated artifact.
-    primary = _lexical_candidates(unit, ordered_blocks)[:8]
-    primary_strategy = "keyword_retrieval"
-    if not primary:
-        primary = ordered_blocks[:3]
-        primary_strategy = "document_fallback"
-    candidates: list[tuple[str, SourceBlock]] = [(primary_strategy, block) for block in primary]
-    primary_keys = {(block.page_number, block.block_index) for block in primary}
-    for block in primary:
-        for neighbor in ordered_blocks:
-            if neighbor.page_number == block.page_number and abs(neighbor.block_index - block.block_index) <= 1:
-                if (neighbor.page_number, neighbor.block_index) not in primary_keys:
+    tool = search_tool or InMemoryTextbookSearchTool(ordered_blocks)
+    raw_queries = retrieval_queries or [unit.title, *unit.learning_objectives]
+    queries: list[tuple[str, str]] = []
+    for item in raw_queries:
+        source, query = (item if isinstance(item, tuple) and len(item) == 2 else ("textbook", item))
+        if isinstance(query, str) and query.strip() and source in {"textbook", "web"}:
+            pair = (source, query.strip())
+            if pair not in queries:
+                queries.append(pair)
+    calls: list[RetrievalCall] = []
+    candidates: list[tuple[str, SourceBlock]] = []
+    by_ref = {block.source_ref: block for block in ordered_blocks}
+    seen_refs: set[str] = set()
+    for source, query in queries:
+        if source == "web" and hasattr(tool, "search"):
+            try:
+                result = tool.search(query, source="web", limit=5)
+            except TypeError:
+                result = tool.search(query, limit=5)
+        else:
+            result = tool.search(query, limit=8)
+        returned: list[ContextExcerpt] = []
+        for evidence in result.evidence:
+            evidence_ref = evidence.source_ref or f"web:{evidence.evidence_id}"
+            if evidence_ref in seen_refs:
+                continue
+            if evidence.source_ref in by_ref:
+                block = by_ref[evidence.source_ref]
+                returned.append(ContextExcerpt(source_ref=block.source_ref, page_number=block.page_number, block_index=block.block_index, text=_compact(block.text)))
+                candidates.append(("tool_retrieval", block))
+            else:
+                returned.append(ContextExcerpt(source_ref=evidence_ref, page_number=evidence.page_number or 1, block_index=evidence.block_index or 0, text=_compact(evidence.excerpt or evidence.text)))
+                candidates.append(("tool_retrieval", SourceBlock(
+                    artifact_id=f"{evidence_ref}-artifact", source_ref=evidence_ref,
+                    document_id=evidence.document_id or "external", run_id=task.run_id,
+                    version=1, status="draft", created_by="retrieval-tool",
+                    page_number=evidence.page_number or 1, block_index=evidence.block_index or 0,
+                    text=evidence.excerpt or evidence.text, raw_text=evidence.excerpt or evidence.text,
+                    text_hash=evidence.text_hash, parser_version="external", bbox=(0.0, 0.0, 0.0, 0.0),
+                )))
+            seen_refs.add(evidence_ref)
+        calls.append(RetrievalCall(
+            call_id=f"call-{task.task_id}-{len(calls) + 1:02d}",
+            tool_name=getattr(tool, "name", tool.__class__.__name__),
+            tool_version=str(getattr(tool, "version", "unknown")),
+            query=query,
+            limit=8,
+            status=str(getattr(result.status, "value", result.status)),
+            returned_excerpts=returned,
+        ))
+    if not candidates:
+        candidates = [("document_fallback", block) for block in ordered_blocks[:3]]
+    else:
+        # The tool returns the primary evidence. Small adjacent blocks keep
+        # definitions and their immediate qualifications together without
+        # turning Blueprint source_refs into an allowlist.
+        primary_keys = {(block.page_number, block.block_index) for _, block in candidates}
+        for _, block in list(candidates):
+            for neighbor in ordered_blocks:
+                key = (neighbor.page_number, neighbor.block_index)
+                if neighbor.page_number == block.page_number and abs(neighbor.block_index - block.block_index) <= 1 and key not in primary_keys:
                     candidates.append(("adjacent_block", neighbor))
-                    primary_keys.add((neighbor.page_number, neighbor.block_index))
-    for block in _lexical_candidates(unit, ordered_blocks):
-        if (block.page_number, block.block_index) not in primary_keys:
-            candidates.append(("keyword_fallback", block))
-            primary_keys.add((block.page_number, block.block_index))
+                    primary_keys.add(key)
+        for block in _lexical_candidates(unit, ordered_blocks):
+            key = (block.page_number, block.block_index)
+            if key not in primary_keys:
+                candidates.append(("keyword_fallback", block))
+                primary_keys.add(key)
 
     excerpts: list[ContextExcerpt] = []
     selected_refs: list[str] = []
@@ -166,7 +224,6 @@ def build_context_pack(
         candidate = by_id.get(prerequisite) or by_title.get(prerequisite)
         if candidate is not None and candidate.title not in prerequisites:
             prerequisites.append(candidate.title)
-    by_ref = {block.source_ref: block for block in blocks}
     snapshot_material = "|".join(f"{excerpt.source_ref}:{by_ref[excerpt.source_ref].text_hash}" for excerpt in excerpts if excerpt.source_ref in by_ref)
     source_snapshot = hashlib.sha256(snapshot_material.encode("utf-8")).hexdigest() if snapshot_material else None
     rendered_chars = sum(len(excerpt.text) for excerpt in excerpts)
@@ -184,6 +241,16 @@ def build_context_pack(
         omitted_source_refs=omitted_refs,
         retrieval_strategy=strategies or ["keyword_retrieval"],
         source_snapshot=source_snapshot,
+        retrieval_calls=[
+            call.model_copy(update={
+                "selected_source_refs": [
+                    excerpt.source_ref
+                    for excerpt in call.returned_excerpts
+                    if excerpt.source_ref in set(selected_refs)
+                ]
+            })
+            for call in calls
+        ],
     )
 
 
