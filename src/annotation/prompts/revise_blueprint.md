@@ -27,6 +27,7 @@ The exact output shape is:
 Let the number of units, objectives, and representative seed references follow
 the textbook structure and learning needs. Keep each unit focused and useful
 for downstream planning; seed references need not enumerate all evidence.
+The Blueprint must contain at least one knowledge unit.
 
 ## Textbook context
 

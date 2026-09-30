@@ -28,6 +28,7 @@ Identify the knowledge units needed to represent the excerpts for learning. Let
 their number follow the textbook structure and learning needs. `source_refs` is
 optional seed metadata; when present, copy IDs exactly from the excerpts. It
 need not cover every block needed by downstream retrieval.
+Return at least one knowledge unit.
 
 Keep learning objectives and representative seed references focused on what
 downstream planning needs. Downstream retrieval records the exact evidence used
