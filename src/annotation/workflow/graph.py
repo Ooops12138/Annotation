@@ -470,7 +470,7 @@ def _blueprint_from_draft(
     units: list[KnowledgeUnit] = []
     adapted = False
     used_unit_ids: set[str] = set()
-    for index, unit in enumerate(draft.knowledge_units[:12], start=1):
+    for index, unit in enumerate(draft.knowledge_units, start=1):
         if fixture_adaptation:
             refs = _normalize_refs(unit.source_refs, valid_refs)
             if not refs:

@@ -24,9 +24,9 @@ The exact output shape is:
 }
 ```
 
-Use at most 8 units, 3 learning objectives, and 8 representative seed
-references per unit. These seed downstream retrieval rather than enumerate all
-evidence.
+Let the number of units, objectives, and representative seed references follow
+the textbook structure and learning needs. Keep each unit focused and useful
+for downstream planning; seed references need not enumerate all evidence.
 
 ## Textbook context
 

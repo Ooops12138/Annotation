@@ -24,12 +24,14 @@ Read the textbook excerpts and return a valid JSON object matching this shape.
 }
 ```
 
-Create 3–8 knowledge units from the excerpts. `source_refs` is optional seed
-metadata; when present, copy IDs exactly from the excerpts. It need not cover
-every block needed by downstream retrieval.
+Identify the knowledge units needed to represent the excerpts for learning. Let
+their number follow the textbook structure and learning needs. `source_refs` is
+optional seed metadata; when present, copy IDs exactly from the excerpts. It
+need not cover every block needed by downstream retrieval.
 
-Use at most 3 learning objectives and 8 representative seed references per
-unit. Downstream retrieval records the exact evidence used for generation.
+Keep learning objectives and representative seed references focused on what
+downstream planning needs. Downstream retrieval records the exact evidence used
+for generation.
 
 Give each unit a stable `knowledge_unit_id`; reference those IDs in
 `prerequisites` and `related_unit_ids`.

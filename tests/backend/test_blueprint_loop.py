@@ -47,15 +47,21 @@ def _install_source_fixture(monkeypatch) -> None:
     monkeypatch.setattr(graph_module, "extraction_warnings", lambda _blocks: [])
 
 
-def _payload(*, refs: list[str] | None = None, warning: bool = False) -> dict:
+def _payload(*, refs: list[str] | None = None, warning: bool = False, unit_count: int = 3) -> dict:
     source_refs = ["src-1"] if refs is None else refs
     objective = [] if warning else ["理解教材内容"]
+    templates = [
+        {"title": "概念", "kind": "concept", "learning_objectives": objective},
+        {"title": "定理", "kind": "theorem", "learning_objectives": ["理解定理"]},
+        {"title": "例题", "kind": "example", "learning_objectives": ["完成例题"]},
+    ]
     return {
         "title": "测试蓝图",
         "knowledge_units": [
-            {"title": "概念", "kind": "concept", "learning_objectives": objective, "source_refs": source_refs},
-            {"title": "定理", "kind": "theorem", "learning_objectives": ["理解定理"], "source_refs": source_refs},
-            {"title": "例题", "kind": "example", "learning_objectives": ["完成例题"], "source_refs": source_refs},
+            {**templates[index % len(templates)],
+             "title": templates[index % len(templates)]["title"] if index < 3 else f"单元 {index + 1}",
+             "source_refs": source_refs}
+            for index in range(unit_count)
         ],
     }
 
@@ -80,6 +86,22 @@ def test_first_pass_accepts_with_one_blueprint_call(monkeypatch) -> None:
     assert trace.final_attempt == 1
     assert trace.attempts[0].route == "accept"
     assert trace.attempts[0].raw_output
+
+
+def test_blueprint_unit_count_follows_learning_need(monkeypatch) -> None:
+    provider = SequenceProvider([_payload(unit_count=1)])
+    state = _run(monkeypatch, provider)
+
+    assert state["workflow_status"] == "accepted"
+    assert len(state["blueprint"].knowledge_units) == 1
+
+
+def test_blueprint_conversion_does_not_truncate_units(monkeypatch) -> None:
+    provider = SequenceProvider([_payload(unit_count=13)])
+    state = _run(monkeypatch, provider)
+
+    assert state["workflow_status"] == "accepted"
+    assert len(state["blueprint"].knowledge_units) == 13
 
 
 def test_empty_blueprint_sources_do_not_trigger_revision(monkeypatch) -> None:
@@ -186,6 +208,29 @@ def test_preloaded_blueprint_is_checked_without_model_call(monkeypatch) -> None:
     assert state["blueprint_loop_trace"].final_attempt == 0
     assert state["blueprint_loop_trace"].stop_reason == "preloaded"
     assert state["workflow_status"] == "accepted"
+
+
+def test_empty_preloaded_blueprint_is_blocked(monkeypatch) -> None:
+    _install_source_fixture(monkeypatch)
+    blueprint = LearningBlueprint(
+        artifact_id="empty-preloaded-blueprint",
+        run_id="empty-preloaded-run",
+        version=1,
+        status="accepted",
+        source_refs=["src-1"],
+        created_by="test",
+        title="空蓝图",
+        knowledge_units=[],
+    )
+    state = run_minimal_workflow(
+        provider=SequenceProvider([]),
+        run_id="empty-preloaded-run",
+        blueprint=blueprint,
+    )
+
+    assert state["workflow_status"] == "blocked"
+    assert state["blueprint_check"].status == "needs_revision"
+    assert any(issue.issue_id == "blueprint-empty" for issue in state["blueprint_check"].issues)
 
 
 def test_trace_artifact_contains_loop_and_run_summary(monkeypatch) -> None:

@@ -10,19 +10,19 @@ def validate_blueprint(
     *,
     valid_source_refs: set[str],
 ) -> BlueprintCheckResult:
-    """Check minimum coverage, source integrity and prerequisite references."""
+    """Check non-empty structure, source integrity and prerequisite references."""
     issues: list[ReviewIssue] = []
     unit_ids = {unit.artifact_id for unit in blueprint.knowledge_units}
     unit_titles = {unit.title for unit in blueprint.knowledge_units}
     covered_kinds = sorted({unit.kind for unit in blueprint.knowledge_units})
 
-    if len(blueprint.knowledge_units) < 3:
+    if not blueprint.knowledge_units:
         issues.append(
             ReviewIssue(
-                issue_id="blueprint-insufficient-coverage",
+                issue_id="blueprint-empty",
                 category="coverage",
                 severity="blocking",
-                message="Learning Blueprint 至少需要 3 个知识单元。",
+                message="Learning Blueprint 至少需要一个知识单元。",
                 target_id=blueprint.artifact_id,
             )
         )
