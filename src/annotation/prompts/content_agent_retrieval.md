@@ -6,6 +6,7 @@
 {"textbook_queries":["教材内查询"],"web_queries":[],"stop_after_retrieval":true}
 
 规则：
+
 - textbook_queries 用于查当前教材。
 - web_queries 仅在教材证据不足时填写，可以留空。
 - 每类查询尽量少而具体。
