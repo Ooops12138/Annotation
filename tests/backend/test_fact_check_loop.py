@@ -61,6 +61,7 @@ class ScriptedFactCheckProvider:
                 "tasks": [{
                     "knowledge_unit_id": unit_id,
                     "quiz_count": 0,
+                    "depth_guidance": "standard",
                     "interactive_component_policy": "skip",
                     "content_agent_strategy": "single",
                     "execution_group": index,

@@ -128,7 +128,7 @@ def test_critic_blocking_finding_routes_to_revision() -> None:
         {
             "issues": [
                 {
-                    "code": "objective_missing",
+                    "code": "coverage",
                     "message": "没有解释学习目标。",
                     "suggested_action": "补上目标关联。",
                 }
@@ -144,7 +144,7 @@ def test_critic_blocking_finding_routes_to_revision() -> None:
     assert [attempt.route for attempt in trace.attempts] == ["revise", "accept"]
     assert trace.attempts[0].feedback[0].severity == "blocking"
     assert trace.attempts[1].generation_prompt.startswith("# Agent: revise_content_artifact")
-    assert "objective_missing" in trace.attempts[1].generation_prompt
+    assert "coverage" in trace.attempts[1].generation_prompt
     assert sum(call.schema.__name__ == "ContentCritiqueDraft" for call in provider.calls) == 2
 
 
@@ -154,7 +154,7 @@ def test_warning_only_critic_feedback_is_accepted_and_attached_to_final_artifact
         {
             "issues": [
                 {
-                    "code": "beginner_clarity",
+                    "code": "clarity",
                     "message": "符号说明还可以更清楚。",
                 }
             ]

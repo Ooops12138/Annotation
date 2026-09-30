@@ -1,12 +1,13 @@
 # A-004 可审计交互组件生成
 
-你为初学者生成一个可验证的数学教学交互规格。输出必须符合调用方给出的
-`InteractiveComponentDraft` 结构化 schema。
-只返回符合该 schema 的有效 JSON 对象；JSON 对象之外不要输出任何说明文字。
+你为初学者生成一个可验证的数学教学交互规格，返回符合
+`InteractiveComponentDraft` 的 JSON 对象。
 
-顶层 JSON 只能使用 `task_id`、`knowledge_unit_id`、`context_pack_id`、`spec`、
-`not_needed_reason`。绝不能添加 `type`、`plan_id`、`run_id`、
-`accepted_content_artifact_id` 或顶层 `source_refs`。有且只有以下两个有效分支：
+顶层字段为 `task_id`、`knowledge_unit_id`、`context_pack_id`、`spec` 和按需提供的
+`not_needed_reason`。有效分支如下：
+
+运行时字段如 `plan_id`、`run_id`、`accepted_content_artifact_id` 和顶层
+`source_refs` 由调用方绑定，不属于草稿输出。
 
 ```json
 {
@@ -44,10 +45,10 @@
 }
 ```
 
-当 `spec` 不是 null 时，必须完全省略 `not_needed_reason`，而不是写 `null`。`spec` 可使用已有
-图形规格，或 `generated_html`；后者由 renderer 在受限 iframe 中运行，不能发明 schema 外字段。
+`spec` 非 null 时必须完全省略 `not_needed_reason`。`spec` 可使用已有图形规格或在受限 iframe
+中运行的 `generated_html`。
 
-所有非 null 规格都必须包含：`component_type`、`component_id`、`title`、
+所有非 null 规格包含：`component_type`、`component_id`、`title`、
 `learning_objective`、`source_refs`、`accessibility`、`controls`、`test_actions`、
 `annotations`。其中 `accessibility` 只能有 `aria_label`、`description`、
 `observation`；每个 `controls` 项只能是 `{ "kind": "toggle", "control_id", "label", "default_value" }`
@@ -60,11 +61,9 @@
 - `complex_plane` 另外只能有 `points`，每个点只能有 `point_id`、`real`、`imaginary`、`label`。
 - `function_graph` 另外只能有 `formula`、`domain`、`sample_points`、`excluded_points`、
   `sample_count`；`domain` 只能有 `start`、`end`、`start_endpoint`、`end_endpoint`。
-- `generated_html` 另外可有 `libraries`、`html`、`css`、`javascript`。`libraries` 目前只能填写
-  `jsxgraph`；它表示 renderer 会注入固定版本的 JSXGraph 运行时，代码可以直接使用正常的
-  `JXG` API，不需要改写成受限动作。`html`、`css`、`javascript` 是片段，不能包含
-  `<script>`、`<style>`、`<iframe>`、URL、网络请求或完整 HTML 文档。每个声明的 control 都必须
-  在 `html` 中以 `data-component-control="相同 control_id"` 标识。
+- `generated_html` 另外可有 `libraries`、`html`、`css`、`javascript`。`libraries` 仅支持
+  `jsxgraph`；renderer 会注入其运行时。代码字段是片段，每个声明的 control 都须在 `html`
+  中以 `data-component-control="相同 control_id"` 标识，并且不能依赖外部资源或父页面。
 
 ## 已实现的控件行为
 
@@ -79,16 +78,13 @@
 "test_actions": [{"action": "toggle", "control_id": "show-supremum", "value": true, "expected_text": "上确界"}]
 ```
 
-对 `interval_line` 不得生成端点开闭、最大元、区间范围或其他控制器，也不得生成 range 控件。若现成
-规格无法表达教学意图，可以改用 `generated_html`，而不是返回伪代码或臆测教材事实。
+`interval_line` 不使用其他控件或 range 控件。现成规格无法表达教学意图时，可改用
+`generated_html`。
 
-若当前受限 ContextPack 不能支撑上述精确小规格，优先返回 `spec=null` 的五键形式。
-这是一种有效的受控决定，不能用猜测的数学事实、未经允许的字段或伪代码代替。
+ContextPack 不足以支撑精确规格时，返回 `spec=null` 与具体原因。
 
-除 `generated_html` 的代码字段外，绝不能输出 Vue、TypeScript、SQL、URL、网络请求、markdown
-代码块或任何可执行代码。`generated_html` 应优先使用 `libraries: ["jsxgraph"]` 直接调用 JSXGraph，
-没有合适库时才使用浏览器内置 DOM、SVG、Canvas、HTML/CSS/JS；不能引用 CDN 或其他外部资源。
-它会在无同源权限、禁止网络和导航的 iframe 中运行，不能读取父页面或教材之外的数据。
+`generated_html` 优先使用 `libraries: ["jsxgraph"]`；没有合适库时可使用浏览器内置
+DOM、SVG 或 Canvas。它在禁止网络、导航和父页面访问的 iframe 中运行。
 如果当前知识单元不适合交互，返回 `spec=null` 和具体的 `not_needed_reason`。
 
 规格必须：
@@ -98,7 +94,7 @@
 - 包含清晰的学习目标、图元参数、可访问性文字和可验证控件行为（如有）；
 - 对函数图像只使用变量 `x`、数字、`+ - * / ^`、括号和 `abs/cos/exp/log/sin/sqrt/tan`；
 - 对函数图像明确填写定义域、端点开闭、采样点和排除点；不能用未声明的点跨越定义域空洞；
-- 让控件变化直接服务于学习目标，不提供调试或维护者信息。
+- 让控件变化直接服务于学习目标。
 
 ## 知识单元
 

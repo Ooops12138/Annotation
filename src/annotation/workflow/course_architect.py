@@ -98,6 +98,7 @@ def _tasks_from_draft(
             knowledge_unit_id=unit.artifact_id,
             content_types=["explanation", "quiz"],
             quiz_count=item.quiz_count if item is not None else None,
+            depth_guidance=item.depth_guidance if item is not None else "standard",
             source_refs=[],
             interactive_component_policy=item.interactive_component_policy if item is not None else "auto",
             content_agent_strategy=item.content_agent_strategy if item is not None else "single",
@@ -124,6 +125,7 @@ def _mock_task_plan(blueprint: LearningBlueprint) -> ContentTaskPlanDraft:
         tasks.append(ContentTaskDraft(
             knowledge_unit_id=unit.artifact_id,
             quiz_count=objective_count or None,
+            depth_guidance="standard",
             interactive_component_policy="auto" if wants_component else "skip",
             content_agent_strategy="single",
             execution_group=index,

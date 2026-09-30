@@ -5,9 +5,7 @@ pipeline.
 
 ## Task
 
-Read the textbook excerpts below and return **only valid JSON** matching this
-shape. Do not include Markdown fences, commentary, or any text outside the JSON
-object.
+Read the textbook excerpts and return a valid JSON object matching this shape.
 
 ```json
 {
@@ -26,22 +24,15 @@ object.
 }
 ```
 
-Create at least 3 knowledge units. Use only facts present in the excerpts; do
-not invent facts or silently rely on outside materials. `source_refs` is
-optional planning metadata: if supplied, every item must be copied exactly
-from a bracketed source ID in the excerpts. Do not attempt to enumerate all
-blocks needed for later content generation.
+Create 3–8 knowledge units from the excerpts. `source_refs` is optional seed
+metadata; when present, copy IDs exactly from the excerpts. It need not cover
+every block needed by downstream retrieval.
 
-Keep the response compact: create no more than 8 knowledge units, use no more
-than 3 learning objectives and at most 8 **representative seed source
-references** per unit, and do not add summaries, explanations, or any fields
-not shown in the JSON shape above. Downstream retrieval searches the imported
-textbook independently and records the exact source IDs it actually uses.
+Use at most 3 learning objectives and 8 representative seed references per
+unit. Downstream retrieval records the exact evidence used for generation.
 
-Give each unit a stable `knowledge_unit_id`. Prefer these IDs in
-`prerequisites` and use `related_unit_ids` only for IDs defined in this same
-response. Older title strings in `prerequisites` remain readable for
-compatibility, but do not guess or silently repair an unresolved relation.
+Give each unit a stable `knowledge_unit_id`; reference those IDs in
+`prerequisites` and `related_unit_ids`.
 
 ## Textbook excerpts
 

@@ -69,6 +69,7 @@ def test_course_architect_generates_structured_content_tasks() -> None:
             {
                 "knowledge_unit_id": "ku-sup",
                 "quiz_count": 2,
+                "depth_guidance": "detailed",
                 "source_refs": ["src-1", "unknown"],
                 "interactive_component_policy": "required",
                 "content_agent_strategy": "parallel",
@@ -78,6 +79,7 @@ def test_course_architect_generates_structured_content_tasks() -> None:
             {
                 "knowledge_unit_id": "ku-basic",
                 "quiz_count": 0,
+                "depth_guidance": "concise",
                 "source_refs": ["src-2"],
                 "interactive_component_policy": "skip",
                 "content_agent_strategy": "single",

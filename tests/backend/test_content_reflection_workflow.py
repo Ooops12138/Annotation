@@ -37,6 +37,7 @@ class WorkflowContentProvider:
                     {
                         "knowledge_unit_id": unit_id,
                         "quiz_count": 0,
+                        "depth_guidance": "standard",
                         "source_refs": ["src-1"],
                         "interactive_component_policy": "skip",
                         "content_agent_strategy": "single",
@@ -59,7 +60,7 @@ class WorkflowContentProvider:
             payload = {
                 "issues": [
                     {
-                        "code": "beginner_clarity",
+                        "code": "clarity",
                         "message": "需要先解释符号含义。",
                     }
                 ] if not any(call.schema.__name__ == "ContentCritiqueDraft" for call in self.calls[:-1]) else []

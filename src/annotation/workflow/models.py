@@ -126,6 +126,7 @@ class ContentTaskDraft(BaseModel):
 
     knowledge_unit_id: str = Field(min_length=1)
     quiz_count: int | None = Field(default=None, ge=0)
+    depth_guidance: Literal["concise", "standard", "detailed"]
     source_refs: list[str] = Field(default_factory=list)
     interactive_component_policy: Literal["auto", "required", "skip"] = "auto"
     content_agent_strategy: Literal["single", "parallel"] = "single"

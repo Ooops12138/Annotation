@@ -215,6 +215,7 @@ class ContentTask(BaseModel):
     # agent chooses the number of questions, including zero.  A supplied value
     # is only a hint for deterministic fixtures and compatibility callers.
     quiz_count: int | None = Field(default=None, ge=0, validation_alias=AliasChoices("quiz_count", "quiz_question_count", "question_count"))
+    depth_guidance: Literal["concise", "standard", "detailed"] = "standard"
     source_refs: list[str] = Field(default_factory=list)
     interactive_component_policy: Literal["auto", "required", "skip"] = "auto"
     content_agent_strategy: Literal["single", "parallel"] = "single"
@@ -445,13 +446,7 @@ class ContentCriticIssueDraft(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    code: Literal[
-        "objective_missing",
-        "prerequisite_unexplained",
-        "beginner_clarity",
-        "organization",
-        "wording",
-    ]
+    code: Literal["coverage", "clarity", "organization"]
     message: str = Field(min_length=1)
     suggested_action: str | None = None
 

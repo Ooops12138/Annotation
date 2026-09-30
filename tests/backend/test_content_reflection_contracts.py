@@ -53,7 +53,7 @@ def test_content_reflection_contracts_keep_traceable_candidate_forms() -> None:
     )
     critique = ContentCritiqueDraft(issues=[
         ContentCriticIssueDraft(
-            code="beginner_clarity",
+            code="clarity",
             message="开头没有解释符号的含义。",
             suggested_action="先定义符号，再给出公式。",
         ),
@@ -162,6 +162,7 @@ def test_active_content_contract_rejects_retired_material_fields_and_trace_group
 def test_content_reflection_prompts_render_all_auditable_inputs() -> None:
     values = {
         "KNOWLEDGE_UNIT_CONTEXT": '{"knowledge_unit_id":"ku-1"}',
+        "DEPTH_GUIDANCE": "standard",
         "CONTENT_TASK": '{"task_id":"task-1"}',
         "ACCEPTANCE_CRITERIA": '["覆盖学习目标"]',
         "CANDIDATE_ARTIFACT": '{"artifact_id":"content-1"}',
@@ -173,7 +174,7 @@ def test_content_reflection_prompts_render_all_auditable_inputs() -> None:
 
     critic = load_prompt(
         "critique_content_artifact",
-        **{key: values[key] for key in ("KNOWLEDGE_UNIT_CONTEXT", "ACCEPTANCE_CRITERIA", "CONTEXT_PACK", "CANDIDATE_ARTIFACT")},
+        **{key: values[key] for key in ("KNOWLEDGE_UNIT_CONTEXT", "DEPTH_GUIDANCE", "ACCEPTANCE_CRITERIA", "CONTEXT_PACK", "CANDIDATE_ARTIFACT")},
     )
     revision = load_prompt("revise_content_artifact", **values)
 

@@ -297,6 +297,7 @@ def build_content_reflection_subgraph(
         prompt = load_prompt(
             "critique_content_artifact",
             KNOWLEDGE_UNIT_CONTEXT=_content_prompt_unit(unit),
+            DEPTH_GUIDANCE=task.depth_guidance,
             ACCEPTANCE_CRITERIA=json.dumps(task.acceptance_criteria, ensure_ascii=False),
             CONTEXT_PACK=render_context_pack(state["context_pack"]),
             CANDIDATE_ARTIFACT=json.dumps(

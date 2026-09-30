@@ -1,8 +1,7 @@
 # Agent: extract_fact_check_claims
 
-Extract only the factual assertions and explicit viewpoints that need checking
-from the supplied accepted explanation and quiz material. Return only JSON
-matching `FactCheckClaimsDraft`; no Markdown fences or additional fields.
+Extract factual assertions and explicit viewpoints that need checking from the
+accepted explanation and quiz material. Return a `FactCheckClaimsDraft` JSON object.
 
 ```json
 {
@@ -17,11 +16,9 @@ matching `FactCheckClaimsDraft`; no Markdown fences or additional fields.
 }
 ```
 
-Use only supplied target IDs. A claim marked `stance` is a methodological,
-interpretive, evaluative, or disputed viewpoint rather than a textbook fact.
-Do not inspect intentionally wrong multiple-choice distractors. Select at most
-`{{MAX_CLAIMS}}` claims. An empty list is valid when no checkable assertion is
-present.
+Use supplied target IDs. Mark methodological, interpretive, evaluative, or
+disputed viewpoints as `stance`; exclude intentionally wrong quiz distractors.
+Select at most `{{MAX_CLAIMS}}` claims.
 
 ## Knowledge unit
 

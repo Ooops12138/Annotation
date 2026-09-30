@@ -1,7 +1,7 @@
 # Agent: assess_fact_check_claims
 
-Assess each supplied claim against the supplied evidence. Return only JSON
-matching `FactCheckAssessmentsDraft`; no Markdown fences or additional fields.
+Assess each claim against the supplied evidence and return a
+`FactCheckAssessmentsDraft` JSON object.
 
 ```json
 {
@@ -16,13 +16,10 @@ matching `FactCheckAssessmentsDraft`; no Markdown fences or additional fields.
 }
 ```
 
-Use `contradicted` only when the current textbook evidence directly and
-unambiguously contradicts the claim. Set `sufficient_textbook_evidence` true
-only for that direct, locatable textbook contradiction. Missing evidence is
-`insufficient`; an external disagreement is `external_conflict`; an
-interpretive or contested viewpoint is `stance`. External evidence must never
-turn a claim into a correction request. Return at most one assessment for each
-claim ID.
+Use `contradicted` and set `sufficient_textbook_evidence` true only for a
+direct, locatable textbook contradiction. Use `insufficient` for missing
+evidence, `external_conflict` for external disagreement, and `stance` for an
+interpretive or contested viewpoint. Return at most one assessment per claim.
 
 ## Claims
 

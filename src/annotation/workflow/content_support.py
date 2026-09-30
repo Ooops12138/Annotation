@@ -375,8 +375,7 @@ def _content_hard_check(
 
 
 _CRITIC_BLOCKING_CODES = {
-    "objective_missing",
-    "prerequisite_unexplained",
+    "coverage",
 }
 
 
@@ -388,11 +387,9 @@ def _critic_review_issues(
     attempt: int,
 ) -> list[ReviewIssue]:
     category_by_code: dict[str, Literal["logic", "coverage", "transition"]] = {
-        "objective_missing": "coverage",
-        "prerequisite_unexplained": "transition",
-        "beginner_clarity": "logic",
+        "coverage": "coverage",
+        "clarity": "logic",
         "organization": "logic",
-        "wording": "logic",
     }
     issues: list[ReviewIssue] = []
     for index, finding in enumerate(critique.issues, start=1):
@@ -529,6 +526,7 @@ def _content_prompt_task(task: ContentTask) -> str:
         {
             "task_id": task.task_id,
             "knowledge_unit_id": task.knowledge_unit_id,
+            "depth_guidance": task.depth_guidance,
         },
         ensure_ascii=False,
         indent=2,
