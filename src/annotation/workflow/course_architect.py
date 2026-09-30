@@ -7,6 +7,7 @@ from typing import Any, Iterable
 
 from annotation.domain.artifacts import ContentTask, LearningBlueprint
 from annotation.prompt_loader import load_prompt
+from annotation.config import model_max_output_tokens
 from annotation.providers import ModelProvider, ProviderError, StructuredGenerationRequest
 from annotation.workflow.graph import _metadata, _provider_metadata
 from annotation.workflow.content_support import _plan_content_tasks
@@ -171,7 +172,7 @@ def plan_content_tasks_with_architect(
             response = provider.generate_structured(StructuredGenerationRequest(
                 prompt=prompt,
                 schema=ContentTaskPlanDraft,
-                max_output_tokens=2400,
+                max_output_tokens=min(5000, model_max_output_tokens()),
                 metadata={key: value for key, value in metadata.items() if key != "prompt"},
             ))
             draft = ContentTaskPlanDraft.model_validate(response.value.model_dump(mode="python"))

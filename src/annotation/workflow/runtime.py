@@ -22,6 +22,7 @@ from annotation.config import (
     fact_check_web_enabled as configured_fact_check_web_enabled,
     fact_check_web_query_limit as configured_fact_check_web_query_limit,
     interactive_component_max_attempts as configured_interactive_component_max_attempts,
+    model_max_output_tokens as configured_model_max_output_tokens,
     rag_enabled,
 )
 from annotation.domain.artifacts import (
@@ -152,10 +153,9 @@ def build_minimal_graph(
             response = model_provider.generate_structured(StructuredGenerationRequest(
                 prompt=prompt,
                 schema=BlueprintDraft,
-                # A full chapter can produce a valid blueprint within this
-                # budget. The previous 3000-token cap routinely truncated
-                # DeepSeek responses in the middle of a JSON array.
-                max_output_tokens=6000,
+                # Blueprint JSON can be large for a full chapter. Keep this
+                # configurable and high enough to avoid truncating arrays.
+                max_output_tokens=configured_model_max_output_tokens(),
                 metadata={"agent": agent, "run_id": state["run_id"], "attempt": attempt},
             ))
             draft = BlueprintDraft.model_validate(response.value.model_dump(mode="python"))

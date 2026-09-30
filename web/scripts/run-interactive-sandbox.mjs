@@ -35,6 +35,21 @@ function safeComponentId(value) {
   return String(value || 'component').replace(/[^A-Za-z0-9_-]+/g, '-').slice(0, 80) || 'component'
 }
 
+function containsExpectedText(observed, expected) {
+  if (observed.includes(expected)) return true
+  // Generated readouts often insert the computed value between the symbolic
+  // label and the explanatory suffix (for example `e^{iθ}=-0.03+1.00i ≈ i`).
+  // Treat the expected whitespace-separated tokens as an ordered assertion so
+  // dynamic numeric values do not make an otherwise valid interaction fail.
+  let cursor = 0
+  for (const token of String(expected).trim().split(/\s+/).filter(Boolean)) {
+    const index = observed.indexOf(token, cursor)
+    if (index < 0) return false
+    cursor = index + token.length
+  }
+  return true
+}
+
 function systemChromiumCandidates() {
   if (process.platform === 'win32') {
     return [
@@ -135,6 +150,9 @@ try {
   const generatedFrame = spec.component_type === 'generated_html'
     ? page.frameLocator('iframe.interactive-component-frame')
     : null
+  const generatedFramePage = spec.component_type === 'generated_html'
+    ? await (await page.locator('iframe.interactive-component-frame').elementHandle())?.contentFrame()
+    : null
   for (const action of spec.test_actions || []) {
     const control = generatedFrame
       ? generatedFrame.locator(`[data-component-control="${action.control_id}"]`)
@@ -154,7 +172,21 @@ try {
         throw new Error(`unsupported test action: ${action.action}`)
       }
       if (generatedFrame) {
-        await generatedFrame.getByText(action.expected_text, { exact: false }).waitFor({ state: 'visible', timeout: timeoutMs })
+        // Text locators are unreliable for dynamically-updated output nodes in
+        // a sandboxed srcdoc iframe. Poll the rendered frame DOM directly so
+        // the assertion observes the same text a learner sees.
+        await generatedFrame.locator('body').waitFor({ state: 'visible', timeout: timeoutMs })
+        if (!generatedFramePage) throw new Error('generated component iframe is unavailable')
+        const deadline = Date.now() + timeoutMs
+        let observed = ''
+        while (Date.now() < deadline) {
+          observed = (await generatedFrame.locator('body').textContent()) || ''
+          if (containsExpectedText(observed, action.expected_text)) break
+          await new Promise((resolve) => setTimeout(resolve, 50))
+        }
+        if (!containsExpectedText(observed, action.expected_text)) {
+          throw new Error(`expected text not found: ${action.expected_text}; observed: ${observed.slice(0, 500)} ... ${observed.slice(-500)}`)
+        }
       } else {
         await page.waitForFunction((expected) => document.querySelector('#interactive-observation')?.textContent?.includes(expected), action.expected_text, { timeout: timeoutMs })
       }

@@ -36,6 +36,7 @@ from annotation.workflow.content_support import _interactive_prompt_content, _in
 from annotation.workflow.graph import _metadata, _provider_metadata
 from annotation.workflow.interactive_expression import function_domain_probe_errors
 from annotation.workflow.interactive_sandbox import run_interactive_component_sandbox
+from annotation.config import model_max_output_tokens
 from annotation.workflow.models import InteractiveComponentDraft, InteractiveComponentState
 
 
@@ -455,7 +456,7 @@ def build_interactive_component_subgraph(
                 response = provider.generate_structured(StructuredGenerationRequest(
                     prompt=prompt,
                     schema=InteractiveComponentDraft,
-                    max_output_tokens=output_limit(2800),
+                    max_output_tokens=output_limit(min(5000, model_max_output_tokens())),
                     metadata={
                         "agent": agent,
                         "run_id": state["run_id"],

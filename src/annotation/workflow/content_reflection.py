@@ -35,6 +35,7 @@ from annotation.workflow.content_support import (
 )
 from annotation.workflow.graph import _metadata, _provider_metadata
 from annotation.workflow.models import ContentDraft, ContentReflectionState, RetrievalDecision
+from annotation.config import model_max_output_tokens
 
 def build_content_reflection_subgraph(
     provider: ModelProvider,
@@ -220,7 +221,7 @@ def build_content_reflection_subgraph(
                     # Content and revision responses contain learner-facing
                     # Markdown plus a JSON envelope. A 2200-token cap was
                     # observed truncating otherwise useful DeepSeek drafts.
-                    max_output_tokens=response_limit(4000),
+                    max_output_tokens=response_limit(min(5000, model_max_output_tokens())),
                     metadata={
                         "agent": agent,
                         "run_id": state["run_id"],

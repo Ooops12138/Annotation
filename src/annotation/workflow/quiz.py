@@ -27,6 +27,7 @@ from annotation.domain.artifacts import (
 from annotation.prompt_loader import load_prompt
 from annotation.providers.models import ModelProvider, ProviderError, StructuredGenerationRequest
 from annotation.workflow.content import render_context_pack
+from annotation.config import model_max_output_tokens
 
 
 QUIZ_PROMPT_VERSION = "generate_quiz_artifact:v3"
@@ -798,7 +799,7 @@ def generate_quiz_artifact(
                 response = provider.generate_structured(StructuredGenerationRequest(
                     prompt=prompt,
                     schema=QuizDraft,
-                    max_output_tokens=min(2200, getattr(getattr(provider, "capabilities", None), "max_output_tokens", 2200) or 2200),
+                    max_output_tokens=min(3500, model_max_output_tokens(), getattr(getattr(provider, "capabilities", None), "max_output_tokens", 3500) or 3500),
                     metadata=metadata,
                 ))
                 raw_response = str(getattr(response, "raw_text", "") or "")

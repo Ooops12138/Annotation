@@ -27,6 +27,27 @@ WEB_SEARCH_ENDPOINT = "https://api.tavily.com/search"
 WEB_SEARCH_TIMEOUT_SECONDS = 10.0
 WEB_SEARCH_MAX_RESULTS = 5
 INTERACTIVE_COMPONENT_MAX_ATTEMPTS = 3
+MODEL_MAX_OUTPUT_TOKENS = 8000
+
+
+def model_max_output_tokens(value: int | str | None = None) -> int:
+    """Return the shared upper bound for structured model responses.
+
+    Long Blueprint/component JSON objects are otherwise easy to truncate. The
+    value remains configurable because OpenAI-compatible providers expose
+    different output limits.
+    """
+
+    raw_value = value if value is not None else os.getenv("MODEL_MAX_OUTPUT_TOKENS")
+    if raw_value is None or raw_value == "":
+        return MODEL_MAX_OUTPUT_TOKENS
+    try:
+        tokens = int(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("MODEL_MAX_OUTPUT_TOKENS must be an integer from 1000 to 32000") from exc
+    if tokens < 1000:
+        raise ValueError("MODEL_MAX_OUTPUT_TOKENS must be at least 1000")
+    return min(tokens, 32000)
 
 
 def blueprint_max_attempts(value: int | str | None = None) -> int:

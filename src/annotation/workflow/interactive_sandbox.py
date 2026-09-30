@@ -13,7 +13,7 @@ from annotation.config import PROJECT_ROOT, STORAGE_DIR
 from annotation.domain.artifacts import InteractiveComponentSandboxReport, InteractiveComponentSpec
 
 
-SANDBOX_TIMEOUT_SECONDS = 10
+SANDBOX_TIMEOUT_SECONDS = 15
 
 
 def _report(*, status: str, error: str | None = None, duration_ms: int | None = None) -> InteractiveComponentSandboxReport:
@@ -80,7 +80,9 @@ def run_interactive_component_sandbox(
             cwd=PROJECT_ROOT / "web",
             capture_output=True,
             text=True,
-            timeout=SANDBOX_TIMEOUT_SECONDS + 5,
+            # Leave enough time for the child to write an assertion-failed
+            # report instead of masking it as a parent-process timeout.
+            timeout=SANDBOX_TIMEOUT_SECONDS + 10,
             check=False,
         )
     except subprocess.TimeoutExpired:
