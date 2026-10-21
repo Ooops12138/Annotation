@@ -24,9 +24,9 @@ pdf-hybrid = [
 rag = [
   "llama-index-core>=0.12,<1.0",
   "llama-index-vector-stores-chroma>=0.4,<1.0",
-  "llama-index-embeddings-openai>=0.3,<1.0",
-  "llama-index-embeddings-huggingface>=0.4,<1.0",
   "chromadb>=0.5,<1.0",
+  # Chroma 0.x calls the positional PostHog capture API removed in 6.x.
+  "posthog>=2.4,<6.0",
 ]
 rag-local-embeddings = [
   "sentence-transformers>=3.0,<6.0",

@@ -211,23 +211,33 @@ def rag_enabled() -> bool:
 
 
 def embedding_provider_name() -> str:
-    return (os.getenv("RAG_EMBEDDING_PROVIDER") or "local").strip().lower()
+    return (os.getenv("RAG_EMBEDDING_PROVIDER") or "auto").strip().lower()
 
 
 def embedding_config() -> dict[str, str]:
+    from annotation.retrieval.embeddings import LOCAL_MODEL, API_MODEL, API_BASE_URL
+
     provider = embedding_provider_name()
-    if provider == "local":
-        model_path = (os.getenv("RAG_EMBEDDING_MODEL_PATH") or "").strip()
-        if not model_path:
-            raise ValueError("RAG_EMBEDDING_MODEL_PATH is required for local embeddings")
-        return {"provider": provider, "model_path": model_path}
-    if provider in {"api", "openai-compatible"}:
-        api_key = (os.getenv("RAG_EMBEDDING_API_KEY") or "").strip()
-        model = (os.getenv("RAG_EMBEDDING_API_MODEL") or "").strip()
-        if not api_key or not model:
-            raise ValueError("RAG_EMBEDDING_API_KEY and RAG_EMBEDDING_API_MODEL are required for API embeddings")
-        return {"provider": "api", "api_key": api_key, "model": model, "base_url": os.getenv("RAG_EMBEDDING_API_BASE_URL", "")}
-    raise ValueError("RAG_EMBEDDING_PROVIDER must be local or api")
+    if provider == "openai-compatible":
+        provider = "api"
+    if provider not in {"auto", "local", "api"}:
+        raise ValueError("RAG_EMBEDDING_PROVIDER must be auto, local or api")
+    config = {
+        "provider": provider,
+        "model_path": (os.getenv("RAG_EMBEDDING_MODEL_PATH") or LOCAL_MODEL).strip(),
+        "revision": os.getenv("RAG_EMBEDDING_REVISION", "").strip(),
+        "api_key": (os.getenv("RAG_EMBEDDING_API_KEY") or "").strip(),
+        "model": (os.getenv("RAG_EMBEDDING_API_MODEL") or API_MODEL).strip(),
+        "base_url": (os.getenv("RAG_EMBEDDING_API_BASE_URL") or API_BASE_URL).strip(),
+        "batch_size": os.getenv("RAG_EMBEDDING_BATCH_SIZE", "16"),
+        "timeout": os.getenv("RAG_EMBEDDING_TIMEOUT_SECONDS", "30"),
+        "max_retries": os.getenv("RAG_EMBEDDING_MAX_RETRIES", "2"),
+    }
+    if "RAG_EMBEDDING_QUERY_INSTRUCTION" in os.environ:
+        config["query_instruction"] = os.environ["RAG_EMBEDDING_QUERY_INSTRUCTION"]
+    if provider == "api" and not config["api_key"]:
+        raise ValueError("RAG_EMBEDDING_API_KEY is required for API embeddings")
+    return config
 
 
 def first_book_pdf() -> Path:

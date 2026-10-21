@@ -254,3 +254,47 @@ def test_mock_workflow_keeps_six_unit_quiz_regression_and_emits_six_content_trac
     assert any(node.type == "interactive_component" for node in rendered_nodes)
     assert not any(node.type == "callout" for node in rendered_nodes)
     assert len(state["quiz_artifacts"]) == 6
+
+
+def test_enabled_vector_initialization_failure_keeps_workflow_fts(monkeypatch):
+    _install_source_fixture(monkeypatch)
+    import annotation.workflow.runtime as runtime
+    monkeypatch.setenv("RAG_ENABLED", "true")
+    def broken_vector(*args, **kwargs):
+        raise RuntimeError("index unavailable")
+    monkeypatch.setattr(runtime, "LlamaIndexChromaTextbookSearchTool", broken_vector)
+    run_id = f"rag-degraded-{uuid.uuid4().hex[:8]}"
+    state = run_minimal_workflow(provider=MockProvider(), run_id=run_id, blueprint=_blueprint(run_id))
+    assert "vector_index_initialization_failed:RuntimeError" in state["warnings"]
+    calls = [c for pack in state["context_packs"] for c in pack.retrieval_calls]
+    assert calls
+    assert any(c.metadata.get("degraded") and c.metadata.get("branch_1_status") == "error" for c in calls)
+    assert state["content_artifacts"]
+
+
+def test_enabled_vector_reaches_content_agent_and_context_audit(monkeypatch):
+    _install_source_fixture(monkeypatch)
+    import annotation.workflow.runtime as runtime
+    from annotation.fact_checking.contracts import EvidenceRecord, EvidenceKind, SearchResult, SearchStatus
+    monkeypatch.setenv("RAG_ENABLED", "true")
+    searched = []
+    def make_vector(blocks, **kwargs):
+        block = blocks[0]
+        class Vector:
+            name, version = "test-vector", "v1"
+            def search(self, query, *, limit):
+                searched.append(query)
+                evidence = EvidenceRecord(evidence_id="e1", kind=EvidenceKind.TEXTBOOK, query=query,
+                    text=block.text, excerpt=block.text, locator="page:1;block:0", provider=self.name,
+                    source_ref=block.source_ref, document_id=block.document_id, page_number=1, block_index=0,
+                    text_hash=block.text_hash)
+                return SearchResult(skill_name=self.name, skill_version=self.version, query=query,
+                                    status=SearchStatus.OK, evidence=(evidence,), metadata={"embedding_fingerprint": "test-vector-space"})
+        return Vector()
+    monkeypatch.setattr(runtime, "LlamaIndexChromaTextbookSearchTool", make_vector)
+    run_id = f"rag-enabled-{uuid.uuid4().hex[:8]}"
+    state = run_minimal_workflow(provider=MockProvider(), run_id=run_id, blueprint=_blueprint(run_id))
+    calls = [c for pack in state["context_packs"] for c in pack.retrieval_calls]
+    assert searched and calls
+    assert any(c.metadata.get("branch_1_embedding_fingerprint") == "test-vector-space" for c in calls)
+    assert state["content_artifacts"]

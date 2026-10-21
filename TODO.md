@@ -17,4 +17,6 @@
 - [x] 统一教材与网络检索结果契约；网络查询默认关闭，内容 Agent 可显式选择。
 - [x] 采用 LlamaIndex 作为可选 RAG 基础框架，Chroma 作为向量库，支持本地 embedding 路径和 OpenAI-compatible API。
 - [x] 采用 SQLite FTS5 + 向量检索的混合召回，暂不加入重排。
-- [ ] 确认 embedding 模型并完成 Chroma 索引构建与真实运行验证；当前只提供可选适配器，不伪装为已启用。
+- [x] 完成 BGE-small-zh-v1.5 CPU + Chroma 的真实运行、增量索引和重启复用验证；已配置本机内容 Agent 的可选混合检索。
+- [x] 完成固定 25 页/1,206 块/48 题的 FTS5、向量、混合检索开发基线；多次运行质量指标一致，最终报告位于 `results/retrieval/local-final/report.md`，首轮/复跑记录位于 `results/retrieval/local/` 与 `results/retrieval/local-repeat/`。
+- [x] 完成硅基流动 BGE-M3 真实 API smoke、同一 48 题三轮评估、独立进程复用全部 1,206 块及 auto 初始化验证；结果见 `results/retrieval/siliconflow-api/`，与 CPU 的对比见 `results/retrieval/comparison.md`。API Recall@5 未超过本地基线，排名波动和无答案误召回已记录。

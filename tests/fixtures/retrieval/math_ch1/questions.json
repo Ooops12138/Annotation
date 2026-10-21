@@ -1,0 +1,1363 @@
+{
+  "schema_version": 1,
+  "title": "数学分析第1章：教材检索开发基线",
+  "annotation_status": "assistant-authored-not-independently-human-reviewed",
+  "annotation_policy": "阅读冻结语料后标注，未使用检索输出构造标签；2=直接支持或必要公式片段，1=部分支持，未标注=0。碎片化内容可由多个块共同支持；标签可能不穷尽所有相关块。",
+  "corpus_sha256": "a62cd42e1cfb085b4ed8b3f3c2916a72ea0d485344bf5551d5903ac7ad3103f6",
+  "blocks": 1206,
+  "pages": 25,
+  "questions": [
+    {
+      "id": "keyword-01",
+      "category": "keyword",
+      "query": "交换律",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p1-b25": {
+          "grade": 2,
+          "text_sha256": "740c5a4ea4ea64eaec8a664df0d6d5a33c165cbba236b7345a09cf99c77689a8"
+        },
+        "srcdoc-acb412de0faf0abc-p13-b3": {
+          "grade": 2,
+          "text_sha256": "b06f15b609623cf7f7268136b0a37da46a92f39212217260a421bae2af9ef4e4"
+        }
+      },
+      "rationale": "实数公理及复数运算均直接陈述交换律。"
+    },
+    {
+      "id": "keyword-02",
+      "category": "keyword",
+      "query": "归纳集",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p3-b20": {
+          "grade": 2,
+          "text_sha256": "0188be61be73140070140a8bb53fe53552a2986a7722a6170acd9e5c1aa379fd"
+        },
+        "srcdoc-acb412de0faf0abc-p3-b21": {
+          "grade": 2,
+          "text_sha256": "f83bbdc177e41eafd4f7598c224286c7d686150ba4e21008d18a5310502a6309"
+        },
+        "srcdoc-acb412de0faf0abc-p3-b22": {
+          "grade": 2,
+          "text_sha256": "2574adba81a263b01d7393c170c203333ce145d960b895fa5665d16c39dc1e0d"
+        },
+        "srcdoc-acb412de0faf0abc-p3-b23": {
+          "grade": 2,
+          "text_sha256": "9c43ecdabf18d862e761b291702cb6da7bfa825b4e6c7df85dc027a3ae65f8c1"
+        },
+        "srcdoc-acb412de0faf0abc-p3-b24": {
+          "grade": 2,
+          "text_sha256": "69087f09bd61a2881cf53c9196ed1caded1e0f1dc43ad8f473b4ed6f3b5f4f10"
+        },
+        "srcdoc-acb412de0faf0abc-p3-b25": {
+          "grade": 2,
+          "text_sha256": "d489c56bd70a2f1e9594319fc2d31c004f63c7cd430a4c0a2de6e2ba36810918"
+        },
+        "srcdoc-acb412de0faf0abc-p3-b29": {
+          "grade": 2,
+          "text_sha256": "4a1dbe84b7657bee4decf7ee725dffcfa6608573f4b7a7c9febd7f6a3d75ddb8"
+        },
+        "srcdoc-acb412de0faf0abc-p3-b31": {
+          "grade": 2,
+          "text_sha256": "9c99b863e7a036c654dcea5adc10a6aea65a4bd563d41f9d8b63c5c76954e9cc"
+        },
+        "srcdoc-acb412de0faf0abc-p3-b32": {
+          "grade": 2,
+          "text_sha256": "4f0d78012492ea752e84210397c3893b970b3403fd3e95e63ebf86b05338e11a"
+        }
+      },
+      "rationale": "定义、闭包条件和最小归纳集解释。"
+    },
+    {
+      "id": "keyword-03",
+      "category": "keyword",
+      "query": "唯一因数分解定理",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p4-b8": {
+          "grade": 2,
+          "text_sha256": "d0600dce40769cb453507acd3d7e8b7297b3052fbe875618089c939f670611ac"
+        },
+        "srcdoc-acb412de0faf0abc-p4-b10": {
+          "grade": 2,
+          "text_sha256": "8dce61a27cfdb5d7ddecef774c78be70eb936ba859d80fa3b18258f461576ec1"
+        },
+        "srcdoc-acb412de0faf0abc-p4-b11": {
+          "grade": 2,
+          "text_sha256": "e486ba05dc067ca88ee39fbfbf4e3339f185291e6073c416825c9c45e208f1a4"
+        },
+        "srcdoc-acb412de0faf0abc-p5-b6": {
+          "grade": 2,
+          "text_sha256": "2e48be366918ce6e88a6845ef936844cc060f1d8dbcbdeb227cb2da6c1568b75"
+        },
+        "srcdoc-acb412de0faf0abc-p5-b11": {
+          "grade": 2,
+          "text_sha256": "1d7bca210cbb1147b8604f893402601445607f6908fa717dd71a6ab5645ffe9c"
+        },
+        "srcdoc-acb412de0faf0abc-p5-b12": {
+          "grade": 2,
+          "text_sha256": "ddfd07b757b1f5f4c25ba4dbdc9441fca1134b76dbd9034d28b90d2e3746ea83"
+        },
+        "srcdoc-acb412de0faf0abc-p5-b13": {
+          "grade": 2,
+          "text_sha256": "ef9505c7c0827607c4b53de40ad86e6105ea5d057be4535204294819cda2303f"
+        },
+        "srcdoc-acb412de0faf0abc-p5-b14": {
+          "grade": 2,
+          "text_sha256": "cb71db8a9342ba5491cb4970c8b10f4a631e180038839703ce27becb3ecdf582"
+        },
+        "srcdoc-acb412de0faf0abc-p5-b15": {
+          "grade": 2,
+          "text_sha256": "696e1c440d4b2b8957d9d1f72619fc698630da7680601960c55c82b126aa60f2"
+        },
+        "srcdoc-acb412de0faf0abc-p5-b16": {
+          "grade": 2,
+          "text_sha256": "2ce4f77b29fb5b823163d64c01a9a1fd29e350b27d07857ea98131be55abde0f"
+        }
+      },
+      "rationale": "定理的存在性与唯一性，以及其证明。"
+    },
+    {
+      "id": "keyword-04",
+      "category": "keyword",
+      "query": "欧几里得引理",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p5-b0": {
+          "grade": 2,
+          "text_sha256": "207a05e52b71063d1b194f477fad16a02a9ad21ad1d78fc321223907866b4a62"
+        },
+        "srcdoc-acb412de0faf0abc-p5-b1": {
+          "grade": 2,
+          "text_sha256": "69ca61181ce30d473ce862f6dbfa60f9224f4404b801503b2aad91b1ad92d70e"
+        },
+        "srcdoc-acb412de0faf0abc-p5-b3": {
+          "grade": 1,
+          "text_sha256": "477462c25edab2423716fd50cb57c47f6ec4a6c2c4e7661c470df7547827f4a2"
+        }
+      },
+      "rationale": "定理1.7及证明。"
+    },
+    {
+      "id": "keyword-05",
+      "category": "keyword",
+      "query": "完全公理",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p7-b24": {
+          "grade": 2,
+          "text_sha256": "3310a87dba8493449bdd12380e2a10e9302a8eb499b7529a044b421262e75152"
+        },
+        "srcdoc-acb412de0faf0abc-p7-b25": {
+          "grade": 2,
+          "text_sha256": "43b8d121aa62a0e7aa38ce8aee62654992cbaa6d2cc2b09352bf73d6dd9b5b7a"
+        },
+        "srcdoc-acb412de0faf0abc-p7-b26": {
+          "grade": 2,
+          "text_sha256": "f85456aa22b47138f6db2615b8c1e7849699189288130f1a63b38beaad186587"
+        },
+        "srcdoc-acb412de0faf0abc-p7-b27": {
+          "grade": 2,
+          "text_sha256": "2cf9f245d02a9fa12e5d252ab69912fe56c3852304a001ce36b6f86edaf25bcf"
+        },
+        "srcdoc-acb412de0faf0abc-p6-b42": {
+          "grade": 1,
+          "text_sha256": "e97d3912ba24f1483a168b7cc3e74ff378c00a4e4963863289ab53b910d50cee"
+        },
+        "srcdoc-acb412de0faf0abc-p6-b43": {
+          "grade": 1,
+          "text_sha256": "501cff02e1db259b9a7dce47a7b6a5ea6966be2d52f97e5fc6d4b61a846674f3"
+        }
+      },
+      "rationale": "公理10及下确界推论。"
+    },
+    {
+      "id": "keyword-06",
+      "category": "keyword",
+      "query": "阿基米德性质",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p8-b26": {
+          "grade": 2,
+          "text_sha256": "cb21fbf079a37e27f792cd9893cbf8f184edd6889411eeee48fd4ce37569da62"
+        },
+        "srcdoc-acb412de0faf0abc-p8-b27": {
+          "grade": 2,
+          "text_sha256": "477436a93f9c1da975077fe8b12a859e7aa4f80c941cce0a8ad95cebca2ec936"
+        },
+        "srcdoc-acb412de0faf0abc-p8-b28": {
+          "grade": 2,
+          "text_sha256": "c3ea80b4b05d7d96f67da131ee4899ebabdd5e011e5a743402f0f4096916fccc"
+        },
+        "srcdoc-acb412de0faf0abc-p8-b29": {
+          "grade": 2,
+          "text_sha256": "497f2eaf8a3dfb286dfcdb2375da31e83ec239b0fba216b7bf1869441439cfd0"
+        },
+        "srcdoc-acb412de0faf0abc-p8-b30": {
+          "grade": 2,
+          "text_sha256": "5110ccee7e89a8bfd845403d7e0ccf24cb7998c7e925f5f40f012084bcb47f9b"
+        }
+      },
+      "rationale": "名称、几何解释和定理1.19。"
+    },
+    {
+      "id": "keyword-07",
+      "category": "keyword",
+      "query": "柯西施瓦茨不等式",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p11-b7": {
+          "grade": 2,
+          "text_sha256": "bed9bc30c73dc52976bb4af4cea86fe764ff735831fb8b9506f3ec8d8fad8005"
+        },
+        "srcdoc-acb412de0faf0abc-p11-b8": {
+          "grade": 2,
+          "text_sha256": "43b4ad6d9a809e64c48a20ca7e274b38c5bac52598c9ba095114bf04917c7d59"
+        },
+        "srcdoc-acb412de0faf0abc-p11-b22": {
+          "grade": 2,
+          "text_sha256": "52bbc869ad82702310f5a202edcf9f7c06a080f6667c3ddb9253784e4c05bc80"
+        },
+        "srcdoc-acb412de0faf0abc-p11-b23": {
+          "grade": 2,
+          "text_sha256": "3010bf12b5807ec668b74101fde39ac15d959840fc8d4720c0449862f8816fba"
+        },
+        "srcdoc-acb412de0faf0abc-p11-b48": {
+          "grade": 2,
+          "text_sha256": "6fbdc49bef9e02bd108f43d043ccdcdc2133786ae58287886a0499b91058bb20"
+        },
+        "srcdoc-acb412de0faf0abc-p11-b49": {
+          "grade": 2,
+          "text_sha256": "e2cdee03cd3f4a68b09de4088a31a3291b0a3868941b716d36cc440fe3d67884"
+        },
+        "srcdoc-acb412de0faf0abc-p11-b50": {
+          "grade": 2,
+          "text_sha256": "df22066c8bef10dfb18a70fc50a89fa03195b9f2ee79e3b95293b7d669c0b272"
+        },
+        "srcdoc-acb412de0faf0abc-p11-b51": {
+          "grade": 2,
+          "text_sha256": "28ff9531b8feb27ac57c036a36970c3a46c892bf736fccbac7cc2ebfe6b8259b"
+        },
+        "srcdoc-acb412de0faf0abc-p11-b56": {
+          "grade": 2,
+          "text_sha256": "0bf5fed9158460bda358bdc45c1426e13637a561409db6507b0de5470bc49d0d"
+        }
+      },
+      "rationale": "定理条件、等号条件与向量形式。"
+    },
+    {
+      "id": "keyword-08",
+      "category": "keyword",
+      "query": "虚数单位",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p14-b19": {
+          "grade": 2,
+          "text_sha256": "42af15cc32f821cf5b38d88806b8906af102b869e8406d241d8b42035c1b0381"
+        },
+        "srcdoc-acb412de0faf0abc-p14-b23": {
+          "grade": 2,
+          "text_sha256": "dbc3f9d66916b078db69a5fa2dfa6eecb72b28ea74fb43d23de57c7a877ee65a"
+        },
+        "srcdoc-acb412de0faf0abc-p14-b24": {
+          "grade": 2,
+          "text_sha256": "a1fa68f9c0c0131a5adf814000a23b0c4077986993ca9c069ac02041d52d8fea"
+        },
+        "srcdoc-acb412de0faf0abc-p14-b25": {
+          "grade": 2,
+          "text_sha256": "560795c51ac943d8e6ede9c1871af722e32ddd2f6115f6a2ff2d91a6aea2737e"
+        },
+        "srcdoc-acb412de0faf0abc-p15-b0": {
+          "grade": 2,
+          "text_sha256": "8c46ab0dc9eb4eca0fab3c086dc83ded34086c969583f5d86e3e3bc13ffb411f"
+        },
+        "srcdoc-acb412de0faf0abc-p15-b1": {
+          "grade": 2,
+          "text_sha256": "c4defea130ba2e9e41b0ec19fbe31de589a4157c3a732575436a68cd4dd8880b"
+        },
+        "srcdoc-acb412de0faf0abc-p15-b2": {
+          "grade": 2,
+          "text_sha256": "18080187648f959c284a4165283bd5e11662a82f6ad5ad2733e775bba36ae2a4"
+        }
+      },
+      "rationale": "i的定义及平方等于-1。"
+    },
+    {
+      "id": "keyword-09",
+      "category": "keyword",
+      "query": "辐角主值",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p17-b9": {
+          "grade": 2,
+          "text_sha256": "ed36c0bd457ec5bb90028d382d51ffbdf8c61b2e6906d9085d545f9abd754a1a"
+        },
+        "srcdoc-acb412de0faf0abc-p17-b10": {
+          "grade": 2,
+          "text_sha256": "8cab65d05071f8b3d5ea25ceb3a1b853f135982f8cb96cee8eaa9b11b930c3fe"
+        },
+        "srcdoc-acb412de0faf0abc-p17-b11": {
+          "grade": 2,
+          "text_sha256": "734c904c34bc5a220e62e017e31961a4d554fe88bdc3e8ac81a1517b7da575ac"
+        },
+        "srcdoc-acb412de0faf0abc-p17-b12": {
+          "grade": 2,
+          "text_sha256": "f9e0303b3edd4dbf930298df4c416627a047b9818e64752a8580df6d78c7911c"
+        }
+      },
+      "rationale": "名称、定义及取值范围。"
+    },
+    {
+      "id": "keyword-10",
+      "category": "keyword",
+      "query": "球极平面投影",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p14-b14": {
+          "grade": 2,
+          "text_sha256": "73f1dec6956a1484c82819b502ac1b39ff6838f2fd0e185737965c3417f088f1"
+        },
+        "srcdoc-acb412de0faf0abc-p14-b15": {
+          "grade": 2,
+          "text_sha256": "04fe84332f4114e13702a51b5141f9c9e96e57610f9b60bd0c79ba5c061f7d71"
+        },
+        "srcdoc-acb412de0faf0abc-p14-b16": {
+          "grade": 2,
+          "text_sha256": "70adc3b8cf5872a9a4fe659beb814d90d5dc1959149a9c429ff1675f76675d48"
+        },
+        "srcdoc-acb412de0faf0abc-p14-b17": {
+          "grade": 2,
+          "text_sha256": "27bdcc697b44a51ef6463f5d5972b0c49aa8cc3df2550a0cac79fc52541983eb"
+        },
+        "srcdoc-acb412de0faf0abc-p20-b27": {
+          "grade": 2,
+          "text_sha256": "12fa0b4c94a2443274828212cbac2b0189f98f615298f391e9c090c6172153df"
+        },
+        "srcdoc-acb412de0faf0abc-p20-b29": {
+          "grade": 2,
+          "text_sha256": "a0dabd0a7ca6c8561bb65d1ef3e866004d09d2ebed5a54a6878f06dc5d182392"
+        },
+        "srcdoc-acb412de0faf0abc-p20-b30": {
+          "grade": 2,
+          "text_sha256": "072399e9a008f61db71d7cb63d1656b30e98690002c326e303199904ab64b151"
+        },
+        "srcdoc-acb412de0faf0abc-p20-b31": {
+          "grade": 2,
+          "text_sha256": "d99701e8642905757ee48115f33ef523928bb7dfb735af788b0685a996cb200c"
+        }
+      },
+      "rationale": "平面与球面投影及无穷远点解释。"
+    },
+    {
+      "id": "paraphrase-01",
+      "category": "paraphrase",
+      "query": "一个数比集合里的所有数都大或相等，教材把它叫什么？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p7-b0": {
+          "grade": 2,
+          "text_sha256": "73969c1c17084caa3fba8ccc8f7c5447314197515817a61fc3c3ff5f35b53082"
+        },
+        "srcdoc-acb412de0faf0abc-p7-b1": {
+          "grade": 2,
+          "text_sha256": "4acc2686c4bd824a0e69d9d82b87b73a928a0ffdd1b1f0bc3b88d184149b5a70"
+        }
+      },
+      "rationale": "上界定义；不要求该数属于集合。"
+    },
+    {
+      "id": "paraphrase-02",
+      "category": "paraphrase",
+      "query": "集合里的数越来越接近某个上限，却永远取不到它，还能谈最小的上界吗？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p7-b11": {
+          "grade": 2,
+          "text_sha256": "710117e9428d72bdfc1c411f1773072c9fc3f26a82b7d38bc01d97c5b9a0a99a"
+        },
+        "srcdoc-acb412de0faf0abc-p7-b12": {
+          "grade": 2,
+          "text_sha256": "329178b05502fb608bb517b6da69fc00d94d5fba13332b073e63be1627a3b13e"
+        },
+        "srcdoc-acb412de0faf0abc-p7-b13": {
+          "grade": 2,
+          "text_sha256": "8acd58c6c1cafe10dafe6ebc2872abf6aabf267044a4b637708cb018fd7f0e07"
+        },
+        "srcdoc-acb412de0faf0abc-p7-b15": {
+          "grade": 2,
+          "text_sha256": "de3479d9b953743bbdca4e0279ebf328cb2d86cd1ca8ce357421e09061060906"
+        },
+        "srcdoc-acb412de0faf0abc-p7-b16": {
+          "grade": 2,
+          "text_sha256": "fe4f6a925065aa643c7687690c677c0f2159aea7035dcb40b57a3a7cba3f9122"
+        },
+        "srcdoc-acb412de0faf0abc-p7-b17": {
+          "grade": 2,
+          "text_sha256": "ad196deec5fab000b62cfd16057a6f9da8ab15b637527fbb7b2c5c712f647752"
+        }
+      },
+      "rationale": "半开区间没有最大元但存在最小上界。"
+    },
+    {
+      "id": "paraphrase-03",
+      "category": "paraphrase",
+      "query": "为什么找不到紧挨着某个有理数的下一个有理数？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p5-b20": {
+          "grade": 2,
+          "text_sha256": "671165302b008247964f72e7982bec9cdce581a29423634ecb52968170921242"
+        },
+        "srcdoc-acb412de0faf0abc-p5-b21": {
+          "grade": 2,
+          "text_sha256": "4f2e194a7f96d6a397717badbe4f4b71a203b4272d46a5b861f62a2c9d25c119"
+        },
+        "srcdoc-acb412de0faf0abc-p5-b22": {
+          "grade": 2,
+          "text_sha256": "451a402379318b9084fafa9d0e27d99073e53da8c6e3b371562794a776ba191d"
+        }
+      },
+      "rationale": "用平均数说明两个有理数之间还有有理数。"
+    },
+    {
+      "id": "paraphrase-04",
+      "category": "paraphrase",
+      "query": "再长的线段，能否用足够多段固定的短线段盖住？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p8-b27": {
+          "grade": 2,
+          "text_sha256": "477436a93f9c1da975077fe8b12a859e7aa4f80c941cce0a8ad95cebca2ec936"
+        },
+        "srcdoc-acb412de0faf0abc-p8-b28": {
+          "grade": 2,
+          "text_sha256": "c3ea80b4b05d7d96f67da131ee4899ebabdd5e011e5a743402f0f4096916fccc"
+        },
+        "srcdoc-acb412de0faf0abc-p8-b29": {
+          "grade": 2,
+          "text_sha256": "497f2eaf8a3dfb286dfcdb2375da31e83ec239b0fba216b7bf1869441439cfd0"
+        },
+        "srcdoc-acb412de0faf0abc-p8-b30": {
+          "grade": 2,
+          "text_sha256": "5110ccee7e89a8bfd845403d7e0ccf24cb7998c7e925f5f40f012084bcb47f9b"
+        }
+      },
+      "rationale": "阿基米德性质的几何解释。"
+    },
+    {
+      "id": "paraphrase-05",
+      "category": "paraphrase",
+      "query": "能不能只用小数点后有限位，把任意非负实数逼近得足够准确？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p9-b16": {
+          "grade": 2,
+          "text_sha256": "c08bd6bf2cf6873adfc63501fd59d99f71917f3024e15c5a63f90c121512f50d"
+        },
+        "srcdoc-acb412de0faf0abc-p9-b17": {
+          "grade": 2,
+          "text_sha256": "593784f52a7ecb76a302dc50fdd6f679e5d9a4482e7886f555d5a225070d7f85"
+        },
+        "srcdoc-acb412de0faf0abc-p9-b18": {
+          "grade": 2,
+          "text_sha256": "0fb4b619b0bb74c0d9f57a827a30aa8b7e49ad457fc380bafb9892785327fcb7"
+        },
+        "srcdoc-acb412de0faf0abc-p9-b38": {
+          "grade": 2,
+          "text_sha256": "593784f52a7ecb76a302dc50fdd6f679e5d9a4482e7886f555d5a225070d7f85"
+        },
+        "srcdoc-acb412de0faf0abc-p9-b39": {
+          "grade": 2,
+          "text_sha256": "85e5852161b58c08353f0bcf432d59432afe1666c90f81e20955d4f47f3cfa48"
+        },
+        "srcdoc-acb412de0faf0abc-p10-b0": {
+          "grade": 2,
+          "text_sha256": "d60377961d4351cab25a3adafb7f6793869af49f348ee05291879f32ea69217b"
+        },
+        "srcdoc-acb412de0faf0abc-p10-b1": {
+          "grade": 2,
+          "text_sha256": "92a1cbd936128579a4748394d622549be6954132cd8c4161104ca4b6e7a17623"
+        }
+      },
+      "rationale": "有限小数逼近定理及误差界。"
+    },
+    {
+      "id": "paraphrase-06",
+      "category": "paraphrase",
+      "query": "一个数写成末尾全是零或末尾全是九，为什么可能是同一个数？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p10-b8": {
+          "grade": 2,
+          "text_sha256": "34f0eb68f7d8cf7c05f2d3869eec428babb549532324d77cf103c152494ff6e6"
+        },
+        "srcdoc-acb412de0faf0abc-p10-b9": {
+          "grade": 2,
+          "text_sha256": "7ffebedb359b457c714d3ae2fb2cf412935f34bc4585be43e120307f246a4d48"
+        },
+        "srcdoc-acb412de0faf0abc-p10-b10": {
+          "grade": 2,
+          "text_sha256": "bfb29151c679fd79a3f585dcd144a3eb886fc2aadde5621b4876b0989944e270"
+        },
+        "srcdoc-acb412de0faf0abc-p10-b11": {
+          "grade": 2,
+          "text_sha256": "ce35ab35b605b6593a37492b779d2cc06c86e6efe76bc5f61ac2031ee075b9a4"
+        },
+        "srcdoc-acb412de0faf0abc-p10-b12": {
+          "grade": 2,
+          "text_sha256": "5f2b1903f17a9db994227669ec0b3365d39ec05f8a64bf607f5fbabd5d53e215"
+        },
+        "srcdoc-acb412de0faf0abc-p10-b13": {
+          "grade": 2,
+          "text_sha256": "ef15b9b1a0572c5c6e390f2e25b26a6fba73faaeefeb28ed88b77ec23cafccae"
+        },
+        "srcdoc-acb412de0faf0abc-p10-b14": {
+          "grade": 2,
+          "text_sha256": "3f3e7ba2c05e382aaac22af43f69f8d0464697b08e23f0cbc735cc91ed901b82"
+        },
+        "srcdoc-acb412de0faf0abc-p10-b15": {
+          "grade": 2,
+          "text_sha256": "8ab4b683e43758bef7390d452d46ba70a9ce4af3ddc93462255ad5f32717f4e8"
+        },
+        "srcdoc-acb412de0faf0abc-p10-b16": {
+          "grade": 2,
+          "text_sha256": "dc8679b51277b9e7de29869ce977387401afb4399e28d9f544e0c0f79b677673"
+        },
+        "srcdoc-acb412de0faf0abc-p10-b17": {
+          "grade": 2,
+          "text_sha256": "32040eee0d9c21305518354a10bfa36177cfaae85e2c144b07bf80bd7844e7cc"
+        }
+      },
+      "rationale": "两种小数展开对应相同上确界。"
+    },
+    {
+      "id": "paraphrase-07",
+      "category": "paraphrase",
+      "query": "把复数画在平面上后，加法对应怎样的图形操作？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p14-b7": {
+          "grade": 2,
+          "text_sha256": "6347205becff934b3025a47e8da1f32f4b38b18ac1019b3689a2f28a43ff680b"
+        },
+        "srcdoc-acb412de0faf0abc-p14-b8": {
+          "grade": 2,
+          "text_sha256": "f706037d3159f25eb9daf85fbe316ae43a63bf1c0b520075c90f0abd77d7c037"
+        },
+        "srcdoc-acb412de0faf0abc-p14-b9": {
+          "grade": 2,
+          "text_sha256": "125fba617047c259173b2a5a055fe74dce4412330ec7bf753f338c2b40886253"
+        },
+        "srcdoc-acb412de0faf0abc-p14-b10": {
+          "grade": 2,
+          "text_sha256": "7324f05f61156f2517e87193f908f68d1b812dbd1a4eb9fd9241e42d1191d55e"
+        },
+        "srcdoc-acb412de0faf0abc-p14-b20": {
+          "grade": 2,
+          "text_sha256": "fc80f33334a03046b5217fd451413bfbd8330464f343ef970db72d386d946b41"
+        },
+        "srcdoc-acb412de0faf0abc-p14-b21": {
+          "grade": 2,
+          "text_sha256": "37b85c8ca4d2f415d1ec4a1bc3f609145fb3f85b185ee5b286173a7e554f8fa0"
+        }
+      },
+      "rationale": "复数加法对应二维向量和平行四边形法则。"
+    },
+    {
+      "id": "paraphrase-08",
+      "category": "paraphrase",
+      "query": "为什么不能给全部复数规定一种与实数一样兼容加法和乘法的大小次序？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p15-b15": {
+          "grade": 2,
+          "text_sha256": "8ac14a75d0747b1a36a58681a1076a236de21d86130528d10bec1204502a8c2e"
+        },
+        "srcdoc-acb412de0faf0abc-p15-b16": {
+          "grade": 2,
+          "text_sha256": "7a6c01c4f21b113643e83373200e740a514e7d329bd779ad0ca277c28ef69500"
+        },
+        "srcdoc-acb412de0faf0abc-p15-b17": {
+          "grade": 2,
+          "text_sha256": "859175e0ab267cb138f03884f0e60a0a2b0ab784c9e13a385e546f8987195641"
+        },
+        "srcdoc-acb412de0faf0abc-p15-b18": {
+          "grade": 2,
+          "text_sha256": "819dd466d5b779f82fa725cb11ec743ee983897429f69ed6f972478801cf63b8"
+        },
+        "srcdoc-acb412de0faf0abc-p15-b20": {
+          "grade": 2,
+          "text_sha256": "1e07e7e484483c2b8b3cb2d978f18bd00427452a8238ddec5bf22fc8f96c3b86"
+        },
+        "srcdoc-acb412de0faf0abc-p15-b21": {
+          "grade": 2,
+          "text_sha256": "2bb4d733778f2fd5e1c820d6dac3db8fdb12f50b09906039bc92fd4d8c99febf"
+        },
+        "srcdoc-acb412de0faf0abc-p15-b22": {
+          "grade": 2,
+          "text_sha256": "102031318da942f3d60d1fd7960ed3c53d4beef48e7d23f419a2963ac72dfffd"
+        },
+        "srcdoc-acb412de0faf0abc-p15-b23": {
+          "grade": 2,
+          "text_sha256": "5518ca67bcf7ad2e27979c932834e2fe7dadb244a187f2428fe2cf4c7583a503"
+        }
+      },
+      "rationale": "满足序公理6至8会产生矛盾。"
+    },
+    {
+      "id": "paraphrase-09",
+      "category": "paraphrase",
+      "query": "非零复数开整数次方后，所有根在图上怎样分布？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p18-b8": {
+          "grade": 2,
+          "text_sha256": "c4d780b72f9a08595d5eb316c113e75b581e145bdec01ffcd5fa179717a9a935"
+        },
+        "srcdoc-acb412de0faf0abc-p18-b9": {
+          "grade": 2,
+          "text_sha256": "a6c3d37084332e599a40342470ef7484d0a1e49e6b39ed3fd4797be5ae57e7c7"
+        },
+        "srcdoc-acb412de0faf0abc-p18-b18": {
+          "grade": 2,
+          "text_sha256": "46ac9e08083832d4efb26b33591e286b902c79b0f733dd13f27365b10a16edaf"
+        },
+        "srcdoc-acb412de0faf0abc-p18-b19": {
+          "grade": 2,
+          "text_sha256": "8ce7fb31be68e72816ad1eb1daffd75055c46969adf9c2507d832919830d8ed0"
+        }
+      },
+      "rationale": "n次方根的数量及圆周等距分布。"
+    },
+    {
+      "id": "paraphrase-10",
+      "category": "paraphrase",
+      "query": "教材怎样把实数当成复数里的一部分？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p13-b23": {
+          "grade": 2,
+          "text_sha256": "8b5290b5a7f0224d2af2a965b5836a2e0e8d2a1707030aa7df7acd15c06df58e"
+        },
+        "srcdoc-acb412de0faf0abc-p13-b24": {
+          "grade": 2,
+          "text_sha256": "14e1f7048cd4e59619d0873c9d4f97f2d147c924d2c1ed90060b8dc679049242"
+        },
+        "srcdoc-acb412de0faf0abc-p13-b25": {
+          "grade": 2,
+          "text_sha256": "28217004fde69387310e4bcab4ebf8f2d24aff14be867ac5ad36ab4c7113787c"
+        },
+        "srcdoc-acb412de0faf0abc-p13-b26": {
+          "grade": 2,
+          "text_sha256": "30fa19d8bd74f5fa5f002d68d0ec2db3fd6df51c369b50f18211ec952439fe45"
+        },
+        "srcdoc-acb412de0faf0abc-p13-b27": {
+          "grade": 2,
+          "text_sha256": "1d53640488df2acf443d2d8e719718346ed7691be8fd64fb82c7adb7629d6f75"
+        },
+        "srcdoc-acb412de0faf0abc-p13-b28": {
+          "grade": 2,
+          "text_sha256": "10354f08b7ccf0a91c8365379800b4b68df99abc5abb88c41d917561e8766a1a"
+        },
+        "srcdoc-acb412de0faf0abc-p13-b29": {
+          "grade": 2,
+          "text_sha256": "894750fc7778d4e4d7d50f24b2146dd168e6ee7efd6a6a7e487064c1d04d56f4"
+        },
+        "srcdoc-acb412de0faf0abc-p13-b30": {
+          "grade": 2,
+          "text_sha256": "e4e5e6df044176f09d7ea95ed873ae75301d2964886059cd09c1ac90a791fee9"
+        },
+        "srcdoc-acb412de0faf0abc-p13-b31": {
+          "grade": 2,
+          "text_sha256": "36c67ccf3a35907a235049768a9da05d28538f1c25929910353a8b797fe006c3"
+        }
+      },
+      "rationale": "虚部为零的复数与实数的对应及运算。"
+    },
+    {
+      "id": "conditions-01",
+      "category": "conditions",
+      "query": "完全公理要求实数集合满足哪些条件才能保证上确界存在？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p7-b25": {
+          "grade": 2,
+          "text_sha256": "43b8d121aa62a0e7aa38ce8aee62654992cbaa6d2cc2b09352bf73d6dd9b5b7a"
+        },
+        "srcdoc-acb412de0faf0abc-p7-b26": {
+          "grade": 2,
+          "text_sha256": "f85456aa22b47138f6db2615b8c1e7849699189288130f1a63b38beaad186587"
+        },
+        "srcdoc-acb412de0faf0abc-p7-b27": {
+          "grade": 1,
+          "text_sha256": "2cf9f245d02a9fa12e5d252ab69912fe56c3852304a001ce36b6f86edaf25bcf"
+        }
+      },
+      "rationale": "上有界且非空，不能省去任一前提。"
+    },
+    {
+      "id": "conditions-02",
+      "category": "conditions",
+      "query": "S=[0,1) 的上确界和最大元分别是什么？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p7-b11": {
+          "grade": 2,
+          "text_sha256": "710117e9428d72bdfc1c411f1773072c9fc3f26a82b7d38bc01d97c5b9a0a99a"
+        },
+        "srcdoc-acb412de0faf0abc-p7-b16": {
+          "grade": 2,
+          "text_sha256": "fe4f6a925065aa643c7687690c677c0f2159aea7035dcb40b57a3a7cba3f9122"
+        },
+        "srcdoc-acb412de0faf0abc-p7-b17": {
+          "grade": 2,
+          "text_sha256": "ad196deec5fab000b62cfd16057a6f9da8ab15b637527fbb7b2c5c712f647752"
+        }
+      },
+      "rationale": "半开区间上确界为1但无最大元。"
+    },
+    {
+      "id": "conditions-03",
+      "category": "conditions",
+      "query": "正整数 n 满足什么条件时，平方根 sqrt(n) 是无理数？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p5-b30": {
+          "grade": 2,
+          "text_sha256": "4c2e2a88624d07a257d55b089b276ad840e67d594bb241d705f83acfbed31d5a"
+        },
+        "srcdoc-acb412de0faf0abc-p6-b0": {
+          "grade": 2,
+          "text_sha256": "3f233fd71ecbe390645a12d6a6b404e239ba71fb0ce0bf3f82ab30dfec7a00fc"
+        },
+        "srcdoc-acb412de0faf0abc-p6-b9": {
+          "grade": 2,
+          "text_sha256": "2f2bbeca59a313361bfa94010b7d25d123143882f7bf0b61d2c23b0f0ff87937"
+        },
+        "srcdoc-acb412de0faf0abc-p6-b10": {
+          "grade": 2,
+          "text_sha256": "a37f74b612c8f2c96e4cb61be6b64b2a31c869cd1d911e8b811d7b5e68848136"
+        },
+        "srcdoc-acb412de0faf0abc-p6-b11": {
+          "grade": 2,
+          "text_sha256": "f6baaed142150711db0086a3745d00d0dbe53abcd1954cbb043019421929e9f3"
+        },
+        "srcdoc-acb412de0faf0abc-p6-b12": {
+          "grade": 2,
+          "text_sha256": "1a5410f3129379434f7031b35793d9f607c5a848fa29b1e8d5d8182cba528779"
+        }
+      },
+      "rationale": "正整数非完全平方数及分情况证明。"
+    },
+    {
+      "id": "conditions-04",
+      "category": "conditions",
+      "query": "若 a|bc 且 gcd(a,b)=1，可以推出什么整除关系？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p5-b0": {
+          "grade": 2,
+          "text_sha256": "207a05e52b71063d1b194f477fad16a02a9ad21ad1d78fc321223907866b4a62"
+        },
+        "srcdoc-acb412de0faf0abc-p5-b1": {
+          "grade": 2,
+          "text_sha256": "69ca61181ce30d473ce862f6dbfa60f9224f4404b801503b2aad91b1ad92d70e"
+        }
+      },
+      "rationale": "欧几里得引理结论a整除c。"
+    },
+    {
+      "id": "conditions-05",
+      "category": "conditions",
+      "query": "若 x>0 而 y 是任意实数，能否找到正整数 n 使 nx>y？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p8-b30": {
+          "grade": 2,
+          "text_sha256": "5110ccee7e89a8bfd845403d7e0ccf24cb7998c7e925f5f40f012084bcb47f9b"
+        },
+        "srcdoc-acb412de0faf0abc-p8-b24": {
+          "grade": 1,
+          "text_sha256": "b90cb924974d7d3447fad856e1594b4e24cc0ef40283586dbabc107a5d4823cb"
+        }
+      },
+      "rationale": "定理1.19明确给出前提和结论。"
+    },
+    {
+      "id": "conditions-06",
+      "category": "conditions",
+      "query": "若 a>=0，|x|<=a 与怎样的双边不等式等价？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p10-b25": {
+          "grade": 2,
+          "text_sha256": "fef745e78723c6bee8f19a030068bc5001a64cce78d7fb7d330529cad01b0476"
+        },
+        "srcdoc-acb412de0faf0abc-p10-b26": {
+          "grade": 2,
+          "text_sha256": "5c4c11985becc7c8878790d7422cbb1c344e957efcf0de806e412f2d0284cc2d"
+        },
+        "srcdoc-acb412de0faf0abc-p10-b27": {
+          "grade": 2,
+          "text_sha256": "849e5738bda31991d308dcaaeb8bf69e1aecf59fe8d9d59e51492a47ca44f56f"
+        },
+        "srcdoc-acb412de0faf0abc-p10-b28": {
+          "grade": 2,
+          "text_sha256": "8a66cad20002dfcb7244f0cb35fddf18a350c2fdf655752167994d8cabdf3263"
+        }
+      },
+      "rationale": "定理1.21：-a<=x<=a。"
+    },
+    {
+      "id": "conditions-07",
+      "category": "conditions",
+      "query": "非零复数的 Arg(z) 主值区间为何，哪一个端点包含在内？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p17-b11": {
+          "grade": 2,
+          "text_sha256": "734c904c34bc5a220e62e017e31961a4d554fe88bdc3e8ac81a1517b7da575ac"
+        },
+        "srcdoc-acb412de0faf0abc-p17-b12": {
+          "grade": 2,
+          "text_sha256": "f9e0303b3edd4dbf930298df4c416627a047b9818e64752a8580df6d78c7911c"
+        }
+      },
+      "rationale": "主值区间(-π,π]。"
+    },
+    {
+      "id": "conditions-08",
+      "category": "conditions",
+      "query": "对 z!=0 及正整数 n，z 有多少个不同的 n 次方根？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p18-b8": {
+          "grade": 2,
+          "text_sha256": "c4d780b72f9a08595d5eb316c113e75b581e145bdec01ffcd5fa179717a9a935"
+        },
+        "srcdoc-acb412de0faf0abc-p18-b9": {
+          "grade": 2,
+          "text_sha256": "a6c3d37084332e599a40342470ef7484d0a1e49e6b39ed3fd4797be5ae57e7c7"
+        },
+        "srcdoc-acb412de0faf0abc-p18-b11": {
+          "grade": 2,
+          "text_sha256": "2d4424bee85299e7a18880b075919bdcf03307761f9654cffb4aaaf6bd50a48c"
+        }
+      },
+      "rationale": "定理1.51保证恰有n个不同方根。"
+    },
+    {
+      "id": "conditions-09",
+      "category": "conditions",
+      "query": "当且仅当 z 满足什么形式时，exp(z)=1？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p16-b49": {
+          "grade": 2,
+          "text_sha256": "72d2d3628a080bc21dc79268bdf69095affb9d69c3387e8638d1c86f752405a5"
+        },
+        "srcdoc-acb412de0faf0abc-p16-b50": {
+          "grade": 2,
+          "text_sha256": "3f79bb7b435b05321651daefd374cdc681dc06faa65e374e38337b88ca046dea"
+        },
+        "srcdoc-acb412de0faf0abc-p16-b51": {
+          "grade": 2,
+          "text_sha256": "0751999922689e15eaeddc19e2dc997d4f41ff192e3676d7d20c4f4840a15119"
+        },
+        "srcdoc-acb412de0faf0abc-p16-b60": {
+          "grade": 2,
+          "text_sha256": "2bc6931fefe5b75078f1477376f43ed61cd125ada86eca5685aa44105fbb4bc1"
+        },
+        "srcdoc-acb412de0faf0abc-p16-b61": {
+          "grade": 2,
+          "text_sha256": "4068b1dfe9302dff902d4d865acfe915463985a4fcd792f96f66c61444467c84"
+        }
+      },
+      "rationale": "z为2πi的整数倍。"
+    },
+    {
+      "id": "conditions-10",
+      "category": "conditions",
+      "query": "柯西施瓦茨不等式在某个 a_i 非零时，等号成立的条件是什么？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p11-b22": {
+          "grade": 2,
+          "text_sha256": "52bbc869ad82702310f5a202edcf9f7c06a080f6667c3ddb9253784e4c05bc80"
+        },
+        "srcdoc-acb412de0faf0abc-p11-b23": {
+          "grade": 2,
+          "text_sha256": "3010bf12b5807ec668b74101fde39ac15d959840fc8d4720c0449862f8816fba"
+        },
+        "srcdoc-acb412de0faf0abc-p11-b29": {
+          "grade": 2,
+          "text_sha256": "1f7457a0243bfb4f19450123bf9e2e3b733447a89c1d796f43f8ae1b3d3b2a18"
+        }
+      },
+      "rationale": "存在实数x使所有a_k x+b_k=0。"
+    },
+    {
+      "id": "comparison-01",
+      "category": "comparison",
+      "query": "上界、最大元与上确界三个概念有什么区别？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p7-b0": {
+          "grade": 2,
+          "text_sha256": "73969c1c17084caa3fba8ccc8f7c5447314197515817a61fc3c3ff5f35b53082"
+        },
+        "srcdoc-acb412de0faf0abc-p7-b1": {
+          "grade": 2,
+          "text_sha256": "4acc2686c4bd824a0e69d9d82b87b73a928a0ffdd1b1f0bc3b88d184149b5a70"
+        },
+        "srcdoc-acb412de0faf0abc-p7-b2": {
+          "grade": 2,
+          "text_sha256": "d3e85ff42fe0bb96892ba49f01088f60cd5e8e4f607bc30cd4b10b11e109a95f"
+        },
+        "srcdoc-acb412de0faf0abc-p7-b13": {
+          "grade": 2,
+          "text_sha256": "8acd58c6c1cafe10dafe6ebc2872abf6aabf267044a4b637708cb018fd7f0e07"
+        },
+        "srcdoc-acb412de0faf0abc-p7-b15": {
+          "grade": 2,
+          "text_sha256": "de3479d9b953743bbdca4e0279ebf328cb2d86cd1ca8ce357421e09061060906"
+        },
+        "srcdoc-acb412de0faf0abc-p7-b16": {
+          "grade": 2,
+          "text_sha256": "fe4f6a925065aa643c7687690c677c0f2159aea7035dcb40b57a3a7cba3f9122"
+        },
+        "srcdoc-acb412de0faf0abc-p7-b17": {
+          "grade": 2,
+          "text_sha256": "ad196deec5fab000b62cfd16057a6f9da8ab15b637527fbb7b2c5c712f647752"
+        },
+        "srcdoc-acb412de0faf0abc-p7-b22": {
+          "grade": 2,
+          "text_sha256": "b881a33ce8374f2ffc0ead14a18ef2f4f7ae70890c31a8d46197602ac263ffea"
+        }
+      },
+      "rationale": "需合并上界定义、最大元成员条件、最小上界性质和例子。"
+    },
+    {
+      "id": "comparison-02",
+      "category": "comparison",
+      "query": "开区间、闭区间和半开区间在端点是否属于集合这件事上有何区别？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p3-b9": {
+          "grade": 2,
+          "text_sha256": "a0938cadd2e0c84edc4bb882e91680e4d52036cd4f860c2da468fd66ca954dfd"
+        },
+        "srcdoc-acb412de0faf0abc-p3-b11": {
+          "grade": 2,
+          "text_sha256": "7bb2ae07fb1051573665ae1d9097756a12ab25b12a81f665bec496308f3af32a"
+        },
+        "srcdoc-acb412de0faf0abc-p3-b12": {
+          "grade": 2,
+          "text_sha256": "7199c95db0916e1bde81462a4d62dfae095c1c4c72ae9435a81c854d82745afe"
+        }
+      },
+      "rationale": "从区间定义和对应不等式比较端点。"
+    },
+    {
+      "id": "comparison-03",
+      "category": "comparison",
+      "query": "实数、整数与有理数这三个集合如何包含，运算性质有什么联系？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p4-b1": {
+          "grade": 2,
+          "text_sha256": "4a00eaefe7580b4d1f40a9bb3d7e07d50101b7c4ddbc4d57625163bab8423969"
+        },
+        "srcdoc-acb412de0faf0abc-p5-b18": {
+          "grade": 2,
+          "text_sha256": "383e85d99540def5703bcbdc3a1e2c27d4144e96ae3929b799f0de21a66bfd21"
+        },
+        "srcdoc-acb412de0faf0abc-p5-b19": {
+          "grade": 2,
+          "text_sha256": "8342db03cab8518b103d2aaaad028dc7849f76d0844755a32aefcb8c98c95680"
+        },
+        "srcdoc-acb412de0faf0abc-p1-b18": {
+          "grade": 1,
+          "text_sha256": "7dad512929a7886587a8efd1520ecbdf105fe2b29bb97d8b59e605b0b51a1193"
+        },
+        "srcdoc-acb412de0faf0abc-p1-b19": {
+          "grade": 1,
+          "text_sha256": "251c6eaebae495b152dd1fe43c7acd8c80157f18e6393b1e7945fd7ec111cff3"
+        }
+      },
+      "rationale": "整数构成实数子集，有理数包含整数且满足域公理和序公理。"
+    },
+    {
+      "id": "comparison-04",
+      "category": "comparison",
+      "query": "有理数满足前九条公理，为什么实数还需要完全公理？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p5-b19": {
+          "grade": 2,
+          "text_sha256": "8342db03cab8518b103d2aaaad028dc7849f76d0844755a32aefcb8c98c95680"
+        },
+        "srcdoc-acb412de0faf0abc-p6-b39": {
+          "grade": 2,
+          "text_sha256": "7a0c84ded066f4c3db5ca4927a1bd9c27a845267bfd2e865ee484e4f1617b80c"
+        },
+        "srcdoc-acb412de0faf0abc-p6-b41": {
+          "grade": 2,
+          "text_sha256": "e78f00f9bbcaa26fc993204630d002113254c13285aedf4ef6910427b17dfc1b"
+        },
+        "srcdoc-acb412de0faf0abc-p6-b42": {
+          "grade": 2,
+          "text_sha256": "e97d3912ba24f1483a168b7cc3e74ff378c00a4e4963863289ab53b910d50cee"
+        },
+        "srcdoc-acb412de0faf0abc-p6-b43": {
+          "grade": 2,
+          "text_sha256": "501cff02e1db259b9a7dce47a7b6a5ea6966be2d52f97e5fc6d4b61a846674f3"
+        },
+        "srcdoc-acb412de0faf0abc-p7-b25": {
+          "grade": 2,
+          "text_sha256": "43b8d121aa62a0e7aa38ce8aee62654992cbaa6d2cc2b09352bf73d6dd9b5b7a"
+        }
+      },
+      "rationale": "比较有理数的公理性质和实数连续性、平方根存在性。"
+    },
+    {
+      "id": "comparison-05",
+      "category": "comparison",
+      "query": "实数和复数的加法与乘法，在哪些代数规律上相同？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p1-b25": {
+          "grade": 2,
+          "text_sha256": "740c5a4ea4ea64eaec8a664df0d6d5a33c165cbba236b7345a09cf99c77689a8"
+        },
+        "srcdoc-acb412de0faf0abc-p1-b26": {
+          "grade": 2,
+          "text_sha256": "422a76361c1e1dad053e0bbc5bf41a43e1370ca391000055ac5879664a6ebb1a"
+        },
+        "srcdoc-acb412de0faf0abc-p1-b27": {
+          "grade": 2,
+          "text_sha256": "f2ccc68f23507c2a58569463f92bd3b87e56685edfbbd221d3a87e206195c125"
+        },
+        "srcdoc-acb412de0faf0abc-p13-b0": {
+          "grade": 2,
+          "text_sha256": "9c083c68a7a0c015602c1dfd0d0c55f9be452870bdf538a635d91ef58c8cd83b"
+        },
+        "srcdoc-acb412de0faf0abc-p13-b3": {
+          "grade": 2,
+          "text_sha256": "b06f15b609623cf7f7268136b0a37da46a92f39212217260a421bae2af9ef4e4"
+        }
+      },
+      "rationale": "共同满足交换律、结合律和分配律；运算定义不同。"
+    },
+    {
+      "id": "comparison-06",
+      "category": "comparison",
+      "query": "实数绝对值与复数模的定义及三角不等式如何对应？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p10-b20": {
+          "grade": 2,
+          "text_sha256": "6ac581aad827ede7e954f95997e1123159525458ee7a2bdc85588f88101949cf"
+        },
+        "srcdoc-acb412de0faf0abc-p10-b22": {
+          "grade": 2,
+          "text_sha256": "910d207d9d738a12471f2035efb50e31758372c86df67964aaf5011f64a908e0"
+        },
+        "srcdoc-acb412de0faf0abc-p10-b23": {
+          "grade": 2,
+          "text_sha256": "b2d0849ea3b0ad61b30a1bbb28674fe99c8fe447d581912311d177554493536f"
+        },
+        "srcdoc-acb412de0faf0abc-p10-b28": {
+          "grade": 2,
+          "text_sha256": "8a66cad20002dfcb7244f0cb35fddf18a350c2fdf655752167994d8cabdf3263"
+        },
+        "srcdoc-acb412de0faf0abc-p10-b29": {
+          "grade": 2,
+          "text_sha256": "98daf54172d9757280492af5435705622f7f79c30e6db03ceeb9079a8bd88d3a"
+        },
+        "srcdoc-acb412de0faf0abc-p15-b4": {
+          "grade": 2,
+          "text_sha256": "e2acc0f5762bcba6a2ff00097a1946623071a955d607db80b6233f145579abae"
+        },
+        "srcdoc-acb412de0faf0abc-p15-b5": {
+          "grade": 2,
+          "text_sha256": "93964a688cd002304b668332995f4fbe860c879468f12f9d977e002a3295a840"
+        },
+        "srcdoc-acb412de0faf0abc-p15-b6": {
+          "grade": 2,
+          "text_sha256": "55ea323b18d9781eb2136c2f30a5152c6228c77ea4315e98cbfbb12a9a70a978"
+        },
+        "srcdoc-acb412de0faf0abc-p15-b11": {
+          "grade": 2,
+          "text_sha256": "097503dbbd0af5c4df3df22ecab80d54b4e878a498bd7d45ce3843f130d311b8"
+        },
+        "srcdoc-acb412de0faf0abc-p15-b12": {
+          "grade": 2,
+          "text_sha256": "a106f1c97a75937d933835e75d726d07f4bf6e9270fd7233ea5dd16d5b09cf1f"
+        },
+        "srcdoc-acb412de0faf0abc-p15-b7": {
+          "grade": 1,
+          "text_sha256": "677129b39a4268b778bde31d18595fd686c261b6e5e7c5396575960940cfa011"
+        },
+        "srcdoc-acb412de0faf0abc-p15-b10": {
+          "grade": 1,
+          "text_sha256": "fa13a816b6fd259176cbcf1d8667996f9b63ab9e0789b470cf5ee046490faaab"
+        }
+      },
+      "rationale": "比较两种定义及实数/复数三角不等式。"
+    },
+    {
+      "id": "comparison-07",
+      "category": "comparison",
+      "query": "扩充实数系为何增加两个无穷，而扩充复平面只增加一个无穷远点？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p12-b0": {
+          "grade": 2,
+          "text_sha256": "00ebffd0a5123f33fd2d736b587523bcf0a879642373f6fdd18e623e48999f31"
+        },
+        "srcdoc-acb412de0faf0abc-p12-b1": {
+          "grade": 2,
+          "text_sha256": "b2272481abde4c8cb08dd5a483e6108a2fd15def9b62752162765946ffec1b27"
+        },
+        "srcdoc-acb412de0faf0abc-p12-b2": {
+          "grade": 2,
+          "text_sha256": "dafb0c464651fd93e23cc1f46c9c6798c56ce4ee3bd140dcbe2d2739b2f1fc06"
+        },
+        "srcdoc-acb412de0faf0abc-p20-b15": {
+          "grade": 2,
+          "text_sha256": "843d5f61bfb338a1be8f9b032be686bd7af83725b020b59ffd865678dcca15a7"
+        },
+        "srcdoc-acb412de0faf0abc-p20-b16": {
+          "grade": 2,
+          "text_sha256": "0a982e275dc896d63da8650ee29b7d530ba589876d83fb088be555ae74ad69dd"
+        },
+        "srcdoc-acb412de0faf0abc-p20-b22": {
+          "grade": 2,
+          "text_sha256": "752801e66574678f95c2898b0858ee7a7e6c66c5b6aedc0aad1b258a0e944280"
+        },
+        "srcdoc-acb412de0faf0abc-p20-b23": {
+          "grade": 2,
+          "text_sha256": "4e49a55b6626adbbd5541b57e60831e86dfaec0c0625413d18e2e41980da8449"
+        },
+        "srcdoc-acb412de0faf0abc-p20-b24": {
+          "grade": 2,
+          "text_sha256": "041e84326c11075562763ad0f36a3dad4f608dfed1fb508a216d1d50977dde34"
+        },
+        "srcdoc-acb412de0faf0abc-p20-b26": {
+          "grade": 2,
+          "text_sha256": "26c8e9da4136227894bb586f26d78b241a50fd5315d3b23d40e96e35e5a66fb8"
+        },
+        "srcdoc-acb412de0faf0abc-p20-b27": {
+          "grade": 2,
+          "text_sha256": "12fa0b4c94a2443274828212cbac2b0189f98f615298f391e9c090c6172153df"
+        }
+      },
+      "rationale": "实数有序关系与复数无兼容序关系的区别。"
+    },
+    {
+      "id": "comparison-08",
+      "category": "comparison",
+      "query": "复数的模与辐角，哪一个唯一确定，哪一个存在多个取值？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p15-b4": {
+          "grade": 2,
+          "text_sha256": "e2acc0f5762bcba6a2ff00097a1946623071a955d607db80b6233f145579abae"
+        },
+        "srcdoc-acb412de0faf0abc-p15-b6": {
+          "grade": 2,
+          "text_sha256": "55ea323b18d9781eb2136c2f30a5152c6228c77ea4315e98cbfbb12a9a70a978"
+        },
+        "srcdoc-acb412de0faf0abc-p17-b7": {
+          "grade": 2,
+          "text_sha256": "ba981ff125354c7c19f241c610427ea08d51ba790ce67d953173e23caa6dee7f"
+        },
+        "srcdoc-acb412de0faf0abc-p17-b8": {
+          "grade": 2,
+          "text_sha256": "89db7b4649e6563851f6c2bee1096acc191b280d1f7f47beb5b4fd1eb4145ae6"
+        },
+        "srcdoc-acb412de0faf0abc-p17-b9": {
+          "grade": 2,
+          "text_sha256": "ed36c0bd457ec5bb90028d382d51ffbdf8c61b2e6906d9085d545f9abd754a1a"
+        },
+        "srcdoc-acb412de0faf0abc-p17-b11": {
+          "grade": 2,
+          "text_sha256": "734c904c34bc5a220e62e017e31961a4d554fe88bdc3e8ac81a1517b7da575ac"
+        },
+        "srcdoc-acb412de0faf0abc-p17-b12": {
+          "grade": 2,
+          "text_sha256": "f9e0303b3edd4dbf930298df4c416627a047b9818e64752a8580df6d78c7911c"
+        }
+      },
+      "rationale": "模唯一，辐角相差2π整数倍，主值通过区间约束唯一。"
+    },
+    {
+      "id": "comparison-09",
+      "category": "comparison",
+      "query": "复数的所有对数与对数主值 Log(z) 有何关系？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p18-b51": {
+          "grade": 2,
+          "text_sha256": "08fb078a4e592cb1791b3432f5cba028689b9b34ab093bf1078ede7fde64e0f2"
+        },
+        "srcdoc-acb412de0faf0abc-p18-b54": {
+          "grade": 2,
+          "text_sha256": "8d1f0cde32b622a530b5d7939eee80db8948147ea9cad04aa741d03d7f5fc324"
+        },
+        "srcdoc-acb412de0faf0abc-p18-b55": {
+          "grade": 2,
+          "text_sha256": "981381d0b118b2575b3881edfb896754694bafeb760c07061b983e4c18ebd826"
+        },
+        "srcdoc-acb412de0faf0abc-p18-b56": {
+          "grade": 2,
+          "text_sha256": "54abe6ce0a167571347aa6d5e916e89ae1cb8bda5aa6ac6654f97fe19d245eff"
+        },
+        "srcdoc-acb412de0faf0abc-p18-b57": {
+          "grade": 2,
+          "text_sha256": "51b3bb6091b87d119dfda2939780298bfa33de1f0d70931b10ce3c10bde858c3"
+        },
+        "srcdoc-acb412de0faf0abc-p18-b67": {
+          "grade": 2,
+          "text_sha256": "579532b6d65e35bcd2faf2658799da55d901938d253960daec2581863ecd53c6"
+        },
+        "srcdoc-acb412de0faf0abc-p18-b68": {
+          "grade": 2,
+          "text_sha256": "a2c1b628a48b7940b8890a4e45b7cd0bc4821f356aaf94df3c0185079ddb6681"
+        },
+        "srcdoc-acb412de0faf0abc-p18-b69": {
+          "grade": 2,
+          "text_sha256": "8cbb6e85d408fc6f9c80818008aebeb2a5dae1c82865026c2291f5ae050d0b92"
+        },
+        "srcdoc-acb412de0faf0abc-p19-b0": {
+          "grade": 2,
+          "text_sha256": "643d7ba81f1e460aa9114265221732a68b723d2dacab3c5636513232a25f52f6"
+        },
+        "srcdoc-acb412de0faf0abc-p19-b1": {
+          "grade": 2,
+          "text_sha256": "767a6ef28b793f32a9db573168a4ae1079a49ebc9cee40c25d84e5bb04392384"
+        }
+      },
+      "rationale": "全部对数相差2nπi，主值由实对数模和辐角主值构成。"
+    },
+    {
+      "id": "comparison-10",
+      "category": "comparison",
+      "query": "有限小数与无限小数表示实数的方式有什么联系，表示是否唯一？",
+      "answerable": true,
+      "qrels": {
+        "srcdoc-acb412de0faf0abc-p9-b6": {
+          "grade": 2,
+          "text_sha256": "5485d4634a0436fe6c977a3ad000b97e086a13e01c58bc95c29fbb0af1010e93"
+        },
+        "srcdoc-acb412de0faf0abc-p9-b8": {
+          "grade": 2,
+          "text_sha256": "535520d491475a444a8e99116964c7a295639c2e1d4a0272cd82bad141f646e9"
+        },
+        "srcdoc-acb412de0faf0abc-p9-b10": {
+          "grade": 2,
+          "text_sha256": "6a11a448d7190ebdc1a23f64a9beb9347f47d2e07e551d2d19beee76cb806a19"
+        },
+        "srcdoc-acb412de0faf0abc-p9-b16": {
+          "grade": 2,
+          "text_sha256": "c08bd6bf2cf6873adfc63501fd59d99f71917f3024e15c5a63f90c121512f50d"
+        },
+        "srcdoc-acb412de0faf0abc-p10-b3": {
+          "grade": 2,
+          "text_sha256": "4d7cea6cf3a311189433a076236e6f2dd5294b24e52b817fcc0afe1ac1b1c449"
+        },
+        "srcdoc-acb412de0faf0abc-p10-b8": {
+          "grade": 2,
+          "text_sha256": "34f0eb68f7d8cf7c05f2d3869eec428babb549532324d77cf103c152494ff6e6"
+        },
+        "srcdoc-acb412de0faf0abc-p10-b9": {
+          "grade": 2,
+          "text_sha256": "7ffebedb359b457c714d3ae2fb2cf412935f34bc4585be43e120307f246a4d48"
+        },
+        "srcdoc-acb412de0faf0abc-p10-b10": {
+          "grade": 2,
+          "text_sha256": "bfb29151c679fd79a3f585dcd144a3eb886fc2aadde5621b4876b0989944e270"
+        },
+        "srcdoc-acb412de0faf0abc-p10-b15": {
+          "grade": 2,
+          "text_sha256": "8ab4b683e43758bef7390d452d46ba70a9ce4af3ddc93462255ad5f32717f4e8"
+        },
+        "srcdoc-acb412de0faf0abc-p10-b16": {
+          "grade": 2,
+          "text_sha256": "dc8679b51277b9e7de29869ce977387401afb4399e28d9f544e0c0f79b677673"
+        },
+        "srcdoc-acb412de0faf0abc-p10-b17": {
+          "grade": 2,
+          "text_sha256": "32040eee0d9c21305518354a10bfa36177cfaae85e2c144b07bf80bd7844e7cc"
+        }
+      },
+      "rationale": "有限逼近构造无限表示，部分实数存在尾零/尾九两种表示。"
+    },
+    {
+      "id": "unanswerable-01",
+      "category": "unanswerable",
+      "query": "请陈述并证明拉格朗日中值定理。",
+      "answerable": false,
+      "qrels": {},
+      "rationale": "本章实数系与复数系未给出该主题的解答；仅用于观察误召回，不校准拒答阈值。"
+    },
+    {
+      "id": "unanswerable-02",
+      "category": "unanswerable",
+      "query": "怎样利用牛顿莱布尼茨公式计算定积分？",
+      "answerable": false,
+      "qrels": {},
+      "rationale": "本章实数系与复数系未给出该主题的解答；仅用于观察误召回，不校准拒答阈值。"
+    },
+    {
+      "id": "unanswerable-03",
+      "category": "unanswerable",
+      "query": "教材如何证明一致连续函数一定可积？",
+      "answerable": false,
+      "qrels": {},
+      "rationale": "本章实数系与复数系未给出该主题的解答；仅用于观察误召回，不校准拒答阈值。"
+    },
+    {
+      "id": "unanswerable-04",
+      "category": "unanswerable",
+      "query": "傅里叶级数收敛的狄利克雷条件有哪些？",
+      "answerable": false,
+      "qrels": {},
+      "rationale": "本章实数系与复数系未给出该主题的解答；仅用于观察误召回，不校准拒答阈值。"
+    },
+    {
+      "id": "unanswerable-05",
+      "category": "unanswerable",
+      "query": "矩阵的特征值和特征向量如何求解？",
+      "answerable": false,
+      "qrels": {},
+      "rationale": "本章实数系与复数系未给出该主题的解答；仅用于观察误召回，不校准拒答阈值。"
+    },
+    {
+      "id": "unanswerable-06",
+      "category": "unanswerable",
+      "query": "请给出贝叶斯定理及其统计应用。",
+      "answerable": false,
+      "qrels": {},
+      "rationale": "本章实数系与复数系未给出该主题的解答；仅用于观察误召回，不校准拒答阈值。"
+    },
+    {
+      "id": "unanswerable-07",
+      "category": "unanswerable",
+      "query": "Python 中如何实现快速排序并分析复杂度？",
+      "answerable": false,
+      "qrels": {},
+      "rationale": "本章实数系与复数系未给出该主题的解答；仅用于观察误召回，不校准拒答阈值。"
+    },
+    {
+      "id": "unanswerable-08",
+      "category": "unanswerable",
+      "query": "多元函数的隐函数定理需要哪些条件？",
+      "answerable": false,
+      "qrels": {},
+      "rationale": "本章实数系与复数系未给出该主题的解答；仅用于观察误召回，不校准拒答阈值。"
+    }
+  ]
+}

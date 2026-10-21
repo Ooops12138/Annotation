@@ -141,3 +141,22 @@ def test_context_pack_retrieves_from_objectives_without_task_sources() -> None:
 
     assert "src-section" in pack.source_refs
     assert "src-axiom-1" in pack.source_refs
+
+
+def test_context_pack_preserves_degraded_retrieval_metadata():
+    from annotation.retrieval.tool import HybridTextbookSearchTool
+    from annotation.retrieval.llamaindex_chroma import UnavailableVectorTextbookSearchTool
+    from annotation.retrieval import InMemoryTextbookSearchTool
+    blocks = [_block("src-a", 1, "上确界是所有上界中最小的上界。")]
+    unit = KnowledgeUnit(artifact_id="unit", run_id="run", version=1, status="accepted", created_by="test",
+                         title="上确界", kind="concept")
+    blueprint = LearningBlueprint(artifact_id="bp", run_id="run", version=1, status="accepted", created_by="test",
+                                  title="教材", knowledge_units=[unit])
+    task = ContentTask(task_id="task", run_id="run", blueprint_version="bp:v1", knowledge_unit_id="unit")
+    tool = HybridTextbookSearchTool(InMemoryTextbookSearchTool(blocks), UnavailableVectorTextbookSearchTool("ImportError"))
+    pack = build_context_pack(task, unit, blueprint, blocks, search_tool=tool)
+    assert pack.source_refs == ["src-a"]
+    assert pack.retrieval_calls[0].metadata["degraded"] is True
+    assert pack.retrieval_calls[0].metadata["branch_1_initialization_error"] == "ImportError"
+    restored = type(pack).model_validate_json(pack.model_dump_json())
+    assert restored.retrieval_calls[0].metadata["degraded"] is True

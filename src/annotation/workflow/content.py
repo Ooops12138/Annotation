@@ -175,6 +175,8 @@ def build_context_pack(
             query=query,
             limit=8,
             status=str(getattr(result.status, "value", result.status)),
+            metadata=dict(result.metadata),
+            error_code=result.error_code.value if result.error_code else None,
             returned_excerpts=returned,
         ))
     if not candidates:

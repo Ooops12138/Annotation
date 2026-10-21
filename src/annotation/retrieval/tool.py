@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Iterable
+from itertools import zip_longest
 
 from annotation.domain.artifacts import SourceBlock
 from annotation.fact_checking.contracts import (
@@ -15,8 +16,7 @@ from annotation.fact_checking.contracts import (
     TextbookSearchTool,
     UnifiedRetrievalTool,
     WebResourceSearchSkill,
-    SearchResult,
-    SearchStatus,
+    SearchErrorCode,
 )
 
 
@@ -110,33 +110,54 @@ class HybridTextbookSearchTool:
     """Combines keyword and vector evidence without reranking."""
 
     name = "hybrid-textbook-search"
-    version = "v1"
+    version = "v2"
 
     def __init__(self, keyword_tool: TextbookSearchTool, vector_tool: TextbookSearchTool | None = None) -> None:
         self.keyword_tool = keyword_tool
         self.vector_tool = vector_tool
 
     def search(self, query: str, *, limit: int = 5) -> SearchResult:
-        results = [self.keyword_tool.search(query, limit=limit)]
-        if self.vector_tool is not None:
-            results.append(self.vector_tool.search(query, limit=limit))
+        normalized = " ".join(query.split()) if isinstance(query, str) else ""
+        if not normalized or type(limit) is not int or limit < 1:
+            return SearchResult(skill_name=self.name, skill_version=self.version, query=normalized,
+                                status=SearchStatus.INVALID_REQUEST,
+                                error_code=SearchErrorCode.EMPTY_QUERY if not normalized else SearchErrorCode.INVALID_LIMIT)
+        limit = min(limit, 100)
+        results = []
+        for tool in [self.keyword_tool, self.vector_tool]:
+            if tool is None:
+                continue
+            try:
+                results.append(tool.search(normalized, limit=limit))
+            except Exception:
+                results.append(SearchResult(skill_name=tool.name, skill_version=tool.version,
+                                            query=normalized, status=SearchStatus.ERROR, available=False,
+                                            error_code=SearchErrorCode.PROVIDER_ERROR))
+        valid = [r for r in results if r.status in {SearchStatus.OK, SearchStatus.NO_RESULTS}]
         evidence = []
         seen: set[str] = set()
-        for result in results:
-            for item in result.evidence:
+        for pair in zip_longest(*(r.evidence for r in valid)):
+            for item in pair:
+                if item is None:
+                    continue
                 key = item.source_ref or item.evidence_id
                 if key not in seen:
                     seen.add(key)
                     evidence.append(item)
-                if len(evidence) >= limit * 2:
-                    break
         return SearchResult(
             skill_name=self.name,
             skill_version=self.version,
-            query=query,
-            status=SearchStatus.OK if evidence else SearchStatus.NO_RESULTS,
-            evidence=tuple(evidence[: max(1, min(limit, 100))]),
-            metadata={"keyword": True, "vector": self.vector_tool is not None, "reranker": False},
+            query=normalized,
+            status=(SearchStatus.OK if evidence else SearchStatus.NO_RESULTS) if valid else SearchStatus.ERROR,
+            available=bool(valid),
+            error_code=None if valid else SearchErrorCode.PROVIDER_ERROR,
+            error_message=None if valid else "all textbook retrieval branches failed",
+            evidence=tuple(evidence[:limit]),
+            metadata={"keyword": True, "vector": self.vector_tool is not None, "reranker": False,
+                      "fusion": "alternating-keyword-first", "degraded": len(valid) != len(results),
+                      **{f"branch_{i}_status": r.status.value for i, r in enumerate(results)},
+                      **{f"branch_{i}_error": r.error_code.value for i, r in enumerate(results) if r.error_code},
+                      **{f"branch_{i}_{key}": value for i, r in enumerate(results) for key, value in r.metadata.items()}},
         )
 
 

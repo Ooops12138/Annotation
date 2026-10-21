@@ -9,4 +9,5 @@ import os
 
 os.environ["MODEL_PROVIDER"] = "mock"
 os.environ["MODEL_NAME"] = "fixture-model"
+os.environ["RAG_ENABLED"] = "false"
 os.environ.pop("MODEL_BASE_URL", None)

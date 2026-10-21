@@ -354,10 +354,15 @@ def build_minimal_graph(
         index_source_blocks(retrieval_connection, state.get("source_blocks", []))
         textbook_tool = SQLiteFts5TextbookDatabaseSearchSkill(retrieval_connection)
         if rag_enabled():
-            vector_tool = LlamaIndexChromaTextbookSearchTool(
-                state.get("source_blocks", []),
-                persist_directory=os.getenv("RAG_CHROMA_PATH", "storage/chroma"),
-            )
+            try:
+                vector_tool = LlamaIndexChromaTextbookSearchTool(
+                    state.get("source_blocks", []),
+                    persist_directory=os.getenv("RAG_CHROMA_PATH", "storage/chroma"),
+                )
+            except Exception as exc:
+                from annotation.retrieval.llamaindex_chroma import UnavailableVectorTextbookSearchTool
+                vector_tool = UnavailableVectorTextbookSearchTool(type(exc).__name__)
+                warnings.append(f"vector_index_initialization_failed:{type(exc).__name__}")
             textbook_tool = HybridTextbookSearchTool(textbook_tool, vector_tool)
         retrieval_service = UnifiedRetrievalService(
             textbook_tool,

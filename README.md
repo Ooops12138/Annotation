@@ -17,7 +17,7 @@ Annotation 是一个教材驱动的 AI 学习文档生成项目。
 - 后端：Python 3.12、FastAPI、Pydantic v2
 - Agent 编排：LangGraph
 - 教材解析：PyMuPDF + Annotation Hybrid 局部 OCR/公式候选
-- 检索：SQLite FTS5 + 页/块级 `source_ref`
+- 检索：SQLite FTS5 + 可选 LlamaIndex/Chroma 向量召回，保留页/块级 `source_ref`
 - 内容契约：JSON Document IR
 - 公式：KaTeX
 - 测试：pytest + Vitest
@@ -40,6 +40,41 @@ npm run dev
 ```
 
 打开 `http://127.0.0.1:5173`。后端 API 为 `http://127.0.0.1:8000`，交互文档为 `/docs`。
+
+### 向量检索与效果评估
+
+```powershell
+uv sync --extra dev --extra rag --extra rag-local-embeddings --link-mode copy
+```
+
+在本地 `.env` 中设置 `RAG_ENABLED=true`。`RAG_EMBEDDING_PROVIDER=auto` 优先使用独立的
+`RAG_EMBEDDING_API_KEY`：默认端点为硅基流动 `https://api.siliconflow.cn/v1`，模型为
+`BAAI/bge-m3`。2026-10-21 官方价格页将该模型列为免费，实际可用性与限流以服务账号为准。
+没有 embedding 密钥或初始化连接失败时，明确选择本地 `BAAI/bge-small-zh-v1.5`（CPU），首次需下载。
+`local` 和 `api` 可强制选择；不会借用内容生成的模型密钥，也不会在查询中途切换模型。
+本地模型路径、API 模型和请求参数见 [.env.example](.env.example)。Chroma 在 `storage/chroma` 持久化，
+同一教材和编码配置复用已有向量；切换编码配置会使用独立索引。
+
+用冻结的 25 页、1,206 个原始教材块及 48 道问题对比现有 FTS5、纯向量和交替去重混合检索：
+
+```powershell
+.venv/Scripts/python.exe scripts/evaluate_retrieval.py --embedding-provider local --output-dir results/retrieval/local
+# 已缓存本地模型后可追加 --offline。
+.venv/Scripts/python.exe scripts/evaluate_retrieval.py --embedding-provider api --api-model BAAI/bge-m3 --api-base-url https://api.siliconflow.cn/v1 --output-dir results/retrieval/siliconflow-api --persist-directory storage/chroma/retrieval-siliconflow-api --repeats 3
+```
+
+输出 `report.md`、`summary.json`、`queries.jsonl` 和独立进程的 `reuse-probe.json`。
+支持 `--corpus`、`--questions`、`--methods`、`--persist-directory`、`--repeats`；报告记录实际模型版本及复现命令。
+测量首次建索引时，为 `--persist-directory` 指定新的空目录；已有目录用于测量复用。
+数据及标签在 [tests/fixtures/retrieval/math_ch1](tests/fixtures/retrieval/math_ch1/README.md)，
+标签未经独立人工复核，适合作为开发基线。无答案误召回单独报告；首版未设置相似度拒答阈值。
+事实核查仍维持现有 FTS5，学习者页面不增加检索控件。
+
+2026-10-21 已完成真实 CPU 与硅基流动 API 评估、独立进程索引复用及 API 自动选择验证。
+本机对比见 [检索结果对比](results/retrieval/comparison.md)，API 逐题报告见
+[BGE-M3 评估](results/retrieval/siliconflow-api/report.md)。当前章节上 API 纯向量 Recall@5 为
+30.79%，本地为 33.76%；API 没有在这份开发基线上整体胜出，无答案误召回仍存在。
+这些运行产物保留在本机，不随源码提交。
 
 ### 文档库与本地持久化
 

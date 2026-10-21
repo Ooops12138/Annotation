@@ -254,6 +254,8 @@ class RetrievalCall(BaseModel):
     query: str
     limit: int = Field(ge=1)
     status: str
+    metadata: dict[str, str | int | float | bool] = Field(default_factory=dict)
+    error_code: str | None = None
     returned_excerpts: list[ContextExcerpt] = Field(default_factory=list)
     selected_source_refs: list[str] = Field(default_factory=list)
 
