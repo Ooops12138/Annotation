@@ -2,21 +2,12 @@ import { defineStore } from 'pinia'
 import {
   getDocument,
   getLibrary,
-  runWorkflow,
   startRun,
   uploadBook,
   type LibraryBook,
   type LibraryDocumentSummary,
   type WorkflowRunResult,
 } from '../lib/api'
-
-type UnknownRecord = Record<string, any>
-
-function documentIdFrom(value: unknown): string | null {
-  return value && typeof value === 'object' && typeof (value as UnknownRecord).document_id === 'string'
-    ? (value as UnknownRecord).document_id
-    : null
-}
 
 function messageFrom(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback
@@ -31,7 +22,6 @@ export const useAppStore = defineStore('app', {
     selectedBookId: null as string | null,
     selectedDocumentId: null as string | null,
     document: null as any,
-    blueprint: null as any,
     reviewReport: null as any,
     run: null as WorkflowRunResult | null,
     libraryLoading: false,
@@ -77,12 +67,6 @@ export const useAppStore = defineStore('app', {
       }
     },
 
-    // Kept as the page's lifecycle entry point for compatibility with the
-    // previous store API. It is deliberately read-only now.
-    async load() {
-      return this.loadLibrary()
-    },
-
     async selectBook(bookId: string) {
       this.selectedBookId = bookId
       this.selectedDocumentId = null
@@ -98,13 +82,11 @@ export const useAppStore = defineStore('app', {
       this.loading = true
       try {
         const result = await getDocument(documentId)
-        this.document = result
-        this.selectedDocumentId = documentIdFrom(result) || documentId
+        this.document = result.document
+        this.selectedDocumentId = documentId
         this.selectedBookId = this.selectedDocumentSummary?.book_id || this.selectedBookId
-        // Document endpoints may return an envelope with the audit report.
-        if (result && typeof result === 'object' && (result as UnknownRecord).review_report) {
-          this.reviewReport = (result as UnknownRecord).review_report
-        }
+        this.reviewReport = result.review_report
+        if (result.status === 'blocked') this.error = '学习文档暂不可用，请稍后重试。'
         return result
       } catch (error) {
         this.document = null
@@ -113,11 +95,6 @@ export const useAppStore = defineStore('app', {
       } finally {
         this.loading = false
       }
-    },
-
-    // Alias used by components that read more naturally as a user action.
-    async loadDocument(documentId: string) {
-      return this.selectDocument(documentId)
     },
 
     async addBook(file: File | Blob, filename?: string) {
@@ -160,16 +137,15 @@ export const useAppStore = defineStore('app', {
       try {
         const result = await startRun(bookId)
         this.run = result
-        this.blueprint = result.blueprint ?? null
         this.reviewReport = result.review_report ?? null
-        let generatedDocument = result.document
-        // A synchronous run normally includes its document. If an API returns
-        // only an id, fetch the saved IR without starting another run.
-        const generatedDocumentId = documentIdFrom(generatedDocument) || result.document_id || null
-        if (!generatedDocument && generatedDocumentId) generatedDocument = await getDocument(generatedDocumentId)
-        if (generatedDocument) {
-          this.document = generatedDocument
-          this.selectedDocumentId = documentIdFrom(generatedDocument) || generatedDocumentId
+        if (result.status === 'blocked') {
+          this.document = null
+          this.selectedDocumentId = null
+          this.error = '本次生成被阻塞，请稍后重试。'
+        } else {
+          if (!result.document) throw new Error('运行响应缺少学习文档')
+          this.document = result.document
+          this.selectedDocumentId = result.document.document_id
         }
         try {
           await this.loadLibrary()
@@ -182,31 +158,6 @@ export const useAppStore = defineStore('app', {
         throw error
       } finally {
         this.generating = false
-      }
-    },
-
-    // A descriptive alias for callers that prefer an explicit command name.
-    async generateDocument(this: any, bookId: string | null = this.selectedBookId) {
-      return this.generate(bookId)
-    },
-
-    // Legacy compatibility for integrations that still call the old endpoint.
-    // The document-library page does not invoke this action.
-    async runLegacyWorkflow() {
-      this.loading = true
-      this.error = ''
-      try {
-        const result = await runWorkflow()
-        this.document = result.document
-        this.blueprint = result.blueprint
-        this.reviewReport = result.review_report
-        this.run = result
-        return result
-      } catch (error) {
-        this.error = messageFrom(error, '学习文档加载失败')
-        throw error
-      } finally {
-        this.loading = false
       }
     },
   },

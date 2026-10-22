@@ -383,10 +383,6 @@ class PersistenceRepository:
             )
             return _row_dict(connection.execute("SELECT * FROM books WHERE book_id = ?", (identifier,)).fetchone())
 
-    # Common aliases make the boundary convenient for API and import code.
-    upsert_book = register_book
-    get_or_create_book = register_book
-
     def get_book(self, book_id: str) -> dict[str, Any] | None:
         return self._read_one("SELECT * FROM books WHERE book_id = ?", (book_id,))
 
@@ -524,8 +520,6 @@ class PersistenceRepository:
             return self._read_all("SELECT * FROM artifacts WHERE run_id = ? ORDER BY kind, version", (run_id,))
         return self._read_all("SELECT * FROM artifacts WHERE run_id = ? AND kind = ? ORDER BY version", (run_id, kind))
 
-    save_artifact = register_artifact
-
     # Documents and versions -----------------------------------------------
     def create_document(
         self,
@@ -651,9 +645,6 @@ class PersistenceRepository:
                 document["current_version"] = self.get_current_document_version(document["document_id"])
             book["documents"] = documents
         return books
-
-    get_library = list_library
-    library = list_library
 
     def migrate_source_index(self, source_database: str | Path = LEGACY_SOURCE_INDEX_PATH) -> int:
         """Copy legacy ``source_blocks`` rows and rebuild FTS in this database.

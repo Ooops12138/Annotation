@@ -1,24 +1,17 @@
-"""Shared workflow helpers and backward-compatible graph entry points."""
+"""Shared blueprint conversion, document assembly and review helpers."""
 
 from __future__ import annotations
 
 import hashlib
 import json
-import re
 import uuid
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from annotation.config import STORAGE_DIR, first_book_pdf
 from annotation.domain.artifacts import (
-    BlueprintCheckResult,
     CalloutNode,
     ContentArtifact,
-    ContentCritiqueDraft,
-    ContentHardCheckResult,
-    ContentTask,
-    ContentUnitLoopTrace,
-    ContextPack,
     DocumentSection,
     InteractiveComponentArtifact,
     InteractiveComponentNode,
@@ -31,40 +24,13 @@ from annotation.domain.artifacts import (
     ReviewIssue,
     ReviewReport,
     SourceBlock,
-    SourceDocument,
 )
-from annotation.fixtures.demo import demo_document
-from annotation.ingestion.pdf_parser import extraction_warnings, parse_pdf
 from annotation.providers import ModelProvider, ProviderError
 from annotation.workflow.content import select_source_refs
-from annotation.workflow.models import (
-    BlueprintDraft,
-    BlueprintDraftUnit,
-    CalloutDraft,
-    ContentDraft,
-    ContentReflectionState,
-    DocumentDraft,
-    WorkflowState,
-)
+from annotation.workflow.models import BlueprintDraft, CalloutDraft, WorkflowState
 
-from annotation.workflow.content_support import (
-    _blocked_content_artifact,
-    _content_artifact_from_draft,
-    _content_hard_check,
-    _content_issue,
-    _content_loop_summary,
-    _critic_review_issues,
-    _dedupe_review_issues,
-    _formula_format_issues,
-    _lossless_refs,
-    _merge_messages,
-    _mock_content_critique,
-    _mock_content_draft,
-    _normalize_refs,
-    _plan_content_tasks,
-    _unescaped_token_count,
-    _unit_context,
-)
+from annotation.workflow.content_support import _formula_format_issues, _lossless_refs, _normalize_refs
+
 
 def _default_pdf() -> Path:
     return first_book_pdf()
@@ -83,79 +49,6 @@ def _source_context(blocks: list[SourceBlock], limit: int | None = None) -> str:
         f"[{block.source_ref}] {block.text}"
         for block in selected
     )
-
-
-def _fallback_blueprint(run_id: str, source_document: SourceDocument, blocks: list[SourceBlock]) -> LearningBlueprint:
-    refs = [block.source_ref for block in blocks[:8]]
-    units = []
-    for index, (title, kind) in enumerate(
-        [("章节核心概念", "concept"), ("定义与基本性质", "formula"), ("典型例题与方法", "example")], start=1
-    ):
-        units.append(KnowledgeUnit(
-            artifact_id=f"ku-fallback-{index}", run_id=run_id, version=1, status="draft",
-            source_refs=refs[index - 1:index + 1] or refs, created_by="fallback", title=title,
-            kind=kind, learning_objectives=[f"理解{title}并能结合教材来源进行复述"],
-        ))
-    return LearningBlueprint(
-        artifact_id=f"bp-{uuid.uuid4().hex[:12]}", run_id=run_id, version=1, status="accepted",
-        source_refs=refs, created_by="fallback", title=source_document.title or "教材章节", knowledge_units=units,
-    )
-
-
-def fixture_blueprint(run_id: str = "run-demo-001") -> LearningBlueprint:
-    """Backward-compatible fixture helper used by early contract tests."""
-    document = SourceDocument(
-        artifact_id="srcdoc-fixture",
-        run_id=run_id,
-        version=1,
-        status="fixture",
-        source_refs=["src-fixture-p1-b1", "src-fixture-p1-b2"],
-        created_by="fixture",
-        title="Fixture 教材",
-        locator="fixture://demo",
-    )
-    blocks = [
-        SourceBlock(
-            artifact_id="src-fixture-p1-b1-artifact",
-            source_ref="src-fixture-p1-b1",
-            document_id=document.artifact_id,
-            run_id=run_id,
-            version=1,
-            status="fixture",
-            source_refs=["src-fixture-p1-b1"],
-            created_by="fixture",
-            page_number=1,
-            block_index=1,
-            text="Fixture 教材片段",
-            text_hash="fixture",
-            parser_version="fixture",
-            bbox=(0, 0, 1, 1),
-        )
-    ]
-    return _fallback_blueprint(run_id, document, blocks)
-
-
-def _mock_document_from_fixture(
-    run_id: str,
-    blueprint: LearningBlueprint,
-    source_refs: list[str],
-) -> LearningDocument:
-    """Adapt the rich checked-in fixture to the current PDF/run provenance."""
-    fixture = demo_document().model_copy(deep=True)
-    refs = source_refs[:5]
-    fixture.artifact_id = f"doc-{uuid.uuid4().hex[:12]}"
-    fixture.document_id = f"doc-{run_id}"
-    fixture.run_id = run_id
-    fixture.version = 1
-    fixture.status = "draft"
-    fixture.blueprint_version = f"{blueprint.artifact_id}:v{blueprint.version}"
-    fixture.created_by = "provider:mock"
-    fixture.source_refs = refs
-    for section in fixture.sections:
-        for node in section.children:
-            if hasattr(node, "source_refs"):
-                node.source_refs = refs[: min(2, len(refs))]
-    return fixture
 
 
 def _metadata(response: Any) -> dict[str, Any]:
@@ -525,78 +418,3 @@ def _provider_metadata(provider: ModelProvider) -> dict[str, Any]:
         "base_url": getattr(provider, "base_url", None),
         "config_version": getattr(provider, "config_version", "unknown"),
     }
-
-
-
-def build_content_reflection_subgraph(
-    provider: ModelProvider,
-    *,
-    max_attempts: int,
-):
-    """Build the bounded per-unit explanation reflection subgraph."""
-
-    from annotation.workflow.content_reflection import build_content_reflection_subgraph as build
-
-    return build(provider, max_attempts=max_attempts)
-
-
-def build_minimal_graph(
-    provider: ModelProvider | None = None,
-    *,
-    blueprint_max_attempts: int | None = None,
-    content_reflection_max_attempts: int | None = None,
-    fact_check_max_corrections: int | None = None,
-    fact_check_max_claims_per_unit: int | None = None,
-    fact_check_web_enabled: bool | None = None,
-    interactive_component_max_attempts: int | None = None,
-    interactive_component_sandbox_runner: Any | None = None,
-):
-    """Build the top-level workflow graph while retaining the legacy import path."""
-
-    from annotation.workflow.runtime import build_minimal_graph as build
-
-    return build(
-        provider,
-        blueprint_max_attempts=blueprint_max_attempts,
-        content_reflection_max_attempts=content_reflection_max_attempts,
-        fact_check_max_corrections=fact_check_max_corrections,
-        fact_check_max_claims_per_unit=fact_check_max_claims_per_unit,
-        fact_check_web_enabled=fact_check_web_enabled,
-        interactive_component_max_attempts=interactive_component_max_attempts,
-        interactive_component_sandbox_runner=interactive_component_sandbox_runner,
-    )
-
-
-def run_minimal_workflow(
-    *,
-    provider: ModelProvider | None = None,
-    run_id: str = "run-demo-001",
-    blueprint: LearningBlueprint | None = None,
-    pdf_path: str | Path | None = None,
-    document_id: str | None = None,
-    blueprint_max_attempts: int | None = None,
-    content_reflection_max_attempts: int | None = None,
-    fact_check_max_corrections: int | None = None,
-    fact_check_max_claims_per_unit: int | None = None,
-    fact_check_web_enabled: bool | None = None,
-    interactive_component_max_attempts: int | None = None,
-    interactive_component_sandbox_runner: Any | None = None,
-) -> WorkflowState:
-    """Run the top-level workflow while retaining the legacy import path."""
-
-    from annotation.workflow.runtime import run_minimal_workflow as run
-
-    return run(
-        provider=provider,
-        run_id=run_id,
-        blueprint=blueprint,
-        pdf_path=pdf_path,
-        document_id=document_id,
-        blueprint_max_attempts=blueprint_max_attempts,
-        content_reflection_max_attempts=content_reflection_max_attempts,
-        fact_check_max_corrections=fact_check_max_corrections,
-        fact_check_max_claims_per_unit=fact_check_max_claims_per_unit,
-        fact_check_web_enabled=fact_check_web_enabled,
-        interactive_component_max_attempts=interactive_component_max_attempts,
-        interactive_component_sandbox_runner=interactive_component_sandbox_runner,
-    )

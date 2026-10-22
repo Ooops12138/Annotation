@@ -3,7 +3,6 @@ import { createPinia, setActivePinia } from 'pinia'
 import {
   getDocument,
   getLibrary,
-  runWorkflow,
   startRun,
   uploadBook,
 } from '../lib/api'
@@ -12,7 +11,6 @@ import { useAppStore } from './app'
 vi.mock('../lib/api', () => ({
   getDocument: vi.fn(),
   getLibrary: vi.fn(),
-  runWorkflow: vi.fn(),
   startRun: vi.fn(),
   uploadBook: vi.fn(),
 }))
@@ -47,11 +45,10 @@ describe('document library store', () => {
     vi.mocked(getLibrary).mockResolvedValue(library)
     const store = useAppStore()
 
-    await store.load()
+    await store.loadLibrary()
 
     expect(getLibrary).toHaveBeenCalledTimes(1)
     expect(startRun).not.toHaveBeenCalled()
-    expect(runWorkflow).not.toHaveBeenCalled()
     expect(store.books[0].book_id).toBe('book-1')
     expect(store.selectedBookId).toBe('book-1')
     expect(store.selectedDocumentId).toBeNull()
@@ -60,7 +57,7 @@ describe('document library store', () => {
   it('does not load a document merely because a textbook is selected', async () => {
     vi.mocked(getLibrary).mockResolvedValue(library)
     const store = useAppStore()
-    await store.load()
+    await store.loadLibrary()
 
     await store.selectBook('book-1')
 
@@ -70,9 +67,9 @@ describe('document library store', () => {
 
   it('fetches a saved Document IR only after the user selects it', async () => {
     vi.mocked(getLibrary).mockResolvedValue(library)
-    vi.mocked(getDocument).mockResolvedValue(document)
+    vi.mocked(getDocument).mockResolvedValue({ status: 'ok', document, review_report: null })
     const store = useAppStore()
-    await store.load()
+    await store.loadLibrary()
 
     await store.selectDocument('doc-1')
 
@@ -105,4 +102,31 @@ describe('document library store', () => {
     expect(store.document).toEqual(document)
     expect(store.selectedDocumentId).toBe('doc-1')
   })
+  it('clears a previously open document when a new run is blocked', async () => {
+    vi.mocked(getLibrary).mockResolvedValue(library)
+    vi.mocked(startRun).mockResolvedValue({ status: 'blocked', document: null })
+    const store = useAppStore()
+    store.document = document
+    await store.generate('book-1')
+    expect(store.document).toBeNull()
+    expect(store.error).toContain('阻塞')
+    expect(getDocument).not.toHaveBeenCalled()
+  })
+
+  it('rejects a successful run with only an ID instead of guessing another fetch', async () => {
+    vi.mocked(startRun).mockResolvedValue({ status: 'ok', document_id: 'doc-1' })
+    const store = useAppStore()
+    await expect(store.generate('book-1')).rejects.toThrow('运行响应缺少学习文档')
+    expect(getDocument).not.toHaveBeenCalled()
+  })
+
+  it('does not show stale content when a saved document is blocked', async () => {
+    vi.mocked(getDocument).mockResolvedValue({ status: 'blocked', document: null, review_report: null })
+    const store = useAppStore()
+    store.document = document
+    await store.selectDocument('doc-1')
+    expect(store.document).toBeNull()
+    expect(store.error).toContain('暂不可用')
+  })
+
 })

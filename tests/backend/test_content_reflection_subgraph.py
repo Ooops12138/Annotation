@@ -11,7 +11,7 @@ from annotation.providers.models import (
     StructuredGenerationRequest,
     StructuredGenerationResponse,
 )
-from annotation.workflow.graph import build_content_reflection_subgraph
+from annotation.workflow.content_reflection import build_content_reflection_subgraph
 
 
 class ScriptedContentProvider:

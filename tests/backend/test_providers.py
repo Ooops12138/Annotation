@@ -2,7 +2,7 @@ import json
 
 from pydantic import BaseModel
 
-from annotation.workflow.graph import BlueprintDraft, DocumentDraft
+from annotation.workflow.models import BlueprintDraft, ContentDraft
 
 from annotation.providers import (
     GenerationRequest,
@@ -43,10 +43,10 @@ def test_mock_builtin_fixtures_are_selected_per_schema() -> None:
         StructuredGenerationRequest(prompt="{}", schema=BlueprintDraft)
     )
     document = provider.generate_structured(
-        StructuredGenerationRequest(prompt="{}", schema=DocumentDraft)
+        StructuredGenerationRequest(prompt="{}", schema=ContentDraft)
     )
     assert isinstance(blueprint.value, BlueprintDraft)
-    assert isinstance(document.value, DocumentDraft)
+    assert isinstance(document.value, ContentDraft)
 
 
 def test_capabilities_have_explicit_false_defaults() -> None:

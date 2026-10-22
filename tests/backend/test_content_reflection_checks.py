@@ -7,7 +7,7 @@ from annotation.domain.artifacts import (
     ContextPack,
     KnowledgeUnit,
 )
-from annotation.workflow.graph import _content_hard_check
+from annotation.workflow.content_support import _content_hard_check
 from annotation.workflow.content_support import _content_artifact_from_draft
 from annotation.workflow.models import CalloutDraft, ContentDraft
 

@@ -9,7 +9,7 @@ from annotation.workflow import run_minimal_workflow
 
 
 def _install_source_fixture(monkeypatch) -> None:
-    import annotation.workflow.graph as graph_module
+    import annotation.workflow.runtime as graph_module
 
     def parse_fixture(_path, *, run_id: str):
         document = SourceDocument(

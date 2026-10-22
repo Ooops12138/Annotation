@@ -45,6 +45,7 @@ from annotation.prompt_loader import load_prompt
 from annotation.providers import ModelProvider, MockProvider, ProviderError, StructuredGenerationRequest
 from annotation.workflow.blueprint_checks import validate_blueprint
 from annotation.workflow.content import build_context_pack, write_content_run_artifact
+from annotation.ingestion.pdf_parser import extraction_warnings, parse_pdf
 from annotation.ingestion.semantic_chunker import build_semantic_blocks
 from annotation.ingestion.structure import build_textbook_structure
 from annotation.domain.textbook import HierarchicalBlueprintTrace
@@ -99,14 +100,10 @@ def build_minimal_graph(
     component_max_attempts = configured_interactive_component_max_attempts(interactive_component_max_attempts)
 
     def ingest(state: WorkflowState) -> dict[str, Any]:
-        # Keep the legacy module-level seam so fixture tests and callers can
-        # replace the parser without depending on this internal module.
-        import annotation.workflow.graph as graph_module
-
         run_id = state.get("run_id", f"run-{uuid.uuid4().hex[:10]}")
         pdf_path = Path(state.get("pdf_path") or _default_pdf())
-        source_document, blocks = graph_module.parse_pdf(pdf_path, run_id=run_id)
-        warnings = graph_module.extraction_warnings(blocks)
+        source_document, blocks = parse_pdf(pdf_path, run_id=run_id)
+        warnings = extraction_warnings(blocks)
         return {"run_id": run_id, "pdf_path": str(pdf_path), "source_document": source_document, "source_blocks": blocks, "source_refs": [block.source_ref for block in blocks], "warnings": warnings}
 
     def prepare_blueprint(state: WorkflowState) -> dict[str, Any]:

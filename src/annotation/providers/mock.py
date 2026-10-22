@@ -39,7 +39,7 @@ class MockProvider:
         # A caller-provided payload is used for every request (handy for
         # contract tests).  Built-in fixtures, however, must be selected per
         # requested schema; otherwise the Blueprint fixture is accidentally
-        # reused for DocumentDraft and the workflow falls back.
+        # reused for ContentDraft.
         self.structured_payload = dict(structured_payload or {})
         self.capabilities = ProviderCapabilities(
             supports_structured_output=True,
@@ -78,17 +78,6 @@ class MockProvider:
                         {"knowledge_unit_id": "ku-absolute-inequality", "title": "绝对值与不等式", "kind": "formula", "learning_objectives": ["解释绝对值的几何意义", "推导三角不等式或柯西-施瓦茨不等式"], "prerequisites": ["ku-real-structure"], "source_refs": [], "related_unit_ids": ["ku-complex"]},
                         {"knowledge_unit_id": "ku-complex", "title": "复数系及其运算", "kind": "example", "learning_objectives": ["把复数写成 x+iy", "计算复数的模和辐角", "用指数形式表达复数并识别主值"], "prerequisites": ["ku-real-structure", "ku-absolute-inequality"], "source_refs": [], "related_unit_ids": []},
                     ],
-                }
-            elif request.schema.__name__ == "DocumentDraft":
-                payload = {
-                    "title": "实数系与复数系 · 离线回归样例",
-                    "section_title": "实数结构、完全性与复数概览",
-                    "explanation": "本章以实数的域结构、序结构和完全性为主线，依次建立区间、整数、有理数、无理数、上界与上确界等概念，再把数系扩充到复数。离线样例用于验证：知识结构不是简单目录，公式、例题、测验和来源引用可以在同一条 artifact 链路中传递。",
-                    "quiz_question": "集合 S=[0,1) 的最大元与上确界分别是什么？",
-                    "quiz_options": ["最大元为 1，上确界为 1", "没有最大元，上确界为 1", "没有最大元，也没有上确界"],
-                    "quiz_answer": "没有最大元，上确界为 1",
-                    "quiz_explanation": "1 不属于 S，因此不是最大元；但 1 是 S 的最小上界。",
-                    "source_refs": [],
                 }
             elif request.schema.__name__ == "ContentDraft":
                 payload = {

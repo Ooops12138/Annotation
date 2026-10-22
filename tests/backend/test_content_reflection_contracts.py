@@ -189,3 +189,9 @@ def test_content_reflection_prompts_render_all_auditable_inputs() -> None:
     assert "{{HARD_CHECK_RESULT}}" not in revision
     assert "{{GENERATION_ERROR}}" not in revision
     assert "Never add `quiz`" in revision
+
+
+@pytest.mark.parametrize("refs", [None, "src-1", 123, [123], {"source_ref": "src-1"}])
+def test_content_draft_rejects_malformed_sources_without_type_repair(refs) -> None:
+    with pytest.raises(ValidationError):
+        ContentDraft.model_validate({"title": "测试", "content": "正文", "source_refs": refs})

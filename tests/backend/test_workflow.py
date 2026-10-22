@@ -1,6 +1,7 @@
 from annotation.providers import MockProvider
 from annotation.workflow import run_minimal_workflow
-from annotation.workflow.graph import _formula_format_issues, _review_report_for, _source_context
+from annotation.workflow.content_support import _formula_format_issues
+from annotation.workflow.graph import _review_report_for, _source_context
 from annotation.domain.artifacts import (
     CalloutNode,
     DocumentSection,

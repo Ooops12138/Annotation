@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, TypedDict
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from annotation.domain.artifacts import (
     BlueprintAttemptTrace,
@@ -51,33 +51,6 @@ class BlueprintDraft(BaseModel):
     skip_reason: str | None = None
 
 
-class DocumentDraft(BaseModel):
-    title: str
-    section_title: str
-    explanation: str
-    quiz_question: str
-    quiz_options: list[str] = Field(default_factory=list)
-    quiz_answer: str
-    quiz_explanation: str
-    source_refs: list[str] = Field(default_factory=list)
-
-    @field_validator("quiz_answer", mode="before")
-    @classmethod
-    def coerce_answer(cls, value: Any) -> str:
-        return str(value)
-
-    @field_validator("source_refs", mode="before")
-    @classmethod
-    def coerce_source_refs(cls, value: Any) -> list[str]:
-        if value is None:
-            return []
-        if isinstance(value, str):
-            return [value]
-        if isinstance(value, list):
-            return [str(item) for item in value]
-        return [str(value)]
-
-
 class CalloutDraft(BaseModel):
     """An optional, intentionally separate learner-facing callout."""
 
@@ -99,17 +72,6 @@ class ContentDraft(BaseModel):
     # including follow-along steps, stays in the Markdown body.
     callouts: list[CalloutDraft] = Field(default_factory=list)
     source_refs: list[str] = Field(default_factory=list)
-
-    @field_validator("source_refs", mode="before")
-    @classmethod
-    def coerce_source_refs(cls, value: Any) -> list[str]:
-        if value is None:
-            return []
-        if isinstance(value, str):
-            return [value]
-        if isinstance(value, list):
-            return [str(item) for item in value]
-        return [str(value)]
 
 
 class RetrievalDecision(BaseModel):

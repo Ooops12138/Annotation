@@ -1,3 +1,5 @@
+import type { LearningDocument, ReviewReport } from './document'
+
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim()
 const baseUrl = (configuredBaseUrl || 'http://127.0.0.1:8000').replace(/\/$/, '')
 
@@ -9,7 +11,6 @@ export interface LibraryDocumentSummary {
   version?: number | null
   document_status?: string | null
   review_status?: string | null
-  status?: string | null
   run_id?: string | null
   created_at?: string | null
   updated_at?: string | null
@@ -39,10 +40,9 @@ export interface WorkflowRunResult {
   status?: string
   run_id?: string
   book_id?: string
-  document?: any
+  document?: LearningDocument | null
   document_id?: string | null
-  review_report?: any
-  blueprint?: any
+  review_report?: ReviewReport | null
   run?: Record<string, unknown>
   errors?: string[]
   warnings?: string[]
@@ -86,67 +86,42 @@ function isRecord(value: unknown): value is Record<string, any> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
-function documentSummary(value: unknown, bookId?: string): LibraryDocumentSummary | null {
-  if (!isRecord(value) || typeof value.document_id !== 'string') return null
-  const title = typeof value.title === 'string' && value.title.trim()
-    ? value.title
-    : '未命名学习文档'
-  const currentVersion = isRecord(value.current_version) ? value.current_version : null
+function documentSummary(value: unknown, bookId: string): LibraryDocumentSummary {
+  if (!isRecord(value) || typeof value.document_id !== 'string' || !value.document_id.trim()
+    || typeof value.title !== 'string' || !value.title.trim()) {
+    throw new Error('文档库中的文档记录无效')
+  }
+  const currentVersion = value.current_version
+  if (currentVersion !== null && !isRecord(currentVersion)) throw new Error('文档版本记录无效')
   return {
-    ...value,
     document_id: value.document_id,
-    title,
-    book_id: value.book_id ?? bookId,
-    version: value.version ?? currentVersion?.version ?? null,
-    document_status: value.document_status ?? currentVersion?.document_status ?? null,
-    review_status: value.review_status ?? currentVersion?.review_status ?? null,
-    run_id: value.run_id ?? currentVersion?.run_id ?? null,
+    title: value.title,
+    book_id: bookId,
+    current_version_id: value.current_version_id,
+    version: currentVersion?.version ?? null,
+    document_status: currentVersion?.document_status ?? null,
+    review_status: currentVersion?.review_status ?? null,
+    run_id: currentVersion?.run_id ?? null,
+    created_at: value.created_at,
+    updated_at: value.updated_at,
   }
 }
 
 function normalizeLibraryPayload(payload: unknown): LibraryResponse {
-  // The repository returns books with nested documents. Accept the flattened
-  // shape as well so the API boundary remains stable during migration.
-  const source = isRecord(payload) ? payload.library ?? payload.data ?? payload : payload
-  const rawBooks = Array.isArray(source) ? source : isRecord(source) && Array.isArray(source.books) ? source.books : []
-  const books: LibraryBook[] = rawBooks.flatMap((value) => {
-    if (!isRecord(value) || typeof value.book_id !== 'string') return []
-    const nested = Array.isArray(value.documents)
-      ? value.documents.flatMap((document) => documentSummary(document, value.book_id) || [])
-      : []
-    return [{ ...value, book_id: value.book_id, documents: nested }]
+  if (!isRecord(payload) || !Array.isArray(payload.books)) throw new Error('文档库响应格式无效')
+  const books: LibraryBook[] = payload.books.map((value: unknown) => {
+    if (!isRecord(value) || typeof value.book_id !== 'string' || !Array.isArray(value.documents)) {
+      throw new Error('文档库中的教材记录无效')
+    }
+    return { ...value, book_id: value.book_id, documents: value.documents.map((document: unknown) => documentSummary(document, value.book_id)) }
   })
-  const flatDocuments = isRecord(source) && Array.isArray(source.documents)
-    ? source.documents.flatMap((document) => documentSummary(document) || [])
-    : []
-  // Some API versions expose documents only at the top level. Attach those
-  // summaries back to their textbook so the sidebar remains usable regardless
-  // of whether the server returns nested or flattened records.
-  const documentsByBook = new Map<string, LibraryDocumentSummary[]>()
-  for (const document of flatDocuments) {
-    if (!document.book_id) continue
-    const current = documentsByBook.get(document.book_id) || []
-    current.push(document)
-    documentsByBook.set(document.book_id, current)
-  }
-  for (const book of books) {
-    const nested = book.documents || []
-    const merged = [...nested, ...(documentsByBook.get(book.book_id) || [])]
-    book.documents = merged.filter((document, index, all) => all.findIndex((item) => item.document_id === document.document_id) === index)
-  }
-  const documents = [...books.flatMap((book) => book.documents || []), ...flatDocuments]
-  const uniqueDocuments = documents.filter((document, index, all) => all.findIndex((item) => item.document_id === document.document_id) === index)
-  return { books, documents: uniqueDocuments }
+  return { books, documents: books.flatMap((book) => book.documents || []) }
 }
 
-export async function getHealth(): Promise<{ status: string; service: string; version: string }> {
-  const response = await fetchApi('/health')
-  return readJson(response, '健康检查失败')
-}
-
-export async function getDemoDocument(): Promise<any> {
-  const response = await fetchApi('/api/demo-document')
-  return readJson(response, '文档加载失败')
+export interface DocumentResponse {
+  status: 'ok' | 'blocked'
+  document: LearningDocument | null
+  review_report: ReviewReport | null
 }
 
 /** Read the saved textbook/document index without starting a model run. */
@@ -156,17 +131,13 @@ export async function getLibrary(): Promise<LibraryResponse> {
 }
 
 /** Read one already-generated Document IR. This endpoint never invokes a model. */
-export async function getDocument(documentId: string): Promise<any> {
-  const encodedId = encodeURIComponent(documentId)
-  const response = await fetchApi(`/api/documents/${encodedId}`)
-  const payload = await readJson<any>(response, '文档加载失败')
-  const envelope = payload?.document ? payload : payload?.data?.document ? payload.data : null
-  if (envelope?.document) {
-    // Keep the audit report available to the store while preserving the
-    // renderer's Document IR shape (unknown fields are ignored by its adapter).
-    return envelope.review_report
-      ? { ...envelope.document, review_report: envelope.review_report }
-      : envelope.document
+export async function getDocument(documentId: string): Promise<DocumentResponse> {
+  const response = await fetchApi(`/api/documents/${encodeURIComponent(documentId)}`)
+  const payload = await readJson<DocumentResponse>(response, '文档加载失败')
+  if (!isRecord(payload) || !['ok', 'blocked'].includes(payload.status)
+    || !('document' in payload) || !('review_report' in payload)
+    || (payload.status === 'ok' && !isRecord(payload.document))) {
+    throw new Error('文档响应格式无效')
   }
   return payload
 }
@@ -178,7 +149,7 @@ export async function uploadBook(file: File | Blob, filename?: string): Promise<
   form.append('file', file, filename || browserFile?.name || '教材.pdf')
   const response = await fetchApi('/api/books', { method: 'POST', body: form })
   const payload = await readJson<any>(response, '教材上传失败')
-  const book = payload?.book ?? payload?.data?.book ?? payload
+  const book = payload?.book
   if (!isRecord(book) || typeof book.book_id !== 'string') throw new Error('教材上传成功，但返回的教材记录无效')
   return book as LibraryBook
 }
@@ -191,17 +162,10 @@ export async function startRun(bookId: string): Promise<WorkflowRunResult> {
     body: JSON.stringify({ book_id: bookId }),
   })
   const payload = await readJson<any>(response, '学习文档生成失败')
-  const result = (payload?.run && isRecord(payload.run)) ? { ...payload.run, ...payload } : payload
+  if (!isRecord(payload) || typeof payload.status !== 'string') throw new Error('运行响应格式无效')
+  const result = payload
   if (result?.status === 'error' || result?.status === 'failed') {
     throw new Error(Array.isArray(result.errors) ? result.errors.join('；') : result.error || '学习文档生成失败')
   }
   return result as WorkflowRunResult
-}
-
-/** Legacy compatibility endpoint; the library UI never calls this function. */
-export async function runWorkflow(): Promise<WorkflowRunResult> {
-  const response = await fetchApi('/api/workflow/run', { method: 'POST' })
-  const payload = await readJson<WorkflowRunResult>(response, '工作流运行失败')
-  if (payload.status === 'error') throw new Error(payload.errors?.join('；') ?? '工作流运行失败')
-  return payload
 }

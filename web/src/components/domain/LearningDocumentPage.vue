@@ -21,12 +21,7 @@ const selectedSummary = computed(() => app.selectedDocumentSummary)
 
 function summaryReviewStatus(summary: LibraryDocumentSummary | null): string | null {
   if (!summary) return null
-  const currentVersion = summary.current_version
-  if (currentVersion && typeof currentVersion === 'object') {
-    const status = (currentVersion as Record<string, unknown>).review_status
-    if (typeof status === 'string' && status) return status
-  }
-  return summary.review_status || summary.status || summary.document_status || null
+  return summary.review_status || null
 }
 
 const reviewStatus = computed(() => {
@@ -57,7 +52,7 @@ function bookMeta(book: LibraryBook): string {
 }
 
 function documentTitle(summary: LibraryDocumentSummary): string {
-  return summary.title || '未命名学习文档'
+  return summary.title
 }
 
 function documentStatus(summary: LibraryDocumentSummary): string {
@@ -124,7 +119,7 @@ function handleUploadKeydown(event: KeyboardEvent) {
 
 onMounted(() => {
   // Library loading is read-only. No model-triggering request occurs here.
-  app.load().catch(() => undefined)
+  app.loadLibrary().catch(() => undefined)
 })
 
 watch(() => app.error, (error) => {
