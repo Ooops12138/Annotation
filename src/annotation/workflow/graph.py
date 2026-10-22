@@ -73,13 +73,14 @@ def _default_pdf() -> Path:
 def _source_context(blocks: list[SourceBlock], limit: int | None = None) -> str:
     """Render non-empty textbook blocks for the blueprint model input.
 
-    The blueprint stage receives the complete parsed chapter by default.  A
-    caller may still provide a limit for targeted fixtures or experiments.
+    The single-window path is budget checked before a model request. Long books
+    use source slices in blueprint_hierarchy instead. An explicit block limit is
+    retained for fixtures/experiments, never as an automatic truncation policy.
     """
     non_empty = [block for block in blocks if block.text.strip()]
     selected = non_empty if limit is None else non_empty[:limit]
     return "\n".join(
-        f"[{block.source_ref}] {re.sub(r'\\s+', ' ', block.text).strip()[:500]}"
+        f"[{block.source_ref}] {block.text}"
         for block in selected
     )
 
@@ -499,6 +500,7 @@ def _blueprint_from_draft(
             learning_objectives=list(unit.learning_objectives),
             prerequisites=list(unit.prerequisites),
             related_unit_ids=list(unit.related_unit_ids),
+            structure_node_ids=[state["textbook_structure"].nodes[0].node_id] if state.get("textbook_structure") else [],
         ))
     if not units:
         raise ProviderError("blueprint contains no knowledge units", category="schema")

@@ -41,7 +41,7 @@ def render_context_pack(pack: ContextPack) -> str:
         "证据片段（仅可使用这些来源支持教材事实）：",
     ]
     lines.extend(
-        f"[{excerpt.source_ref} p{excerpt.page_number}-b{excerpt.block_index}] {excerpt.text}"
+        f"[{excerpt.source_ref} p{excerpt.page_number}-b{excerpt.block_index}; chunk={excerpt.chunk_ref or excerpt.source_ref}; constituents={','.join(excerpt.source_refs or [excerpt.source_ref])}] {excerpt.text}"
         for excerpt in pack.excerpts
     )
     if pack.prerequisite_titles:
@@ -155,10 +155,11 @@ def build_context_pack(
                 continue
             if evidence.source_ref in by_ref:
                 block = by_ref[evidence.source_ref]
-                returned.append(ContextExcerpt(source_ref=block.source_ref, page_number=block.page_number, block_index=block.block_index, text=_compact(block.text)))
+                raw_refs = list(block.source_refs or [block.source_ref])
+                returned.append(ContextExcerpt(source_ref=raw_refs[0], page_number=block.page_number, block_index=block.block_index, text=_compact(block.text), source_refs=raw_refs, chunk_ref=block.source_ref if block.run_metadata.get("chunk_type") == "semantic" else None))
                 candidates.append(("tool_retrieval", block))
             else:
-                returned.append(ContextExcerpt(source_ref=evidence_ref, page_number=evidence.page_number or 1, block_index=evidence.block_index or 0, text=_compact(evidence.excerpt or evidence.text)))
+                returned.append(ContextExcerpt(source_ref=evidence_ref, page_number=evidence.page_number or 1, block_index=evidence.block_index or 0, text=_compact(evidence.excerpt or evidence.text), source_refs=[evidence_ref]))
                 candidates.append(("tool_retrieval", SourceBlock(
                     artifact_id=f"{evidence_ref}-artifact", source_ref=evidence_ref,
                     document_id=evidence.document_id or "external", run_id=task.run_id,
@@ -185,18 +186,24 @@ def build_context_pack(
         # The tool returns the primary evidence. Small adjacent blocks keep
         # definitions and their immediate qualifications together without
         # turning Blueprint source_refs into an allowlist.
-        primary_keys = {(block.page_number, block.block_index) for _, block in candidates}
+        primary_keys = {block.source_ref for _, block in candidates}
+        chunk_positions = {block.source_ref: (block.page_number, block.run_metadata.get("chunk_index")) for block in ordered_blocks}
         for _, block in list(candidates):
             for neighbor in ordered_blocks:
-                key = (neighbor.page_number, neighbor.block_index)
-                if neighbor.page_number == block.page_number and abs(neighbor.block_index - block.block_index) <= 1 and key not in primary_keys:
+                page, position = chunk_positions.get(block.source_ref, (None, None))
+                neighbor_page, neighbor_position = chunk_positions.get(neighbor.source_ref, (None, None))
+                adjacent = (position is not None and neighbor_position is not None
+                            and neighbor_page == page and abs(neighbor_position - position) <= 1)
+                # Preserve legacy raw-block neighbor behavior for callers not using semantic chunks.
+                if position is None:
+                    adjacent = neighbor.page_number == block.page_number and abs(neighbor.block_index - block.block_index) <= 1
+                if adjacent and neighbor.source_ref not in primary_keys:
                     candidates.append(("adjacent_block", neighbor))
-                    primary_keys.add(key)
+                    primary_keys.add(neighbor.source_ref)
         for block in _lexical_candidates(unit, ordered_blocks):
-            key = (block.page_number, block.block_index)
-            if key not in primary_keys:
+            if block.source_ref not in primary_keys:
                 candidates.append(("keyword_fallback", block))
-                primary_keys.add(key)
+                primary_keys.add(block.source_ref)
 
     excerpts: list[ContextExcerpt] = []
     selected_refs: list[str] = []
@@ -211,8 +218,11 @@ def build_context_pack(
             continue
         if used_chars + len(text) > char_budget and excerpts:
             continue
-        excerpts.append(ContextExcerpt(source_ref=block.source_ref, page_number=block.page_number, block_index=block.block_index, text=text))
-        selected_refs.append(block.source_ref)
+        raw_refs = list(block.source_refs or [block.source_ref])
+        excerpts.append(ContextExcerpt(source_ref=raw_refs[0], page_number=block.page_number, block_index=block.block_index,
+                                       text=text, source_refs=raw_refs,
+                                       chunk_ref=block.source_ref if block.run_metadata.get("chunk_type") == "semantic" else None))
+        selected_refs.extend(block.source_refs or [block.source_ref])
         used_chars += len(text)
         if strategy not in strategies:
             strategies.append(strategy)
@@ -226,7 +236,9 @@ def build_context_pack(
         candidate = by_id.get(prerequisite) or by_title.get(prerequisite)
         if candidate is not None and candidate.title not in prerequisites:
             prerequisites.append(candidate.title)
-    snapshot_material = "|".join(f"{excerpt.source_ref}:{by_ref[excerpt.source_ref].text_hash}" for excerpt in excerpts if excerpt.source_ref in by_ref)
+    hashes = {block.source_ref: block.text_hash for block in ordered_blocks}
+    snapshot_material = "|".join(f"{excerpt.chunk_ref or excerpt.source_ref}:{hashes.get(excerpt.chunk_ref or excerpt.source_ref, '')}:{','.join(excerpt.source_refs)}"
+                                  for excerpt in excerpts)
     source_snapshot = hashlib.sha256(snapshot_material.encode("utf-8")).hexdigest() if snapshot_material else None
     rendered_chars = sum(len(excerpt.text) for excerpt in excerpts)
     return ContextPack(
@@ -234,8 +246,8 @@ def build_context_pack(
         run_id=task.run_id,
         task_id=task.task_id,
         knowledge_unit_id=task.knowledge_unit_id,
-        source_refs=selected_refs,
-        selected_source_refs=selected_refs,
+        source_refs=list(dict.fromkeys(selected_refs)),
+        selected_source_refs=list(dict.fromkeys(selected_refs)),
         excerpts=excerpts,
         prerequisite_titles=prerequisites,
         estimated_input_tokens=math.ceil(rendered_chars / 4),
@@ -248,7 +260,8 @@ def build_context_pack(
                 "selected_source_refs": [
                     excerpt.source_ref
                     for excerpt in call.returned_excerpts
-                    if excerpt.source_ref in set(selected_refs)
+                    if any(excerpt.source_ref in candidate.source_refs or excerpt.source_ref == candidate.source_ref
+                           for _, candidate in candidates)
                 ]
             })
             for call in calls

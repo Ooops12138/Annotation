@@ -201,6 +201,9 @@ def _artifact_path(state: Mapping[str, Any], kind: str) -> str | None:
 
 
 def _blueprint_loop_summary(state: Mapping[str, Any]) -> dict[str, Any] | None:
+    if state.get("blueprint_hierarchy_trace") is not None:
+        from annotation.workflow.persistence import _blueprint_loop_summary as hierarchy_summary
+        return hierarchy_summary(state)
     trace = state.get("blueprint_loop_trace") or state.get("blueprint_trace")
     if trace is None:
         return None
@@ -563,6 +566,9 @@ def load_run_payload(repo: PersistenceRepository, run_id: str) -> dict[str, Any]
         if blueprint_row:
             try:
                 payload = _load_json(blueprint_row["path"])
+                if payload.get("hierarchy_trace") is not None:
+                    loop_summary = _blueprint_loop_summary({"blueprint_hierarchy_trace": payload["hierarchy_trace"],
+                        "blueprint_trace_path": blueprint_row["path"]})
                 trace = payload.get("loop_trace") or {}
                 loop_summary = {
                     "trace_id": trace.get("trace_id"),
@@ -571,7 +577,7 @@ def load_run_payload(repo: PersistenceRepository, run_id: str) -> dict[str, Any]
                     "final_status": trace.get("final_status"),
                     "stop_reason": trace.get("stop_reason"),
                     "trace_path": blueprint_row.get("path"),
-                } if trace else None
+                } if trace else loop_summary
             except (OSError, ValueError, TypeError):
                 loop_summary = None
     if not content_loop_summary:

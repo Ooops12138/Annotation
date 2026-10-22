@@ -118,7 +118,8 @@ def evaluate_tool(tool, questions: list[dict], blocks: list[SourceBlock], *, rep
                             or source.block_index != e.block_index):
                         raise ValueError("retrieved evidence failed source traceability validation")
                     seen.add(e.source_ref)
-                    hits.append({"position": rank, "source_ref": e.source_ref, "page_number": e.page_number,
+                    hits.append({"position": rank, "source_ref": e.source_ref,
+                                 "raw_source_refs": list(source.source_refs), "page_number": e.page_number,
                                  "block_index": e.block_index, "text_hash": e.text_hash, "text": e.text,
                                  "score": e.rank, "grade": q["qrels"].get(e.source_ref, {}).get("grade", 0)})
                 outcome = {"status": result.status.value, "error_code": result.error_code.value if result.error_code else None,
@@ -159,7 +160,7 @@ def evaluate_tool(tool, questions: list[dict], blocks: list[SourceBlock], *, rep
 
 def render_report(report: dict, records: list[dict]) -> str:
     lines = ["# 教材检索开发基线", "", f"状态：{report['status']}；标注未经独立人工复核，未标注块按不相关计。",
-             "仅比较当前教材原始块，不能推广为通用模型排名；指标不衡量最终生成内容质量。", "",
+             f"分块模式：{report.get('chunking', 'raw')}；仅比较当前教材，不能推广为通用模型排名；指标不衡量最终生成内容质量。", "",
              f"语料：{report['corpus']['blocks']} 块 / {report['corpus']['pages']} 页；SHA256：`{report['corpus']['sha256']}`。",
              f"编码器：`{json.dumps(report.get('encoder'), ensure_ascii=False, sort_keys=True)}`。", "",
              "Recall/Hit/MRR 的相关阈值为 grade>0；nDCG 增益为 2^grade−1，按问题宏平均。",

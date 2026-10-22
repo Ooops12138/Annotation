@@ -17,12 +17,28 @@ Annotation 是一个教材驱动的 AI 学习文档生成项目。
 - 后端：Python 3.12、FastAPI、Pydantic v2
 - Agent 编排：LangGraph
 - 教材解析：PyMuPDF + Annotation Hybrid 局部 OCR/公式候选
-- 检索：SQLite FTS5 + 可选 LlamaIndex/Chroma 向量召回，保留页/块级 `source_ref`
+- 检索：SQLite FTS5 + LlamaIndex/Chroma 向量召回，保留页/块级 `source_ref`
 - 内容契约：JSON Document IR
 - 公式：KaTeX
 - 测试：pytest + Vitest
 
 ## 本地运行
+
+### 长教材蓝图
+
+真实模型路径先建立教材结构树，再按来源范围和输入预算生成局部 Blueprint，逐层协调章节顺序、
+前置关系和显式合并；不增加独立知识清单。协调 Agent 可以搜索/读取知识单元及按偏移回读原文。
+所有未显式合并的单元由程序完整保留，失败不会静默当成跳过。课程架构师也按预算分批生成任务。
+
+`BLUEPRINT_INPUT_BUDGET_TOKENS` 默认 16000，使用 UTF-8 字节数保守估算输入并预留 schema/输出空间；
+`BLUEPRINT_MAX_ATTEMPTS` 控制每次局部生成/协调的重试，`BLUEPRINT_COORDINATION_MAX_STEPS` 限制工具回路，
+`BLUEPRINT_MAX_CALLS` 默认 1000，限制本次分层蓝图的实际模型请求数（provider 内部传输重试另计）。
+成功局部结果默认缓存于 `storage/cache/blueprint`，按内容、提示、模型/配置及预算隔离；
+`BLUEPRINT_CACHE_ENABLED=false` 可关闭复用。改变模型行为参数时应同时更新 `MODEL_CONFIG_VERSION`。
+
+结构树、分窗偏移、跳过理由、调用/工具审计及缓存命中保存在 `blueprint-artifact-v3`；API 的
+`blueprint_loop` 返回分层摘要。短教材单窗口沿用 A-001；预加载蓝图不调用模型，内置 Mock 仍使用明确标记的
+六单元离线 fixture。首次扫描仍读取全文，不承诺首次总 token 降低；结构覆盖也不代表语义零遗漏。
 
 后端：
 

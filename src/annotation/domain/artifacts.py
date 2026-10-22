@@ -69,6 +69,7 @@ class KnowledgeUnit(ArtifactBase):
     learning_objectives: list[str] = Field(default_factory=list)
     prerequisites: list[str] = Field(default_factory=list)
     related_unit_ids: list[str] = Field(default_factory=list)
+    structure_node_ids: list[str] = Field(default_factory=list)
 
 
 class LearningBlueprint(ArtifactBase):
@@ -242,6 +243,8 @@ class ContextExcerpt(BaseModel):
     page_number: int = Field(ge=1)
     block_index: int = Field(ge=0)
     text: str
+    source_refs: list[str] = Field(default_factory=list)
+    chunk_ref: str | None = None
 
 
 class RetrievalCall(BaseModel):

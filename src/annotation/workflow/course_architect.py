@@ -7,11 +7,11 @@ from typing import Any, Iterable
 
 from annotation.domain.artifacts import ContentTask, LearningBlueprint
 from annotation.prompt_loader import load_prompt
-from annotation.config import model_max_output_tokens
 from annotation.providers import ModelProvider, ProviderError, StructuredGenerationRequest
 from annotation.workflow.graph import _metadata, _provider_metadata
 from annotation.workflow.content_support import _plan_content_tasks
 from annotation.workflow.models import ContentTaskDraft, ContentTaskPlanDraft
+from annotation.workflow.budget import PromptBudget
 
 
 def _blueprint_context(blueprint: LearningBlueprint) -> str:
@@ -78,6 +78,7 @@ def _tasks_from_draft(
     for item in draft.tasks:
         if item.knowledge_unit_id in drafts_by_unit:
             warnings.append(f"course_architect_duplicate_task:{item.knowledge_unit_id}")
+            warnings.append(f"course_architect_revision_required:{item.knowledge_unit_id}:duplicate_task")
             continue
         drafts_by_unit[item.knowledge_unit_id] = item
 
@@ -135,11 +136,13 @@ def _mock_task_plan(blueprint: LearningBlueprint) -> ContentTaskPlanDraft:
     return ContentTaskPlanDraft(tasks=tasks)
 
 
-def plan_content_tasks_with_architect(
+def _plan_content_task_batch(
     provider: ModelProvider,
     *,
     run_id: str,
     blueprint: LearningBlueprint,
+    batch_index: int = 0,
+    global_offset: int = 0,
 ) -> dict[str, Any]:
     """Return ContentTask objects planned by the course architect agent."""
 
@@ -151,11 +154,14 @@ def plan_content_tasks_with_architect(
         "blueprint_artifact_id": blueprint.artifact_id,
         "blueprint_version": blueprint.version,
         "prompt": prompt,
+        "batch_index": batch_index,
+        "global_offset": global_offset,
     }
     warnings: list[str] = []
     raw_output = ""
     status = "succeeded"
     try:
+        budget = PromptBudget.for_provider(provider, output_limit=5000)
         if provider_name == "mock":
             draft = _mock_task_plan(blueprint)
             raw_output = draft.model_dump_json()
@@ -169,10 +175,11 @@ def plan_content_tasks_with_architect(
                 "fixture_adaptation": True,
             })
         else:
+            budget.check(prompt, ContentTaskPlanDraft)
             response = provider.generate_structured(StructuredGenerationRequest(
                 prompt=prompt,
                 schema=ContentTaskPlanDraft,
-                max_output_tokens=min(5000, model_max_output_tokens()),
+                max_output_tokens=budget.output_tokens,
                 metadata={key: value for key, value in metadata.items() if key != "prompt"},
             ))
             draft = ContentTaskPlanDraft.model_validate(response.value.model_dump(mode="python"))
@@ -218,3 +225,54 @@ def plan_content_tasks_with_architect(
         "content_task_planning_metadata": metadata,
         "warnings": warnings,
     }
+
+
+def plan_content_tasks_with_architect(
+    provider: ModelProvider, *, run_id: str, blueprint: LearningBlueprint,
+) -> dict[str, Any]:
+    """Plan bounded batches without losing global IDs, task order or diagnostics."""
+    budget = PromptBudget.for_provider(provider, output_limit=5000)
+    batches: list[list[Any]] = []
+    # This bounds response size, not pedagogical unit count. The model still
+    # chooses depth, quiz count, component policy and acceptance criteria.
+    batch_limit = max(1, min(8, budget.output_tokens // 500))
+    for unit in blueprint.knowledge_units:
+        if not batches:
+            batches.append([])
+        candidate = [*batches[-1], unit]
+        partial = blueprint.model_copy(update={"knowledge_units": candidate})
+        prompt = load_prompt("plan_content_tasks", BLUEPRINT=_blueprint_context(partial))
+        if batches[-1] and (len(candidate) > batch_limit or not budget.fits(prompt, ContentTaskPlanDraft)):
+            batches.append([unit])
+        else:
+            batches[-1] = candidate
+    if not batches:
+        return {"content_tasks": [], "content_task_planning_metadata": {"status": "needs_revision", "error": "empty blueprint"}, "warnings": []}
+    if len(batches) == 1:
+        return _plan_content_task_batch(provider, run_id=run_id, blueprint=blueprint)
+    tasks: list[ContentTask] = []
+    traces: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    group_offset = 0
+    status = "succeeded"
+    for index, units in enumerate(batches):
+        partial = blueprint.model_copy(update={"knowledge_units": units})
+        result = _plan_content_task_batch(provider, run_id=run_id, blueprint=partial,
+            batch_index=index, global_offset=len(tasks))
+        traces.append(result["content_task_planning_metadata"])
+        warnings.extend(result["warnings"])
+        if result["content_task_planning_metadata"]["status"] != "succeeded":
+            status = result["content_task_planning_metadata"]["status"]
+        batch_tasks = result["content_tasks"]
+        for task in batch_tasks:
+            task.task_id = f"task-{run_id}-{len(tasks) + 1:03d}"
+            task.execution_group += group_offset
+            tasks.append(task)
+        group_offset = max((task.execution_group for task in tasks), default=0)
+        if status != "succeeded":
+            # Preserve completed diagnostics; don't spend on later batches after
+            # planning has already blocked the content stage.
+            break
+    return {"content_tasks": tasks, "warnings": warnings,
+        "content_task_planning_metadata": {"agent": "plan_content_tasks", "status": status,
+            "batch_count": len(batches), "completed_batch_count": len(traces), "batches": traces}}

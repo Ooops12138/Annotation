@@ -102,6 +102,47 @@ def test_course_architect_generates_structured_content_tasks() -> None:
     assert "说明上确界与最大元的差别。" in tasks[0].acceptance_criteria
 
 
+def test_large_blueprint_task_planning_batches_without_losing_global_order(monkeypatch) -> None:
+    import json
+    from annotation.workflow.budget import PromptBudget
+    from annotation.workflow.models import ContentTaskPlanDraft
+
+    class BatchProvider(ArchitectProvider):
+        def generate_structured(self, request):
+            context = json.loads(request.prompt.split("## Learning Blueprint", 1)[1].split("```json", 1)[1].split("```", 1)[0])
+            self.payload = {"tasks": [{"knowledge_unit_id": u["knowledge_unit_id"], "quiz_count": 0,
+                "depth_guidance": "detailed", "execution_group": index + 1} for index, u in enumerate(context["knowledge_units"])]}
+            return super().generate_structured(request)
+
+    blueprint = _blueprint()
+    blueprint.knowledge_units = [_unit(f"unit-{i}", f"知识单元{i}", []) for i in range(23)]
+    provider = BatchProvider({})
+    result = plan_content_tasks_with_architect(provider, run_id="batch-run", blueprint=blueprint)
+    assert result["content_task_planning_metadata"]["status"] == "succeeded"
+    assert len(provider.calls) == 3
+    assert [t.knowledge_unit_id for t in result["content_tasks"]] == [u.artifact_id for u in blueprint.knowledge_units]
+    assert len({t.task_id for t in result["content_tasks"]}) == 23
+    assert [t.execution_group for t in result["content_tasks"]] == list(range(1, 24))
+    assert all(t.depth_guidance == "detailed" and t.quiz_count == 0 for t in result["content_tasks"])
+    budget = PromptBudget.for_provider(provider, output_limit=5000)
+    assert all(budget.fits(call.prompt, ContentTaskPlanDraft) for call in provider.calls)
+
+
+def test_oversized_single_architect_unit_blocks_without_a_model_call(monkeypatch) -> None:
+    blueprint = _blueprint()
+    blueprint.knowledge_units[0].learning_objectives = ["很长的目标" * 10000]
+    provider = ArchitectProvider({"tasks": []})
+    result = plan_content_tasks_with_architect(provider, run_id="oversized-plan", blueprint=blueprint)
+    assert provider.calls == []
+    assert result["content_task_planning_metadata"]["status"] != "succeeded"
+
+
+def test_duplicate_architect_tasks_require_revision() -> None:
+    provider = ArchitectProvider({"tasks": [{"knowledge_unit_id": unit_id, "depth_guidance": "standard"} for unit_id in ("ku-sup", "ku-sup", "ku-basic")]})
+    result = plan_content_tasks_with_architect(provider, run_id="duplicate-plan", blueprint=_blueprint())
+    assert result["content_task_planning_metadata"]["status"] == "needs_revision"
+
+
 def test_quiz_prompt_uses_architect_question_count() -> None:
     unit = _unit("ku-sup", "上确界", ["src-1"])
     task = ContentTask(

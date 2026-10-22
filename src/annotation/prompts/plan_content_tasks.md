@@ -24,6 +24,9 @@ Return only valid JSON matching this shape:
 
 Create exactly one task for each knowledge unit in the blueprint. Preserve the
 blueprint order. Use each knowledge unit's exact `knowledge_unit_id`.
+This may be a bounded slice of a larger Blueprint. Plan only the supplied units;
+prerequisite IDs outside this slice are valid earlier/later course references.
+Execution groups are local to this batch; the program offsets them globally.
 
 Decision rules:
 

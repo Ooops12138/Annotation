@@ -31,3 +31,25 @@ def test_parse_pdf_can_disable_optional_candidates_and_writes_json_markdown(tmp_
     payload = __import__("json").loads((tmp_path / "source.json").read_text(encoding="utf-8"))
     assert payload["document"]["artifact_id"] == document.artifact_id
     assert payload["blocks"][0]["raw_text"] == blocks[0].raw_text
+
+
+def test_parser_captures_bookmarks_and_empty_pages_for_structure(tmp_path: Path) -> None:
+    import pymupdf
+    from annotation.ingestion.structure import build_textbook_structure
+    pdf = tmp_path / "structured.pdf"
+    with pymupdf.open() as document:
+        first = document.new_page()
+        first.insert_text((72, 72), "Chapter 1 Numbers")
+        first.insert_text((72, 120), "1.1 Natural numbers")
+        document.new_page()  # extraction gap is visible, not silently omitted
+        third = document.new_page()
+        third.insert_text((72, 72), "Chapter 2 Limits")
+        document.set_toc([[1, "Chapter 1 Numbers", 1], [2, "1.1 Natural numbers", 1], [1, "Chapter 2 Limits", 3]])
+        document.save(pdf)
+    parsed, blocks = parse_pdf(pdf, run_id="bookmarks", ocr_backend="none", formula_backend="none", artifact_dir=tmp_path / "artifacts")
+    assert parsed.run_metadata["page_count"] == 3
+    assert parsed.run_metadata["empty_text_pages"] == [2]
+    tree = build_textbook_structure(parsed, blocks)
+    assert [node.title for node in tree.nodes[1:]] == ["Chapter 1 Numbers", "1.1 Natural numbers", "Chapter 2 Limits"]
+    assert all(node.origin == "bookmark" for node in tree.nodes[1:])
+    assert "page_without_extracted_text:2" in tree.warnings

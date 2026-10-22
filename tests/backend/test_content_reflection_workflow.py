@@ -215,12 +215,22 @@ def test_exhausted_content_loop_blocks_run_and_skips_quiz_and_document(monkeypat
 
 def test_context_pack_over_budget_creates_attempt_zero_without_model_calls(monkeypatch) -> None:
     _install_source_fixture(monkeypatch)
+    import annotation.workflow.runtime as runtime
+    original_context_pack = runtime.build_context_pack
+
+    def tiny_content_budget(*args, **kwargs):
+        kwargs["context_window"] = 1
+        return original_context_pack(*args, **kwargs)
+
+    # Keep the architect's request valid; only the content evidence budget is
+    # exhausted. An impossible provider context now blocks at planning earlier.
+    monkeypatch.setattr(runtime, "build_context_pack", tiny_content_budget)
     run_id = f"content-preflight-{uuid.uuid4().hex[:8]}"
     blueprint = _blueprint(run_id)
     provider = WorkflowContentProvider(
         mode="warning",
         quiz_unit_ids=[unit.artifact_id for unit in blueprint.knowledge_units],
-        context_window=1,
+        context_window=12000,
     )
 
     state = run_minimal_workflow(provider=provider, run_id=run_id, blueprint=blueprint)

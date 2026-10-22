@@ -19,6 +19,7 @@ from annotation.domain.artifacts import (
 )
 from annotation.prompt_loader import load_prompt
 from annotation.providers import ModelProvider, ProviderError, StructuredGenerationRequest
+from annotation.ingestion.semantic_chunker import build_semantic_blocks
 from annotation.workflow.content import build_context_pack, render_context_pack
 from annotation.workflow.content_support import (
     _blocked_content_artifact,
@@ -117,7 +118,8 @@ def build_content_reflection_subgraph(
             round_queries.extend(("web", query) for query in plan.web_queries)
             queries.extend(item for item in round_queries if item not in queries)
             pack = build_context_pack(
-                task, unit, state["blueprint"], state.get("source_blocks", []),
+                task, unit, state["blueprint"],
+                build_semantic_blocks(state.get("source_blocks", [])),
                 search_tool=state.get("retrieval_service"), retrieval_queries=queries,
             )
             if plan.stop_after_retrieval:

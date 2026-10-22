@@ -33,6 +33,7 @@ from annotation.domain.artifacts import (
     SourceBlock,
     SourceDocument,
 )
+from annotation.domain.textbook import BlueprintWindow, HierarchicalBlueprintTrace, TextbookStructure
 
 class BlueprintDraftUnit(BaseModel):
     knowledge_unit_id: str | None = None
@@ -47,6 +48,7 @@ class BlueprintDraftUnit(BaseModel):
 class BlueprintDraft(BaseModel):
     title: str
     knowledge_units: list[BlueprintDraftUnit] = Field(default_factory=list)
+    skip_reason: str | None = None
 
 
 class DocumentDraft(BaseModel):
@@ -292,6 +294,10 @@ class WorkflowState(TypedDict, total=False):
     source_document: SourceDocument
     source_blocks: list[SourceBlock]
     source_refs: list[str]
+    textbook_structure: TextbookStructure
+    blueprint_windows: list[BlueprintWindow]
+    blueprint_mode: str
+    blueprint_hierarchy_trace: HierarchicalBlueprintTrace
     blueprint: LearningBlueprint
     blueprint_check: BlueprintCheckResult
     blueprint_attempt: int

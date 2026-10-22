@@ -22,7 +22,6 @@ from annotation.config import (
     fact_check_web_enabled as configured_fact_check_web_enabled,
     fact_check_web_query_limit as configured_fact_check_web_query_limit,
     interactive_component_max_attempts as configured_interactive_component_max_attempts,
-    model_max_output_tokens as configured_model_max_output_tokens,
     rag_enabled,
 )
 from annotation.domain.artifacts import (
@@ -46,6 +45,11 @@ from annotation.prompt_loader import load_prompt
 from annotation.providers import ModelProvider, MockProvider, ProviderError, StructuredGenerationRequest
 from annotation.workflow.blueprint_checks import validate_blueprint
 from annotation.workflow.content import build_context_pack, write_content_run_artifact
+from annotation.ingestion.semantic_chunker import build_semantic_blocks
+from annotation.ingestion.structure import build_textbook_structure
+from annotation.domain.textbook import HierarchicalBlueprintTrace
+from annotation.workflow.budget import PromptBudget
+from annotation.workflow.blueprint_hierarchy import BlueprintEngine, build_blueprint_windows
 from annotation.workflow.content_reflection import build_content_reflection_subgraph
 from annotation.workflow.course_architect import plan_content_tasks_with_architect
 from annotation.workflow.fact_check import run_fact_check_loop
@@ -105,6 +109,48 @@ def build_minimal_graph(
         warnings = graph_module.extraction_warnings(blocks)
         return {"run_id": run_id, "pdf_path": str(pdf_path), "source_document": source_document, "source_blocks": blocks, "source_refs": [block.source_ref for block in blocks], "warnings": warnings}
 
+    def prepare_blueprint(state: WorkflowState) -> dict[str, Any]:
+        structure = build_textbook_structure(state["source_document"], state["source_blocks"])
+        result: dict[str, Any] = {"textbook_structure": structure}
+        if state.get("blueprint_preloaded"):
+            return {**result, "blueprint_mode": "single"}
+        # Keep the explicitly labelled six-unit offline fixture; it is not
+        # evidence of semantic coverage on arbitrary books.
+        fixture = (getattr(model_provider, "provider", "") == "mock"
+            and getattr(model_provider, "fixture_adaptation", False)
+            and not getattr(model_provider, "structured_payload", {}))
+        if fixture:
+            return {**result, "blueprint_mode": "fixture"}
+        result["warnings"] = _merge_messages(state.get("warnings"), structure.warnings)
+        budget = PromptBudget.for_provider(model_provider)
+        try:
+            windows = build_blueprint_windows(structure, state["source_blocks"], budget)
+        except ProviderError as exc:
+            return {**result, "blueprint_mode": "hierarchical", "blueprint_windows": [],
+                "blueprint_hierarchy_trace": HierarchicalBlueprintTrace(stop_reason=str(exc))}
+        prompt = load_prompt("load_or_create_blueprint", TEXTBOOK_CONTEXT=_source_context(state["source_blocks"])) if len(windows) == 1 else ""
+        single = len(windows) == 1 and len(structure.nodes) == 1 and budget.fits(prompt, BlueprintDraft)
+        return {**result, "blueprint_windows": windows, "blueprint_mode": "single" if single else "hierarchical"}
+
+    def hierarchical_blueprint(state: WorkflowState) -> dict[str, Any]:
+        engine = BlueprintEngine(model_provider, state["source_document"], state["source_blocks"],
+            state["textbook_structure"], max_attempts=max_attempts)
+        existing = state.get("blueprint_hierarchy_trace")
+        if existing and existing.stop_reason != "not_started":
+            trace, blueprint = existing, None
+        else:
+            blueprint = engine.run(state.get("blueprint_windows", []))
+            trace = engine.trace
+        status = trace.final_status
+        result: dict[str, Any] = {"blueprint_hierarchy_trace": trace, "workflow_status": status,
+            "blueprint_route": "accept" if status == "accepted" else "fail" if status == "failed" else "block"}
+        if blueprint is not None:
+            result["blueprint"] = blueprint
+            result["blueprint_check"] = validate_blueprint(blueprint, valid_source_refs=set(state["source_refs"]))
+        else:
+            result["errors"] = _merge_messages(state.get("errors"), [trace.stop_reason])
+        return result
+
     def generate_blueprint_attempt(state: WorkflowState) -> dict[str, Any]:
         """Make exactly one Blueprint model call for this graph visit."""
 
@@ -150,12 +196,15 @@ def build_minimal_graph(
             "blueprint_generation_retryable": False,
         }
         try:
+            budget = PromptBudget.for_provider(model_provider)
+            if state.get("blueprint_mode") != "fixture":
+                budget.check(prompt, BlueprintDraft)
             response = model_provider.generate_structured(StructuredGenerationRequest(
                 prompt=prompt,
                 schema=BlueprintDraft,
                 # Blueprint JSON can be large for a full chapter. Keep this
                 # configurable and high enough to avoid truncating arrays.
-                max_output_tokens=configured_model_max_output_tokens(),
+                max_output_tokens=budget.output_tokens,
                 metadata={"agent": agent, "run_id": state["run_id"], "attempt": attempt},
             ))
             draft = BlueprintDraft.model_validate(response.value.model_dump(mode="python"))
@@ -315,18 +364,18 @@ def build_minimal_graph(
         context_window = getattr(capabilities, "context_window", None)
         packs: list[ContextPack] = []
         warnings: list[str] = []
-        # Content retrieval and A-003 fact checking use the same bounded FTS5
-        # implementation. The connection is per workflow visit and contains
-        # only the current imported textbook blocks.
+        # Content uses semantic chunks; fact checking continues to use original
+        # source blocks in its own stage so its citation granularity is unchanged.
+        semantic_blocks = build_semantic_blocks(state["source_blocks"])
         connection = sqlite3.connect(":memory:")
-        index_source_blocks(connection, state["source_blocks"])
+        index_source_blocks(connection, semantic_blocks)
         textbook_tool = SQLiteFts5TextbookDatabaseSearchSkill(connection)
         for task in state.get("content_tasks", []):
             unit = units.get(task.knowledge_unit_id)
             if not unit:
                 warnings.append(f"content_task_missing_unit: {task.task_id}")
                 continue
-            pack = build_context_pack(task, unit, blueprint, state["source_blocks"], context_window=context_window, search_tool=textbook_tool)
+            pack = build_context_pack(task, unit, blueprint, semantic_blocks, context_window=context_window, search_tool=textbook_tool)
             packs.append(pack)
             if pack.omitted_source_refs:
                 warnings.append(f"context_pack_omitted_sources:{task.task_id}:{','.join(pack.omitted_source_refs)}")
@@ -351,12 +400,13 @@ def build_minimal_graph(
         provider_metadata: dict[str, Any] = dict(state.get("provider_metadata", {}))
         upstream_failed = False
         retrieval_connection = sqlite3.connect(":memory:")
-        index_source_blocks(retrieval_connection, state.get("source_blocks", []))
+        semantic_blocks = build_semantic_blocks(state.get("source_blocks", []))
+        index_source_blocks(retrieval_connection, semantic_blocks)
         textbook_tool = SQLiteFts5TextbookDatabaseSearchSkill(retrieval_connection)
         if rag_enabled():
             try:
                 vector_tool = LlamaIndexChromaTextbookSearchTool(
-                    state.get("source_blocks", []),
+                    semantic_blocks,
                     persist_directory=os.getenv("RAG_CHROMA_PATH", "storage/chroma"),
                 )
             except Exception as exc:
@@ -885,6 +935,8 @@ def build_minimal_graph(
     graph = StateGraph(WorkflowState)
     for name, node in {
         "ingest": ingest,
+        "prepare_blueprint": prepare_blueprint,
+        "hierarchical_blueprint": hierarchical_blueprint,
         "generate_blueprint_attempt": generate_blueprint_attempt,
         "check_blueprint_attempt": check_blueprint_attempt,
         "route_blueprint": route_blueprint,
@@ -908,7 +960,11 @@ def build_minimal_graph(
     }.items():
         graph.add_node(name, node)
     graph.add_edge(START, "ingest")
-    graph.add_edge("ingest", "generate_blueprint_attempt")
+    graph.add_edge("ingest", "prepare_blueprint")
+    graph.add_conditional_edges("prepare_blueprint", lambda state: state.get("blueprint_mode", "single"),
+        {"single": "generate_blueprint_attempt", "fixture": "generate_blueprint_attempt", "hierarchical": "hierarchical_blueprint"})
+    graph.add_conditional_edges("hierarchical_blueprint", next_blueprint_route,
+        {"accept": "plan_content_tasks", "block": "record_blocked_run", "fail": "record_failed_run"})
     graph.add_edge("generate_blueprint_attempt", "check_blueprint_attempt")
     graph.add_edge("check_blueprint_attempt", "route_blueprint")
     graph.add_conditional_edges(

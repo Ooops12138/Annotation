@@ -71,6 +71,9 @@ def _run_response_from_state(result: dict[str, Any], state: dict[str, Any]) -> d
     run = result.get("run") or {}
     loop = state.get("blueprint_loop_trace")
     loop_summary = None
+    if state.get("blueprint_hierarchy_trace") is not None:
+        from annotation.workflow.persistence import _blueprint_loop_summary
+        loop_summary = _blueprint_loop_summary(state)
     if loop is not None:
         payload = loop.model_dump(mode="json") if hasattr(loop, "model_dump") else dict(loop)
         loop_summary = {

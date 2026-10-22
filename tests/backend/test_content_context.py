@@ -160,3 +160,24 @@ def test_context_pack_preserves_degraded_retrieval_metadata():
     assert pack.retrieval_calls[0].metadata["branch_1_initialization_error"] == "ImportError"
     restored = type(pack).model_validate_json(pack.model_dump_json())
     assert restored.retrieval_calls[0].metadata["degraded"] is True
+
+
+def test_semantic_context_keeps_raw_citations_and_chunk_audit_ref():
+    from annotation.ingestion.semantic_chunker import build_semantic_blocks
+    raw = [_block("raw-1", 1, "上确界定义。"), _block("raw-2", 2, "它是所有上界中的最小者。")]
+    semantic = build_semantic_blocks(raw, target_chars=100)
+    unit = KnowledgeUnit(artifact_id="ku", run_id="run-context", version=1, status="accepted",
+                         created_by="test", title="上确界", kind="concept")
+    blueprint = LearningBlueprint(artifact_id="bp", run_id="run-context", version=1, status="accepted",
+                                  created_by="test", title="教材", knowledge_units=[unit])
+    task = ContentTask(task_id="task-semantic", run_id="run-context", blueprint_version="bp:v1",
+                       knowledge_unit_id="ku")
+    pack = build_context_pack(task, unit, blueprint, semantic)
+    excerpt = pack.excerpts[0]
+    assert excerpt.source_ref == "raw-1"
+    assert excerpt.source_refs == ["raw-1", "raw-2"]
+    assert excerpt.chunk_ref == semantic[0].source_ref
+    assert pack.source_refs == ["raw-1", "raw-2"]
+    rendered = render_context_pack(pack)
+    assert semantic[0].source_ref in rendered
+    assert "raw-1,raw-2" in rendered

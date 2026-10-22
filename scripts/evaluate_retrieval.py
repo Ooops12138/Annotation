@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+import hashlib
 import importlib.metadata
 import json
 import os
@@ -29,6 +30,7 @@ def main() -> int:
     parser.add_argument("--corpus", type=Path, default=fixture / "corpus.jsonl")
     parser.add_argument("--questions", type=Path, default=fixture / "questions.json")
     parser.add_argument("--methods", nargs="+", choices=["fts", "vector", "hybrid"], default=["fts", "vector", "hybrid"])
+    parser.add_argument("--chunking", choices=["raw", "semantic"], default="raw")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "results/retrieval/local")
     parser.add_argument("--persist-directory", type=Path, default=ROOT / "storage/chroma/retrieval-evaluation")
     parser.add_argument("--embedding-provider", choices=["auto", "local", "api"])
@@ -54,6 +56,23 @@ def main() -> int:
     if args.offline:
         os.environ["HF_HUB_OFFLINE"] = "1"
     blocks, dataset = load_dataset(args.corpus, args.questions)
+    if args.chunking == "semantic":
+        from annotation.ingestion.semantic_chunker import build_semantic_blocks
+        raw_blocks = blocks
+        blocks = build_semantic_blocks(raw_blocks)
+        raw_qrels = {q["id"]: q["qrels"] for q in dataset["questions"]}
+        for question in dataset["questions"]:
+            mapped = {}
+            for chunk in blocks:
+                grade = max((raw_qrels[question["id"]].get(ref, {}).get("grade", 0)
+                             for ref in chunk.source_refs), default=0)
+                if grade:
+                    mapped[chunk.source_ref] = {
+                        "grade": grade,
+                        "text_sha256": hashlib.sha256(chunk.text.encode()).hexdigest(),
+                    }
+            question["qrels"] = mapped
+            question["answerable"] = bool(mapped)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     report = {
         "schema_version": 1, "created_at": datetime.now(timezone.utc).isoformat(),
@@ -63,7 +82,10 @@ def main() -> int:
         "corpus": {"blocks": len(blocks), "pages": len({(b.document_id, b.page_number) for b in blocks}),
                    "sha256": sha256_file(args.corpus), "questions_sha256": sha256_file(args.questions)},
         "environment": {"python": sys.version, "platform": platform.platform(), "packages": {}},
-        "encoder": None, "setup": {}, "methods": {},
+        "encoder": None, "setup": {}, "methods": {}, "chunking": args.chunking,
+        "semantic_chunking": ({"policy": "semantic-chunker-v1", "target_chars": 480, "max_chars": 900,
+                                "overlap_blocks": 0, "source_pages": len({(b.document_id, b.page_number) for b in raw_blocks}),
+                                "source_blocks": len(raw_blocks), "semantic_blocks": len(blocks)} if args.chunking == "semantic" else None),
     }
     for package in ["torch", "sentence-transformers", "llama-index-core", "llama-index-vector-stores-chroma", "chromadb", "openai", "posthog"]:
         try:
@@ -89,7 +111,7 @@ def main() -> int:
             report["encoder"] = provider.identity
             selected = "local" if provider.name == "local-sentence-transformer" else "api"
             reproduce = [sys.executable, str(Path(__file__).resolve()), "--corpus", str(args.corpus.resolve()),
-                         "--questions", str(args.questions.resolve()), "--methods", *args.methods,
+                         "--questions", str(args.questions.resolve()), "--methods", *args.methods, "--chunking", args.chunking,
                          "--output-dir", str(args.output_dir.resolve()), "--persist-directory", str(args.persist_directory.resolve()),
                          "--embedding-provider", selected, "--repeats", str(args.repeats)]
             if selected == "local":
@@ -139,7 +161,7 @@ def main() -> int:
             # A new interpreter must reconstruct the index without encoding documents.
             probe_path = args.output_dir / "reuse-probe.json"
             child = [sys.executable, str(Path(__file__).resolve()), "--corpus", str(args.corpus.resolve()),
-                     "--questions", str(args.questions.resolve()), "--methods", "vector",
+                     "--questions", str(args.questions.resolve()), "--methods", "vector", "--chunking", args.chunking,
                      "--persist-directory", str(args.persist_directory.resolve()),
                      "--output-dir", str(args.output_dir.resolve()), "--reuse-probe", str(probe_path.resolve()),
                      "--embedding-provider", "local" if report["encoder"]["provider"] == "local-sentence-transformer" else "api"]

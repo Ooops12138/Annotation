@@ -138,7 +138,11 @@ def parse_pdf(path: str | Path, *, run_id: str = "run-ingest-local", created_by:
     region_dir = base_dir / "regions"
     blocks: list[SourceBlock] = []
     with fitz.open(pdf_path) as document:
+        toc = document.get_toc()
+        page_count = len(document)
+        empty_text_pages: list[int] = []
         for page_number, page in enumerate(document, start=1):
+            previous_count = len(blocks)
             page_dict = page.get_text("dict")
             raw_blocks = list(page.get_text("blocks"))
             text_indices = [i for i, raw in enumerate(raw_blocks) if len(raw) >= 5 and str(raw[4]).strip()]
@@ -165,7 +169,10 @@ def parse_pdf(path: str | Path, *, run_id: str = "run-ingest-local", created_by:
                     ocr_candidates, formula_candidates, candidate_warnings = _run_region_candidates(page, payload, region_dir=region_dir, text_backend=text_engine, formula_backend=formula_engine)
                     warnings.extend(candidate_warnings)
                 blocks.append(SourceBlock(artifact_id=f"{source_ref}-artifact", source_ref=source_ref, document_id=document_id, run_id=run_id, version=1, status="draft", source_refs=[source_ref], created_by=created_by, page_number=page_number, block_index=block_index, text=text, raw_text=text, text_hash=_sha256(text), parser_version=PARSER_VERSION, bbox=bbox, ocr_candidates=ocr_candidates, formula_latex_candidates=formula_candidates, warnings=list(dict.fromkeys(warnings)), run_metadata={"block_type": block_type, "recognizers": [c.recognizer for c in (*ocr_candidates, *formula_candidates)]}))
+            if len(blocks) == previous_count:
+                empty_text_pages.append(page_number)
     warnings = extraction_warnings(blocks)
     source_document = SourceDocument(artifact_id=document_id, run_id=run_id, version=1, status="draft", created_by=created_by, title=pdf_path.stem, locator=str(pdf_path.resolve()), source_refs=[block.source_ref for block in blocks], warnings=warnings, run_metadata={"parser": "annotation-hybrid", "parser_version": PARSER_VERSION, "sha256": _sha256(pdf_path.read_bytes()), "elapsed_ms": round((time.perf_counter() - started) * 1000), "ocr_backend": text_engine.name, "formula_backend": formula_engine.name if formula_engine else "not_needed", "block_count": len(blocks), "artifact_dir": str(base_dir.resolve()), "json_path": str((base_dir / "source.json").resolve()), "markdown_path": str((base_dir / "source.md").resolve())})
+    source_document.run_metadata.update({"toc": toc, "page_count": page_count, "empty_text_pages": empty_text_pages})
     _write_artifacts(source_document, blocks, base_dir)
     return source_document, blocks
