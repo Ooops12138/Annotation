@@ -318,12 +318,13 @@ export function isInteractiveComponentSpec(value: unknown): value is Interactive
     if (value.libraries !== undefined && (!Array.isArray(value.libraries) || value.libraries.some((library) => library !== 'jsxgraph'))) return false
     if (!isString(value.html) || typeof value.css !== 'string' || typeof value.javascript !== 'string') return false
     if (value.html.length > 20_000 || value.css.length > 12_000 || value.javascript.length > 20_000) return false
-    const html = value.html.toLowerCase()
+    const htmlSource = value.html
+    const html = htmlSource.toLowerCase()
     if (['<script', '<style', '<iframe', '<object', '<embed'].some((token) => html.includes(token))) return false
     if (value.css.toLowerCase().includes('</style') || value.javascript.toLowerCase().includes('</script')) return false
     return value.controls.every((control) => (
-      value.html.includes(`data-component-control="${control.control_id}"`)
-      || value.html.includes(`data-component-control='${control.control_id}'`)
+      htmlSource.includes(`data-component-control="${control.control_id}"`)
+      || htmlSource.includes(`data-component-control='${control.control_id}'`)
     ))
   }
   return false

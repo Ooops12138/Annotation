@@ -68,6 +68,7 @@ def _state() -> dict[str, Any]:
         learning_objectives=["区分上确界与最大元"],
     )
     content_task = ContentTask(
+        depth_guidance="standard",
         task_id="content-task-1",
         run_id=run_id,
         blueprint_version="blueprint:v1",

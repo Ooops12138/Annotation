@@ -5,9 +5,7 @@ from .repository import (
     ImmutableArtifactError,
     PersistenceError,
     PersistenceRepository,
-    Repository,
     initialize_database,
-    migrate_source_index,
     project_document_status,
 )
 
@@ -16,8 +14,6 @@ __all__ = [
     "ImmutableArtifactError",
     "PersistenceError",
     "PersistenceRepository",
-    "Repository",
     "initialize_database",
-    "migrate_source_index",
     "project_document_status",
 ]

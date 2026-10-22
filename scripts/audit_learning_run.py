@@ -129,7 +129,7 @@ def audit_run(manifest_path: Path, database: Path | None = None) -> tuple[dict, 
                 issue("empty_explanation", target, "讲解正文为空。")
             if kind == "quiz":
                 questions = artifact.get("questions", [])
-                if artifact.get("question_count") != len(questions):
+                if "question_count" in artifact and artifact["question_count"] != len(questions):
                     issue("question_count", target, "声明题量与数组长度不同。")
                 for question in questions:
                     qid = question.get("question_id", target)

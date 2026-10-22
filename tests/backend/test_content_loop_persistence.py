@@ -30,7 +30,7 @@ def _trace(status: str = "accepted") -> dict[str, object]:
     }
 
 
-def test_content_artifact_v3_keeps_trace_path_and_summary(tmp_path) -> None:
+def test_content_artifact_v4_keeps_trace_path_and_summary(tmp_path) -> None:
     summary = {"unit_count": 1, "accepted_count": 1, "final_status": "accepted"}
     path = write_content_run_artifact(
         run_id="content-v2",
@@ -46,7 +46,7 @@ def test_content_artifact_v3_keeps_trace_path_and_summary(tmp_path) -> None:
     )
 
     payload = json.loads(path.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == "content-artifact-v3"
+    assert payload["schema_version"] == "content-artifact-v4"
     assert payload["content_loop_traces"] == [_trace()]
     assert payload["content_loop_summary"]["trace_path"] == str(path.resolve())
     assert summary["trace_path"] == str(path.resolve())
@@ -140,7 +140,7 @@ def test_content_loop_persists_aggregate_status_and_loads_summary(tmp_path) -> N
     repo.close()
 
 
-def test_load_run_payload_reconstructs_v2_summary_when_metadata_is_missing(tmp_path) -> None:
+def test_old_trace_is_not_implicitly_reconstructed(tmp_path) -> None:
     repo = PersistenceRepository(tmp_path / "annotation.sqlite3")
     pdf = tmp_path / "book.pdf"
     pdf.write_bytes(b"pdf")
@@ -160,15 +160,7 @@ def test_load_run_payload_reconstructs_v2_summary_when_metadata_is_missing(tmp_p
 
     payload = load_run_payload(repo, "content-summary-fallback")
 
-    assert payload and payload["content_loop"] == {
-        "unit_count": 1,
-        "accepted_count": 1,
-        "blocked_count": 0,
-        "failed_count": 0,
-        "attempt_count": 1,
-        "final_status": "accepted",
-        "trace_path": str(content_path),
-    }
+    assert payload and payload["content_loop"] is None
     repo.close()
 
 

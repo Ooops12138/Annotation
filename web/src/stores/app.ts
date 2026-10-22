@@ -7,6 +7,7 @@ import {
   type LibraryBook,
   type LibraryDocumentSummary,
   type WorkflowRunResult,
+  type SourceLocations,
 } from '../lib/api'
 
 function messageFrom(error: unknown, fallback: string): string {
@@ -22,6 +23,7 @@ export const useAppStore = defineStore('app', {
     selectedBookId: null as string | null,
     selectedDocumentId: null as string | null,
     document: null as any,
+    sourceLocations: {} as SourceLocations,
     reviewReport: null as any,
     run: null as WorkflowRunResult | null,
     libraryLoading: false,
@@ -82,6 +84,7 @@ export const useAppStore = defineStore('app', {
       this.loading = true
       try {
         const result = await getDocument(documentId)
+        this.sourceLocations = result.source_locations ?? {}
         this.document = result.document
         this.selectedDocumentId = documentId
         this.selectedBookId = this.selectedDocumentSummary?.book_id || this.selectedBookId
@@ -136,6 +139,7 @@ export const useAppStore = defineStore('app', {
       this.selectedBookId = bookId
       try {
         const result = await startRun(bookId)
+        this.sourceLocations = result.source_locations ?? {}
         this.run = result
         this.reviewReport = result.review_report ?? null
         if (result.status === 'blocked') {

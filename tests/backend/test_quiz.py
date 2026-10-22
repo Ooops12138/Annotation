@@ -37,6 +37,7 @@ def _unit(unit_id: str = "ku-1") -> KnowledgeUnit:
 
 def _task(unit: KnowledgeUnit, *, quiz_count: int | None = None) -> ContentTask:
     return ContentTask(
+        depth_guidance="standard",
         task_id=f"task-{unit.artifact_id}",
         run_id="run-quiz",
         blueprint_version="bp-quiz:v1",
@@ -381,7 +382,7 @@ def test_architect_question_count_mismatch_blocks_artifact() -> None:
         def generate_structured(self, request):
             draft = QuizDraft(
                 knowledge_unit_id=unit.artifact_id,
-                question_count=1,
+
                 target_objectives=[unit.learning_objectives[0]],
                 questions=[_question(unit, "q-count-1")],
             )
@@ -415,7 +416,7 @@ def test_quiz_prompt_allows_agent_to_select_count() -> None:
     prompt = build_quiz_prompt(_task(unit), unit, _pack(unit))
     assert prompt.startswith("# Agent: generate_quiz_artifact")
     assert "src-1" in prompt
-    assert "number may be zero" in prompt
-    assert '"question_count"' in prompt
+    assert "number may be zero" in prompt.lower()
+    assert '"question_count"' not in prompt
     assert "exactly `2` questions" not in prompt
     assert "{{CONTEXT_PACK}}" not in prompt

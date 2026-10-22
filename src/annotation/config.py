@@ -10,7 +10,6 @@ STORAGE_DIR = PROJECT_ROOT / "storage"
 DATABASE_PATH = STORAGE_DIR / "annotation.sqlite3"
 # Kept as a migration/debug source for installations created before the
 # unified library database. New indexing uses ``DATABASE_PATH``.
-LEGACY_SOURCE_INDEX_PATH = STORAGE_DIR / "source-index.sqlite3"
 SOURCE_INDEX_PATH = DATABASE_PATH
 
 # The first revision loop is deliberately bounded.  Tests may inject a

@@ -228,7 +228,7 @@ def test_legacy_draft_without_review_is_hidden_without_rewriting_it(tmp_path):
     repo.close()
 
 
-def test_document_reader_projects_retired_nodes_without_rewriting_artifact(tmp_path) -> None:
+def test_document_reader_preserves_unsupported_nodes_for_local_rejection(tmp_path) -> None:
     path = tmp_path / "legacy-document.json"
     legacy_document = {
         "artifact_id": "doc-legacy-artifact",
@@ -268,12 +268,41 @@ def test_document_reader_projects_retired_nodes_without_rewriting_artifact(tmp_p
     )
 
     document = _document_from_path(path)
-    nodes = document.sections[0].children
-
-    assert [node.type for node in nodes] == ["markdown", "markdown"]
-    assert nodes[0].content == "$$\nx^2+y^2=z^2\n$$"
-    assert nodes[0].source_refs == ["src-legacy"]
-    assert nodes[1].content == "### 历史例题\n\n**问题**\n\n求 $x$。\n\n**解析**\n\n$x=1$。"
-    assert nodes[1].source_refs == ["src-legacy"]
+    nodes = document["sections"][0]["children"]
+    assert [node["type"] for node in nodes] == ["formula", "example"]
     # The read adapter must not rewrite an immutable historical artifact.
     assert '"type": "formula"' in path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("defect", ["section", "node", "issue", "report"])
+def test_saved_read_preserves_healthy_sections_and_local_defect(tmp_path, defect):
+    repo = PersistenceRepository(tmp_path / "db.sqlite3")
+    pdf = tmp_path / "book.pdf"
+    pdf.write_bytes(b"pdf")
+    book = repo.register_book(pdf)
+    state = _state(tmp_path)
+    repo.create_run(book["book_id"], run_id=state["run_id"])
+    persist_workflow_result(repo, book=book, state=state)
+    path = Path(state["document_artifact_path"])
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    healthy = json.loads(json.dumps(payload["document"]["sections"][0]))
+    payload["document"]["sections"].append({**healthy, "id": "healthy-2"})
+    if defect == "section":
+        payload["document"]["sections"][0]["children"] = None
+    elif defect == "node":
+        payload["document"]["sections"][0]["children"].append({"type": "unknown", "id": "broken"})
+    elif defect == "issue":
+        report = Path(state["review_report_path"])
+        report.write_text(json.dumps({"report": {**state["review_report"].model_dump(mode="json"), "issues": [{"target_id": "section-1"}]}}), encoding="utf-8")
+    else:
+        Path(state["review_report_path"]).write_text("invalid JSON", encoding="utf-8")
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    original = path.read_bytes()
+    loaded = load_document_payload(repo, "doc-service")
+    assert loaded["status"] == "ok"
+    assert len(loaded["document"]["sections"]) == 2
+    assert loaded["document"]["sections"][1]["title"] == healthy["title"]
+    assert loaded["document"]["sections"][1]["children"] == healthy["children"]
+    assert loaded["source_locations"]["src-p1-b0"]["page_number"] == 1
+    assert path.read_bytes() == original
+    repo.close()

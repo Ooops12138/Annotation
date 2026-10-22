@@ -151,6 +151,7 @@ def test_active_content_contract_rejects_retired_material_fields_and_trace_group
         )
     with pytest.raises(ValidationError):
         ContentTask(
+        depth_guidance="standard",
             task_id="task-retired-types",
             run_id="run-retired-types",
             blueprint_version="bp:v1",
@@ -195,3 +196,20 @@ def test_content_reflection_prompts_render_all_auditable_inputs() -> None:
 def test_content_draft_rejects_malformed_sources_without_type_repair(refs) -> None:
     with pytest.raises(ValidationError):
         ContentDraft.model_validate({"title": "测试", "content": "正文", "source_refs": refs})
+
+
+def test_current_trace_has_no_synchronized_generic_aliases():
+    trace = ContentAttemptTrace(attempt=1, generation_prompt="generation", generation_raw_output="raw", route="accept")
+    value = trace.model_dump()
+    assert value["generation_prompt"] == "generation"
+    assert {"prompt", "raw_output", "parsed_output", "provider_metadata", "error", "error_category", "check"}.isdisjoint(value)
+    with pytest.raises(ValidationError):
+        ContentAttemptTrace(attempt=1, prompt="old", route="accept")
+
+
+def test_current_task_requires_depth_and_rejects_old_count_aliases():
+    base = dict(task_id="t", run_id="r", blueprint_version="b", knowledge_unit_id="u")
+    with pytest.raises(ValidationError):
+        ContentTask(**base)
+    with pytest.raises(ValidationError):
+        ContentTask(**base, depth_guidance="standard", quiz_question_count=1)

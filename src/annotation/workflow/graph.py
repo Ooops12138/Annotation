@@ -379,6 +379,8 @@ def _blueprint_from_draft(
         requested_id = (unit.knowledge_unit_id or "").strip()
         stable_id = requested_id or f"ku-{hashlib.sha256(unit.title.strip().encode('utf-8')).hexdigest()[:12]}"
         if stable_id in used_unit_ids:
+            if not fixture_adaptation:
+                raise ProviderError(f"duplicate knowledge unit id: {stable_id}", category="schema")
             stable_id = f"{stable_id}-{index:02d}"
         used_unit_ids.add(stable_id)
         units.append(KnowledgeUnit(

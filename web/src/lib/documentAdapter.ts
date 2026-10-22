@@ -1,102 +1,97 @@
-import type { LearningDocument, ReviewReport, ReviewIssue } from './document'
+import { isDocumentNode } from './document'
+import type { DocumentSection, LearningDocument, ReviewReport, ReviewIssue } from './document'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
-
-function string(value: unknown): string | null {
-  return typeof value === 'string' ? value : null
+function string(value: unknown): value is string {
+  return typeof value === 'string' && Boolean(value.trim())
+}
+function refs(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(string)
 }
 
-function number(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null
+export interface IntegrityIssue extends ReviewIssue { diagnostic_path: string }
+export interface PresentedSection extends DocumentSection { unavailable?: boolean }
+export interface PresentedDocument extends LearningDocument {
+  sections: PresentedSection[]
+  integrity_issues: IntegrityIssue[]
+  unavailable_targets: string[]
 }
 
-function issues(value: unknown): ReviewIssue[] {
-  if (!Array.isArray(value)) return []
-  return value.filter(isRecord).flatMap((issue) => {
-    const issueId = string(issue.issue_id)
-    const message = string(issue.message)
-    const category = string(issue.category)
-    const severity = issue.severity
-    if (!issueId || !message || !category || !['info', 'warning', 'blocking'].includes(String(severity))) return []
-    return [{
-      issue_id: issueId,
-      category,
-      severity: severity as ReviewIssue['severity'],
-      message,
-      target_id: string(issue.target_id),
-      layer: ['fact', 'stance', 'structure'].includes(String(issue.layer)) ? issue.layer as ReviewIssue['layer'] : undefined,
-      source_refs: Array.isArray(issue.source_refs) ? issue.source_refs.filter((ref): ref is string => typeof ref === 'string') : [],
-      suggested_action: string(issue.suggested_action),
-    }]
+function integrity(path: string, target?: string): IntegrityIssue {
+  return {
+    issue_id: `integrity-${path}`, category: 'integrity', severity: 'warning', layer: 'structure',
+    message: target ? '此部分的内容或审核信息异常，暂不可用。' : '部分审核信息异常，请结合教材核查；其余章节仍可阅读。',
+    target_id: target, diagnostic_path: path,
+  }
+}
+
+function issues(value: unknown, path: string): { valid: ReviewIssue[]; errors: IntegrityIssue[] } {
+  if (!Array.isArray(value)) return { valid: [], errors: [integrity(path)] }
+  const valid: ReviewIssue[] = [], errors: IntegrityIssue[] = []
+  value.forEach((issue, index) => {
+    const location = `${path}[${index}]`
+    if (!isRecord(issue) || !string(issue.issue_id) || !string(issue.message) || !['fact', 'logic', 'formula', 'coverage', 'source', 'transition', 'conflict', 'uncertainty', 'stance'].includes(String(issue.category))
+      || !['info', 'warning', 'blocking'].includes(String(issue.severity))
+      || (issue.layer !== undefined && !['fact', 'stance', 'structure'].includes(String(issue.layer)))
+      || (issue.source_refs !== undefined && !refs(issue.source_refs))
+      || (issue.target_id != null && !string(issue.target_id))
+      || (issue.suggested_action != null && !string(issue.suggested_action))) {
+      errors.push(integrity(location, isRecord(issue) && string(issue.target_id) ? issue.target_id : undefined))
+    } else valid.push(issue as unknown as ReviewIssue)
   })
+  return { valid, errors }
 }
 
-export function normalizeLearningDocument(value: unknown): LearningDocument | null {
-  if (!isRecord(value)) return null
-  const artifactId = string(value.artifact_id)
-  const documentId = string(value.document_id)
-  const runId = string(value.run_id)
-  const createdBy = string(value.created_by)
-  const blueprintVersion = string(value.blueprint_version)
-  const title = string(value.title)
-  const version = number(value.version)
-  if (!artifactId || !documentId || !runId || !createdBy || !blueprintVersion || !title || version === null || !Array.isArray(value.sections)) return null
-  const sections = value.sections.filter(isRecord).flatMap((section) => {
-    const id = string(section.id)
-    const sectionTitle = string(section.title)
-    if (!id || !sectionTitle || !Array.isArray(section.children)) return []
-    return [{
-      type: 'section' as const,
-      id,
-      title: sectionTitle,
-      children: section.children,
-    }]
+export function normalizeLearningDocument(value: unknown, reviewValue?: unknown): PresentedDocument | null {
+  if (!isRecord(value) || !string(value.artifact_id) || !string(value.document_id) || !string(value.run_id)
+    || !string(value.created_by) || !string(value.blueprint_version) || !string(value.title)
+    || !Number.isInteger(value.version) || (value.version as number) < 1 || !Array.isArray(value.sections)) return null
+  const parsed = issues(value.issues === undefined ? [] : value.issues, 'document.issues')
+  const parsedReport = reviewValue === undefined ? null : normalizeReviewReport(reviewValue)
+  const report = parsedReport?.document_id === value.document_id && parsedReport.reviewed_artifact_id === value.artifact_id ? parsedReport : null
+  const errors = [...parsed.errors]
+  if (reviewValue !== undefined) {
+    if (!report) errors.push(integrity('review_report'))
+    else errors.push(...issues(isRecord(reviewValue) ? reviewValue.issues : null, 'review_report.issues').errors)
+  }
+  const ids = value.sections.map((section) => isRecord(section) ? section.id : undefined)
+  const occupied = new Set(ids.filter(string))
+  const idCounts = new Map<string, number>()
+  ids.filter(string).forEach((id) => idCounts.set(id, (idCounts.get(id) ?? 0) + 1))
+  const sections: PresentedSection[] = value.sections.map((section, index) => {
+    const path = `document.sections[${index}]`
+    if (isRecord(section) && string(section.id) && string(section.title) && Array.isArray(section.children)
+      && idCounts.get(section.id) === 1) {
+      section.children.forEach((node, nodeIndex) => {
+        if (!isDocumentNode(node)) errors.push(integrity(`${path}.children[${nodeIndex}]`))
+      })
+      return { type: 'section', id: section.id, title: section.title, children: section.children }
+    }
+    let id = `unavailable-section-${index + 1}`
+    while (occupied.has(id)) id = `_${id}`
+    occupied.add(id)
+    errors.push(integrity(path, id))
+    return { type: 'section', id, title: isRecord(section) && string(section.title) ? section.title : `第 ${index + 1} 节`, children: [], unavailable: true }
   })
   return {
-    artifact_id: artifactId,
-    document_id: documentId,
-    run_id: runId,
-    version,
-    status: string(value.status) ?? 'unknown',
-    source_refs: Array.isArray(value.source_refs) ? value.source_refs.filter((ref): ref is string => typeof ref === 'string') : [],
-    created_by: createdBy,
-    issues: issues(value.issues),
-    blueprint_version: blueprintVersion,
-    title,
-    sections,
-    review_report_id: string(value.review_report_id),
+    ...(value as unknown as LearningDocument), sections,
+    issues: [...new Map([...parsed.valid, ...(report?.issues ?? [])].map((issue) => [issue.issue_id, issue])).values()],
+    integrity_issues: errors,
+    unavailable_targets: errors.flatMap((error) => error.target_id ? [error.target_id] : []),
   }
 }
 
 export function normalizeReviewReport(value: unknown): ReviewReport | null {
-  if (!isRecord(value)) return null
-  const artifactId = string(value.artifact_id)
-  const reportId = string(value.report_id)
-  const runId = string(value.run_id)
-  const createdBy = string(value.created_by)
-  const documentId = string(value.document_id)
-  const reviewedArtifactId = string(value.reviewed_artifact_id)
-  const version = number(value.version)
-  const status = value.status
-  if (!artifactId || !reportId || !runId || !createdBy || !documentId || !reviewedArtifactId || version === null || !['passed', 'at_risk', 'blocked', 'needs_revision'].includes(String(status))) return null
+  if (!isRecord(value) || !string(value.artifact_id) || !string(value.report_id) || !string(value.run_id)
+    || !string(value.created_by) || !string(value.document_id) || !string(value.reviewed_artifact_id)
+    || !Number.isInteger(value.version) || (value.version as number) < 1
+    || !['passed', 'at_risk', 'blocked', 'needs_revision'].includes(String(value.status))) return null
+  const parsed = issues(value.issues, 'review_report.issues')
   return {
-    artifact_id: artifactId,
-    report_id: reportId,
-    run_id: runId,
-    version,
-    status: status as ReviewReport['status'],
-    created_by: createdBy,
-    document_id: documentId,
-    reviewed_artifact_id: reviewedArtifactId,
-    source_refs: Array.isArray(value.source_refs) ? value.source_refs.filter((ref): ref is string => typeof ref === 'string') : [],
-    issues: issues(value.issues),
-    issue_counts: isRecord(value.issue_counts) ? Object.fromEntries(Object.entries(value.issue_counts).filter(([, count]) => typeof count === 'number')) : {},
-    checks: isRecord(value.checks) ? Object.fromEntries(Object.entries(value.checks).filter(([, check]) => typeof check === 'string')) : {},
-    human_review_required: value.human_review_required === true,
-    revision_of: string(value.revision_of),
-    recommendations: Array.isArray(value.recommendations) ? value.recommendations.filter((item): item is string => typeof item === 'string') : [],
-    artifact_path: string(value.artifact_path),
+    ...(value as unknown as ReviewReport),
+    status: parsed.errors.length && value.status !== 'blocked' ? 'at_risk' : value.status as ReviewReport['status'],
+    issues: parsed.valid,
   }
 }

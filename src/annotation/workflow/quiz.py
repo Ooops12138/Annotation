@@ -30,10 +30,9 @@ from annotation.workflow.content import render_context_pack
 from annotation.config import model_max_output_tokens
 
 
-QUIZ_PROMPT_VERSION = "generate_quiz_artifact:v3"
+QUIZ_PROMPT_VERSION = "generate_quiz_artifact:v4"
 # There is intentionally no default or minimum quiz size.  The agent decides
 # how many evidence-supported items are useful for a unit, including zero.
-DEFAULT_QUIZ_COUNT: int | None = None
 
 
 class QuizCheckResult(BaseModel):
@@ -167,7 +166,6 @@ def validate_quiz_artifact(
     unit: KnowledgeUnit | None = None,
     context_pack: ContextPack | None = None,
     valid_source_refs: Iterable[str] | None = None,
-    required_question_count: int | None = DEFAULT_QUIZ_COUNT,
 ) -> QuizCheckResult:
     """Validate structure, evidence and objective mappings without inference.
 
@@ -224,15 +222,6 @@ def validate_quiz_artifact(
             severity="blocking",
             message="一个 quiz artifact 必须且只能对应一个知识单元。",
             target_id=artifact.artifact_id,
-        ))
-    if artifact.question_count is not None and artifact.question_count != len(artifact.questions):
-        issues.append(_issue(
-            f"quiz-question-count-mismatch-{artifact.artifact_id}",
-            category="logic",
-            severity="blocking",
-            message="题目 artifact 记录的 question_count 与实际题目数量不一致。",
-            target_id=artifact.artifact_id,
-            suggested_action="将 question_count 更新为 questions 数组的实际长度后重新生成 artifact。",
         ))
     if unit_id and artifact.knowledge_unit_ids and artifact.knowledge_unit_ids != [unit_id]:
         issues.append(_issue(
@@ -493,7 +482,7 @@ def build_quiz_coverage_matrix(
                 "knowledge_unit_id": unit_id,
                 "quiz_artifact_id": artifact.artifact_id,
                 "question_ids": question_ids,
-                "question_count": artifact.question_count if artifact.question_count is not None else len(question_ids),
+                "question_count": artifact.question_count,
                 "target_objectives": objectives,
                 "source_refs": refs,
             })
@@ -506,15 +495,8 @@ def validate_quiz_coverage(
     *,
     context_packs: Mapping[str, ContextPack] | None = None,
     valid_source_refs: Iterable[str] | None = None,
-    required_question_count: int | None = DEFAULT_QUIZ_COUNT,
 ) -> QuizCoverageReport:
-    """Build coverage without imposing a question-count lower bound.
-
-    ``required_question_count`` remains accepted for callers using the old
-    signature, but it is deliberately not a hard gate.  The agent's selected
-    count is represented by each artifact and matrix row; only malformed or
-    untraceable questions block the report.
-    """
+    """Check question structure, evidence and learning-objective coverage."""
 
     units = list(blueprint.knowledge_units if isinstance(blueprint, LearningBlueprint) else blueprint)
     artifacts_list = list(artifacts)
@@ -537,7 +519,6 @@ def validate_quiz_coverage(
             unit=unit,
             context_pack=pack,
             valid_source_refs=valid_source_refs,
-            required_question_count=required_question_count,
         )
         if context_packs is not None and (not artifact.context_pack_id or pack is None):
             check.issues = _dedupe_issues([
@@ -686,7 +667,7 @@ def _mock_quiz_draft(
 
     refs = _context_refs(context_pack)
     objectives = list(unit.learning_objectives)
-    # An explicit task value is a fixture/compatibility hint.  Normal tasks
+    # An explicit task value is chosen by the course architect. Normal tasks
     # leave it unset, so the mock chooses based on available objectives and
     # evidence instead of enforcing a project-wide minimum.
     count = max(0, requested_count) if requested_count is not None else (len(objectives) if refs else 0)
@@ -712,7 +693,6 @@ def _mock_quiz_draft(
         ))
     return QuizDraft(
         knowledge_unit_id=unit.artifact_id,
-        question_count=count,
         target_objectives=objectives,
         questions=questions,
     )
@@ -751,7 +731,6 @@ def blocked_quiz_artifact(
         created_by=f"provider:{provider_name}",
         knowledge_unit_ids=[unit.artifact_id],
         target_objectives=list(unit.learning_objectives),
-        question_count=0,
         task_id=task.task_id,
         context_pack_id=context_pack.context_pack_id,
         prompt_version=QUIZ_PROMPT_VERSION,
@@ -806,15 +785,15 @@ def generate_quiz_artifact(
                 draft = QuizDraft.model_validate(response.value.model_dump(mode="python"))
                 metadata.update(_response_metadata(response))
                 raw_response = raw_response or draft.model_dump_json()
-            count = draft.question_count if draft.question_count is not None else len(draft.questions)
+            count = len(draft.questions)
             metadata["question_count"] = count
-            metadata["question_count_source"] = "agent_declared" if draft.question_count is not None else "inferred_from_questions"
+            metadata["question_count_source"] = "derived_from_questions"
             artifact = QuizArtifact(
                 artifact_id=f"quiz-{task.task_id}", run_id=run_id or task.run_id, version=1, status="draft",
                 source_refs=_context_refs(context_pack), created_by=f"provider:{metadata.get('provider', provider_name)}",
                 knowledge_unit_ids=[unit.artifact_id],
                 target_objectives=_dedupe([*draft.target_objectives, *(o for q in draft.questions for o in q.target_objectives)]),
-                questions=list(draft.questions), question_count=count, task_id=task.task_id,
+                questions=list(draft.questions), task_id=task.task_id,
                 context_pack_id=context_pack.context_pack_id, prompt_version=QUIZ_PROMPT_VERSION,
                 generation_metadata={**metadata, "prompt": prompt}, raw_response=raw_response,
             )

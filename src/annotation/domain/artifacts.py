@@ -1,6 +1,6 @@
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class ArtifactBase(BaseModel):
@@ -143,18 +143,8 @@ class QuizDraft(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     knowledge_unit_id: str
-    # The agent may choose any non-negative number, including zero.  Keeping
-    # this optional preserves compatibility with older providers that only
-    # returned the questions array; generation infers the count in that case.
-    question_count: int | None = Field(default=None, ge=0)
     target_objectives: list[str] = Field(default_factory=list)
     questions: list[QuizQuestion] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def validate_declared_count(self) -> "QuizDraft":
-        if self.question_count is not None and self.question_count != len(self.questions):
-            raise ValueError("quiz question_count must equal the number of questions")
-        return self
 
 
 class QuizArtifact(ArtifactBase):
@@ -164,10 +154,6 @@ class QuizArtifact(ArtifactBase):
     knowledge_unit_ids: list[str] = Field(default_factory=list)
     target_objectives: list[str] = Field(default_factory=list)
     questions: list[QuizQuestion] = Field(default_factory=list)
-    # This is the count selected by the quiz agent (or inferred from its
-    # response), not a release minimum.  ``None`` keeps legacy artifacts
-    # readable without fabricating a count.
-    question_count: int | None = Field(default=None, ge=0)
     task_id: str | None = None
     context_pack_id: str | None = None
     prompt_version: str | None = None
@@ -175,25 +161,10 @@ class QuizArtifact(ArtifactBase):
     raw_response: str = ""
     generation_error: str | None = None
 
-    @model_validator(mode="after")
-    def validate_recorded_count(self) -> "QuizArtifact":
-        if self.question_count is not None and self.question_count != len(self.questions):
-            raise ValueError("quiz question_count must equal the number of questions")
-        return self
-
     @property
-    def metadata(self) -> dict[str, Any]:
-        """Compatibility view shared with the prose ContentArtifact contract."""
-
-        return self.generation_metadata
-
-    @property
-    def raw_output(self) -> str:
-        return self.raw_response
-
-    @property
-    def error(self) -> str | None:
-        return self.generation_error
+    def question_count(self) -> int:
+        """Derived from the accepted questions, never supplied by a provider."""
+        return len(self.questions)
 
 
 class ContentTask(BaseModel):
@@ -214,19 +185,15 @@ class ContentTask(BaseModel):
     )
     # A quiz task is one structured call per unit.  ``None`` means the quiz
     # agent chooses the number of questions, including zero.  A supplied value
-    # is only a hint for deterministic fixtures and compatibility callers.
-    quiz_count: int | None = Field(default=None, ge=0, validation_alias=AliasChoices("quiz_count", "quiz_question_count", "question_count"))
-    depth_guidance: Literal["concise", "standard", "detailed"] = "standard"
+    # is an explicit count chosen by the course architect.
+    quiz_count: int | None = Field(default=None, ge=0)
+    depth_guidance: Literal["concise", "standard", "detailed"]
     source_refs: list[str] = Field(default_factory=list)
     interactive_component_policy: Literal["auto", "required", "skip"] = "auto"
     content_agent_strategy: Literal["single", "parallel"] = "single"
     execution_group: int = Field(default=1, ge=1)
     acceptance_criteria: list[str] = Field(default_factory=list)
     status: Literal["planned", "generating", "accepted", "needs_revision", "blocked"] = "planned"
-
-    @property
-    def quiz_question_count(self) -> int | None:
-        return self.quiz_count
 
     @model_validator(mode="after")
     def validate_content_types(self) -> "ContentTask":
@@ -272,6 +239,9 @@ class ContextPack(BaseModel):
     task_id: str
     knowledge_unit_id: str
     source_refs: list[str] = Field(default_factory=list)
+    declared_source_refs: list[str] = Field(default_factory=list)
+    retrieved_source_refs: list[str] = Field(default_factory=list)
+    retrieval_reason: list[str] = Field(default_factory=list)
     selected_source_refs: list[str] = Field(default_factory=list)
     excerpts: list[ContextExcerpt] = Field(default_factory=list)
     prerequisite_titles: list[str] = Field(default_factory=list)
@@ -281,7 +251,7 @@ class ContextPack(BaseModel):
     retrieval_strategy: list[str] = Field(default_factory=list)
     source_snapshot: str | None = None
     retrieval_calls: list[RetrievalCall] = Field(default_factory=list)
-    audit_version: str = "retrieval-audit-v1"
+    audit_version: str = "retrieval-audit-v2"
 
 
 class ReviewIssue(BaseModel):
@@ -472,11 +442,6 @@ class ContentAttemptTrace(BaseModel):
     # Attempt zero is reserved for preflight blocks such as a missing
     # ContextPack, where no model call is allowed.
     attempt: int = Field(ge=0)
-    # The short names mirror BlueprintAttemptTrace and keep generic trace
-    # consumers simple; stage-specific fields below retain full provenance.
-    prompt: str = ""
-    raw_output: str = ""
-    parsed_output: dict[str, Any] | None = None
     generation_stage: Literal["initial", "revision", "skipped"] = "initial"
     generation_prompt: str = ""
     revision_prompt: str | None = None
@@ -489,11 +454,7 @@ class ContentAttemptTrace(BaseModel):
     generation_error: str | None = None
     generation_error_category: str | None = None
     generation_provider_metadata: dict[str, Any] = Field(default_factory=dict)
-    provider_metadata: dict[str, Any] = Field(default_factory=dict)
-    error: str | None = None
-    error_category: str | None = None
     hard_check: ContentHardCheckResult | None = None
-    check: ContentHardCheckResult | None = None
     critic_prompt: str | None = None
     critic_raw_output: str = ""
     critic_parsed_output: dict[str, Any] | None = None
@@ -515,26 +476,6 @@ class ContentAttemptTrace(BaseModel):
         "context_pack_source_over_budget",
         "upstream_failure",
     ] | None = None
-
-    @model_validator(mode="after")
-    def synchronize_compatibility_fields(self) -> "ContentAttemptTrace":
-        """Populate generic trace aliases without mutating stage-specific data."""
-
-        if not self.prompt:
-            self.prompt = self.revision_prompt or self.generation_prompt
-        if not self.raw_output:
-            self.raw_output = self.generation_raw_output
-        if self.parsed_output is None:
-            self.parsed_output = self.generation_parsed_output
-        if not self.provider_metadata:
-            self.provider_metadata = dict(self.generation_provider_metadata)
-        if self.error is None:
-            self.error = self.generation_error or self.critic_error
-        if self.error_category is None:
-            self.error_category = self.generation_error_category or self.critic_error_category
-        if self.check is None:
-            self.check = self.hard_check
-        return self
 
 
 class ContentUnitLoopTrace(BaseModel):

@@ -461,7 +461,6 @@ def _correct_quiz(
     except Exception:
         return None, "quiz_correction_error"
 
-    count = draft.question_count if draft.question_count is not None else len(draft.questions)
     candidate = QuizArtifact(
         artifact_id=f"quiz-{task.task_id}-fact-{correction_number}",
         run_id=quiz.run_id,
@@ -472,7 +471,6 @@ def _correct_quiz(
         knowledge_unit_ids=[unit.artifact_id],
         target_objectives=_unique([*draft.target_objectives, *(value for question in draft.questions for value in question.target_objectives)]),
         questions=list(draft.questions),
-        question_count=count,
         task_id=task.task_id,
         context_pack_id=context_pack.context_pack_id,
         prompt_version="regenerate_quiz_for_fact_check:v1",

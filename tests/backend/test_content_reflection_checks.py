@@ -28,6 +28,7 @@ def _unit() -> KnowledgeUnit:
 
 def _task() -> ContentTask:
     return ContentTask(
+        depth_guidance="standard",
         task_id="task-reflection-check",
         run_id="run-reflection-check",
         blueprint_version="blueprint:v1",

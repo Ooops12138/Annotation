@@ -59,6 +59,7 @@ def _state() -> dict[str, Any]:
         learning_objectives=["理解测试概念"],
     )
     task = ContentTask(
+        depth_guidance="standard",
         task_id="task-content-subgraph",
         run_id=run_id,
         blueprint_version="blueprint:v1",

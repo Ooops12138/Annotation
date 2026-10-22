@@ -107,7 +107,6 @@ class ScriptedFactCheckProvider:
         elif schema_name == "QuizDraft":
             payload = {
                 "knowledge_unit_id": "unit-1",
-                "question_count": 1,
                 "target_objectives": ["理解上确界"],
                 "questions": [{
                     "question_id": "quiz-1-corrected",
@@ -176,6 +175,7 @@ def _fixture(*, with_quiz: bool = False) -> tuple[
         knowledge_units=[unit],
     )
     task = ContentTask(
+        depth_guidance="standard",
         task_id="task-1",
         run_id=run_id,
         blueprint_version="blueprint-1:v1",
@@ -245,7 +245,7 @@ def _fixture(*, with_quiz: bool = False) -> tuple[
             knowledge_unit_ids=[unit.artifact_id],
             target_objectives=list(unit.learning_objectives),
             questions=[question],
-            question_count=1,
+
             task_id=task.task_id,
             context_pack_id=pack.context_pack_id,
             prompt_version="test",

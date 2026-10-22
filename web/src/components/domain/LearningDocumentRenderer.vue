@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { ArrowUpRight, BookOpen } from 'lucide-vue-next'
-import type { LearningDocument, ReviewIssue } from '../../lib/document'
+import type { ReviewIssue } from '../../lib/document'
+import type { SourceLocations } from '../../lib/api'
+import type { PresentedDocument } from '../../lib/documentAdapter'
 import DocumentNodeRenderer from './DocumentNodeRenderer.vue'
 import ReviewIssueBadge from './ReviewIssueBadge.vue'
 
-const props = defineProps<{ document: LearningDocument }>()
+const props = defineProps<{ document: PresentedDocument; sourceLocations?: SourceLocations }>()
 const learnerNotes = computed<ReviewIssue[]>(() => [
   ...(props.document.issues ?? []),
 ].filter((issue) => issue.severity !== 'blocking' && (issue.layer === 'fact' || issue.layer === 'stance' || issue.category === 'fact' || issue.category === 'uncertainty' || issue.category === 'conflict' || issue.category === 'stance')))
@@ -24,6 +26,8 @@ function toggleSection(id: string) {
         <h2>{{ document.title }}</h2>
       </div>
     </header>
+
+    <p v-if="document.integrity_issues.length" class="review-notice" role="alert">部分内容或审核信息异常，已标明不可用位置；其他章节可继续阅读。</p>
 
     <div class="document-rule" aria-hidden="true"></div>
 
@@ -44,8 +48,9 @@ function toggleSection(id: string) {
             </button>
           </div>
           <h3>{{ section.title }}</h3>
-          <div v-if="expandedSections[section.id] !== false" class="section-nodes">
-            <DocumentNodeRenderer v-for="(node, nodeIndex) in section.children" :key="`${section.id}-${nodeIndex}`" :node="node" :index="nodeIndex" />
+          <p v-if="section.unavailable || document.unavailable_targets.includes(section.id)" role="alert">本节暂不可用。</p>
+          <div v-else-if="expandedSections[section.id] !== false" class="section-nodes">
+            <DocumentNodeRenderer v-for="(node, nodeIndex) in section.children" :key="`${section.id}-${nodeIndex}`" :node="node" :index="nodeIndex" :unavailable-targets="document.unavailable_targets" :source-locations="sourceLocations" />
           </div>
         </section>
       </main>

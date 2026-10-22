@@ -248,6 +248,9 @@ def build_context_pack(
         task_id=task.task_id,
         knowledge_unit_id=task.knowledge_unit_id,
         source_refs=list(dict.fromkeys(selected_refs)),
+        declared_source_refs=list(unit.source_refs),
+        retrieved_source_refs=list(dict.fromkeys(selected_refs)),
+        retrieval_reason=strategies,
         selected_source_refs=list(dict.fromkeys(selected_refs)),
         excerpts=excerpts,
         prerequisite_titles=prerequisites,
@@ -358,7 +361,7 @@ def write_content_run_artifact(
     if content_loop_summary is not None:
         content_loop_summary["trace_path"] = trace_path
     payload = {
-        "schema_version": "content-artifact-v3" if traces or content_loop_summary is not None else "content-artifact-v1",
+        "schema_version": "content-artifact-v4",
         "run_id": run_id,
         "blueprint_version": blueprint_version,
         "tasks": [task.model_dump(mode="json") for task in tasks],

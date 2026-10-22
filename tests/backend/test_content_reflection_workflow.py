@@ -68,7 +68,6 @@ class WorkflowContentProvider:
         elif schema_name == "QuizDraft":
             payload = {
                 "knowledge_unit_id": self.quiz_unit_ids.pop(0),
-                "question_count": 0,
                 "target_objectives": [],
                 "questions": [],
             }

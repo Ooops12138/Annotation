@@ -232,7 +232,7 @@ def write_quiz_artifact(state: Mapping[str, Any], *, root: str | Path | None = N
     run_id = str(state.get("run_id") or "run")
     path = _immutable_path(Path(root or (STORAGE_DIR / "artifacts" / "quiz")) / _safe_run_id(run_id) / "quiz-v1.json")
     payload = {
-        "schema_version": "quiz-artifact-v1",
+        "schema_version": "quiz-artifact-v2",
         "run_id": run_id,
         "quiz_artifacts": [_model_dump(artifact) for artifact in artifacts],
         "quiz_coverage": _model_dump(coverage) if coverage is not None else None,

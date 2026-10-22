@@ -10,12 +10,12 @@ import {
 } from 'lucide-vue-next'
 import LearningDocumentRenderer from './LearningDocumentRenderer.vue'
 import { useAppStore } from '../../stores/app'
-import { normalizeLearningDocument } from '../../lib/documentAdapter'
-import { reviewStatusLabel, type ReviewReport } from '../../lib/document'
+import { normalizeLearningDocument, normalizeReviewReport } from '../../lib/documentAdapter'
+import { reviewStatusLabel } from '../../lib/document'
 import type { LibraryBook, LibraryDocumentSummary } from '../../lib/api'
 
 const app = useAppStore()
-const document = computed(() => normalizeLearningDocument(app.document))
+const document = computed(() => normalizeLearningDocument(app.document, app.reviewReport))
 const selectedBook = computed(() => app.selectedBook)
 const selectedSummary = computed(() => app.selectedDocumentSummary)
 
@@ -25,10 +25,9 @@ function summaryReviewStatus(summary: LibraryDocumentSummary | null): string | n
 }
 
 const reviewStatus = computed(() => {
-  const reportStatus = app.reviewReport && typeof app.reviewReport === 'object'
-    ? (app.reviewReport as ReviewReport).status
-    : null
-  return reportStatus || summaryReviewStatus(selectedSummary.value)
+  const report = normalizeReviewReport(app.reviewReport)
+  if (document.value?.integrity_issues.length) return report?.status === 'blocked' ? 'blocked' : 'at_risk'
+  return report?.status || summaryReviewStatus(selectedSummary.value)
 })
 const blocked = computed(() => {
   const rawStatus = app.document && typeof app.document === 'object'
@@ -60,6 +59,7 @@ function documentStatus(summary: LibraryDocumentSummary): string {
 }
 
 function documentStatusLabel(summary: LibraryDocumentSummary): string {
+  if (summary.document_id === app.selectedDocumentId && document.value?.integrity_issues.length) return reviewStatusLabel('at_risk')
   return reviewStatusLabel(documentStatus(summary))
 }
 
@@ -124,6 +124,9 @@ onMounted(() => {
 
 watch(() => app.error, (error) => {
   if (error) console.error('[Annotation] 文档库操作失败:', error)
+}, { immediate: true })
+watch(() => document.value?.integrity_issues, (errors) => {
+  if (errors?.length) console.error('[Annotation] 文档局部完整性异常:', errors)
 }, { immediate: true })
 watch(blocked, (isBlocked) => {
   if (isBlocked) console.warn('[Annotation] 学习文档处于阻塞状态，已停止学习者呈现。')
@@ -239,6 +242,7 @@ watch(blocked, (isBlocked) => {
         <div v-else-if="blocked" class="annotation-empty" role="alert">
           此部分暂不可用，学习内容正在等待进一步核查。
         </div>
+        <div v-else-if="app.document && !document" class="annotation-empty" role="alert">文档结构异常，暂时无法打开。</div>
         <div v-else-if="!document" class="library-welcome" role="status">
           <p class="library-label">{{ selectedBookDocuments.length ? '选择学习文档' : '教材已保存' }}</p>
           <h2>{{ selectedBookDocuments.length ? '从已有版本继续' : '准备生成学习页面' }}</h2>
@@ -249,7 +253,7 @@ watch(blocked, (isBlocked) => {
             <CircleAlert :size="16" stroke-width="1.6" aria-hidden="true" />
             <span>这份学习文档包含待核查提示，阅读时请结合教材依据判断。</span>
           </div>
-          <LearningDocumentRenderer :document="document" />
+          <LearningDocumentRenderer :document="document" :source-locations="app.sourceLocations" />
         </template>
       </section>
     </section>

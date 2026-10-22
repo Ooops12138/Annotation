@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, Mapping
 
-from annotation.config import LEGACY_SOURCE_INDEX_PATH, STORAGE_DIR
+from annotation.config import STORAGE_DIR
 
 
 DEFAULT_DATABASE_PATH = STORAGE_DIR / "annotation.sqlite3"
@@ -55,7 +55,7 @@ def _decode(value: Any, default: Any) -> Any:
 def project_document_status(document_status: str | None, review_status: str | None) -> str:
     """Return the durable document projection authorized by a review.
 
-    The database is also used directly by compatibility/import paths, so the
+    The database is also used directly by audit and repair tools, so the
     release invariant belongs here as well as in the application service:
     warning-only reviews are readable ``accepted`` previews, while only a
     passed review can produce ``published``.
@@ -213,47 +213,12 @@ CREATE VIRTUAL TABLE IF NOT EXISTS source_blocks_fts USING fts5(
 """
 
 
-def _ensure_column(connection: sqlite3.Connection, table: str, column: str, definition: str) -> None:
-    columns = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
-    if column not in columns:
-        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
-
-
-def _ensure_compatible_source_schema(connection: sqlite3.Connection) -> None:
-    """Add optional source-artifact fields to an older source index copy."""
-
-    # ``source-index.sqlite3`` predates the unified database and only has the
-    # first seven columns.  ALTER TABLE is safe and idempotent for an existing
-    # annotation.sqlite3 created by an earlier development build.
-    for column, definition in (
-        ("artifact_id", "TEXT"),
-        ("run_id", "TEXT"),
-        ("version", "INTEGER NOT NULL DEFAULT 1"),
-        ("status", "TEXT NOT NULL DEFAULT 'draft'"),
-        ("source_refs_json", "TEXT NOT NULL DEFAULT '[]'"),
-        ("created_by", "TEXT NOT NULL DEFAULT 'migration'"),
-        ("raw_text", "TEXT NOT NULL DEFAULT ''"),
-        ("warnings_json", "TEXT NOT NULL DEFAULT '[]'"),
-        ("metadata_json", "TEXT NOT NULL DEFAULT '{}'"),
-    ):
-        _ensure_column(connection, "source_blocks", column, definition)
-
-
-def _rebuild_source_fts(connection: sqlite3.Connection) -> None:
-    connection.execute("DELETE FROM source_blocks_fts")
-    connection.execute(
-        "INSERT INTO source_blocks_fts(rowid, source_ref, text) "
-        "SELECT rowid, source_ref, text FROM source_blocks"
-    )
-
-
 def initialize_database(database: str | Path | sqlite3.Connection = DEFAULT_DATABASE_PATH) -> None:
-    """Create or upgrade the local business database, safely and idempotently."""
+    """Initialize the current database schema, safely and idempotently."""
 
     connection, owned = _connect(database)
     try:
         connection.executescript(SCHEMA_SQL)
-        _ensure_compatible_source_schema(connection)
         connection.execute(
             "INSERT INTO schema_meta(key, value) VALUES ('schema_version', ?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -634,7 +599,19 @@ class PersistenceRepository:
     def list_document_versions(self, document_id: str) -> list[dict[str, Any]]:
         return self._read_all("SELECT * FROM document_versions WHERE document_id = ? ORDER BY version DESC", (document_id,))
 
-    # Library and source-index migration -----------------------------------
+    def source_locations(self, source_refs: list[str]) -> dict[str, dict[str, Any]]:
+        result: dict[str, dict[str, Any]] = {}
+        for offset in range(0, len(source_refs), 500):
+            batch = source_refs[offset:offset + 500]
+            placeholders = ",".join("?" for _ in batch)
+            for row in self._read_all(
+                f"SELECT source_ref, page_number, block_index FROM source_blocks WHERE source_ref IN ({placeholders})",
+                tuple(batch),
+            ):
+                result[row["source_ref"]] = row
+        return result
+
+    # Library -----------------------------------
     def list_library(self) -> list[dict[str, Any]]:
         """Return books with their saved documents and current versions."""
 
@@ -645,70 +622,6 @@ class PersistenceRepository:
                 document["current_version"] = self.get_current_document_version(document["document_id"])
             book["documents"] = documents
         return books
-
-    def migrate_source_index(self, source_database: str | Path = LEGACY_SOURCE_INDEX_PATH) -> int:
-        """Copy legacy ``source_blocks`` rows and rebuild FTS in this database.
-
-        The source database is opened read-only from the repository's point of
-        view.  Re-running this method upserts the same source references and
-        never duplicates them.
-        """
-
-        source_path = Path(source_database)
-        if not source_path.is_file():
-            return 0
-        if self.database_path and Path(self.database_path).resolve() == source_path.resolve():
-            return 0
-        source, owned = _connect(source_path)
-        try:
-            try:
-                rows = source.execute(
-                    "SELECT source_ref, document_id, page_number, block_index, text, text_hash, parser_version FROM source_blocks"
-                ).fetchall()
-            except sqlite3.OperationalError:
-                # A configured legacy path may be an empty SQLite file.  It is
-                # still a valid no-op migration rather than a startup failure.
-                rows = []
-        finally:
-            if owned:
-                source.close()
-        with self._transaction() as connection:
-            for row in rows:
-                connection.execute(
-                    """
-                    INSERT INTO source_blocks
-                        (source_ref, document_id, page_number, block_index, text,
-                         text_hash, parser_version, artifact_id, source_refs_json,
-                         raw_text)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(source_ref) DO UPDATE SET
-                        document_id=excluded.document_id,
-                        page_number=excluded.page_number,
-                        block_index=excluded.block_index,
-                        text=excluded.text,
-                        text_hash=excluded.text_hash,
-                        parser_version=excluded.parser_version,
-                        raw_text=excluded.raw_text
-                    """,
-                    (row["source_ref"], row["document_id"], row["page_number"], row["block_index"],
-                     row["text"], row["text_hash"], row["parser_version"],
-                     f"{row['source_ref']}-artifact", _json([row["source_ref"]]), row["text"]),
-                )
-            _rebuild_source_fts(connection)
-        return len(rows)
-
-
-Repository = PersistenceRepository
-
-
-def migrate_source_index(
-    source_database: str | Path = LEGACY_SOURCE_INDEX_PATH,
-    database: str | Path = DEFAULT_DATABASE_PATH,
-) -> int:
-    """Convenience wrapper for one-shot startup/CLI migrations."""
-
-    with PersistenceRepository(database) as repository:
-        return repository.migrate_source_index(source_database)
 
 
 def _row_dict(row: sqlite3.Row) -> dict[str, Any]:
@@ -724,7 +637,5 @@ __all__ = [
     "ImmutableArtifactError",
     "PersistenceError",
     "PersistenceRepository",
-    "Repository",
     "initialize_database",
-    "migrate_source_index",
 ]

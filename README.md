@@ -119,14 +119,9 @@ GET  /api/runs/{run_id}            读取运行状态和 artifact 索引
 - `blocked`：发现来源缺失、结构/公式无效或其他阻断性问题。页面不呈现正文，
   只显示“暂不可用”和审核提示；原始 artifact、问题和失败记录仍保留在 API/存储中。
 
-现有的 DeepSeek 试跑可以离线导入（不会发起新请求）：
+当前代码以现行数据契约为准，不自动迁移旧字段、旧来源数据库或重建早期运行。旧 artifact 原文件保留供审计；过时数据需要重新生成。
 
-```powershell
-$env:PYTHONPATH = "src"
-uv run python scripts/import_legacy_run.py deepseek-full-context-live-001
-```
-
-该命令只需在尚未导入该运行的数据库上执行一次；导入后的文档可直接从文档库打开。
+已存文档若只有某节或某个节点损坏，页面在原位置标明不可用，其余章节继续可读；审核记录损坏会显示核查提示，不会伪装为审核通过。
 
 默认离线运行：
 
@@ -138,7 +133,9 @@ uv run pytest -q
 运行一次工作流：
 
 ```powershell
-Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/workflow/run
+$library = Invoke-RestMethod http://127.0.0.1:8000/api/library
+$body = @{ book_id = $library.books[0].book_id } | ConvertTo-Json
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/runs -ContentType "application/json" -Body $body
 ```
 
 ### 使用 DeepSeek 做真实试跑
@@ -152,7 +149,9 @@ $env:MODEL_PROVIDER = "deepseek"
 $env:MODEL_NAME = "deepseek-chat"
 $env:MODEL_API_KEY = "<your-deepseek-api-key>"
 $env:MODEL_THINKING = "disabled"
-Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/workflow/run?run_id=deepseek-smoke-001"
+$library = Invoke-RestMethod http://127.0.0.1:8000/api/library
+$body = @{ book_id = $library.books[0].book_id; run_id = "deepseek-smoke-001" } | ConvertTo-Json
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/runs -ContentType "application/json" -Body $body
 ```
 
 如果本机继承了不可用的 SOCKS 环境代理，可在这次试跑中清除代理变量，或按网络环境

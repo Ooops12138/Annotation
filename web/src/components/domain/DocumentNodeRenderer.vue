@@ -7,9 +7,10 @@ import MarkdownBlock from './MarkdownBlock.vue'
 import CalloutBlock from './CalloutBlock.vue'
 import QuizCard from './QuizCard.vue'
 import InteractiveComponentBlock from './InteractiveComponentBlock.vue'
+import type { SourceLocations } from '../../lib/api'
 import SourcePanel from './SourcePanel.vue'
 
-const props = defineProps<{ node: any; index?: number }>()
+const props = defineProps<{ node: any; index?: number; unavailableTargets?: string[]; sourceLocations?: SourceLocations }>()
 const emit = defineEmits<{ rejected: [record: RejectedNodeRecord] }>()
 const renderer = () => resolveNodeRenderer(props.node)
 onMounted(() => {
@@ -22,12 +23,12 @@ onMounted(() => {
 </script>
 
 <template>
-  <div v-if="asDocumentNode(node)" class="annotation-node">
+  <div v-if="asDocumentNode(node) && !unavailableTargets?.includes(node.id)" class="annotation-node">
     <MarkdownBlock v-if="renderer() === 'markdown'" :content="node.content" />
     <CalloutBlock v-else-if="renderer() === 'callout'" :tone="node.tone" :title="node.title" :content="node.content" />
     <QuizCard v-else-if="renderer() === 'quiz'" :question="node.question" :options="node.options" :answer="node.answer" :explanation="node.explanation" />
     <InteractiveComponentBlock v-else-if="renderer() === 'interactive_component'" :spec="node.spec" />
-    <SourcePanel :source-refs="node.source_refs" />
+    <SourcePanel :source-refs="node.source_refs" :locations="sourceLocations" />
   </div>
   <div v-else class="annotation-rejected-node" role="alert">
     <CircleAlert :size="16" stroke-width="1.5" aria-hidden="true" />

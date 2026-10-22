@@ -7,15 +7,14 @@ use an unambiguous cited formulation or omit that question with a recorded reaso
 
 Generate a small, traceable single-choice quiz set for one knowledge unit.
 Follow the course architect's explicit question count; otherwise choose from
-the objectives and ContextPack evidence. `question_count` equals the length of
-`questions`; the number may be zero when no supported question is useful.
+the objectives and ContextPack evidence. The number may be zero when no supported
+question is useful. Return only the questions; the system derives their count.
 
 Return only valid JSON matching this shape:
 
 ```json
 {
   "knowledge_unit_id": "exact id from the knowledge unit context",
-  "question_count": 0,
   "target_objectives": ["exact objective text from the knowledge unit context"],
   "questions": [
     {

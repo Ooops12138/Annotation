@@ -78,3 +78,67 @@ describe('Document IR presentation contract', () => {
     expect(reviewStatusLabel('fixture')).toBe('审核状态待确认')
   })
 })
+
+
+describe('local integrity isolation', () => {
+  const root = {
+    artifact_id: 'a', document_id: 'd', run_id: 'r', version: 1, status: 'published',
+    created_by: 'test', blueprint_version: 'b:v1', title: 'Large textbook', issues: [],
+  }
+  const section = (index: number) => ({ id: `s-${index}`, title: `Chapter ${index}`, children: [{ type: 'markdown', id: `m-${index}`, content: `Readable ${index}` }] })
+  const report = { artifact_id: 'review', report_id: 'review', run_id: 'r', version: 1, status: 'passed', created_by: 'reviewer', document_id: 'd', reviewed_artifact_id: 'a', issues: [] }
+
+  it('keeps all 1000 positions when a middle chapter is malformed', () => {
+    const sections: unknown[] = Array.from({ length: 1000 }, (_, i) => section(i))
+    sections[500] = { id: 'broken', title: 'Damaged chapter', children: null }
+    const value = { ...root, sections }
+    const result = normalizeLearningDocument(value, report)!
+    expect(result.sections).toHaveLength(1000)
+    expect(result.sections[500].unavailable).toBe(true)
+    expect(result.sections[499].children).toEqual(section(499).children)
+    expect(result.sections[501].children).toEqual(section(501).children)
+    expect(result.integrity_issues[0].diagnostic_path).toBe('document.sections[500]')
+    expect(value.sections[500]).toEqual({ id: 'broken', title: 'Damaged chapter', children: null })
+  })
+
+  it('records every malformed review issue and scopes the known target', () => {
+    const review = { ...report, issues: [{ issue_id: 'bad', target_id: 'm-0', severity: 'blocking' }, 123] }
+    const result = normalizeLearningDocument({ ...root, sections: [section(0), section(1)] }, review)!
+    expect(result.unavailable_targets).toEqual(['m-0'])
+    expect(result.integrity_issues.map((error) => error.diagnostic_path)).toEqual(['review_report.issues[0]', 'review_report.issues[1]'])
+    expect(result.sections[1].children).toEqual(section(1).children)
+    expect(normalizeReviewReport(review)?.status).toBe('at_risk')
+  })
+
+  it('rejects one bad node without dropping its healthy siblings', () => {
+    const children = [section(0).children[0], { type: 'script', id: 'bad' }, section(1).children[0]]
+    const result = normalizeLearningDocument({ ...root, sections: [{ ...section(0), children }] }, report)!
+    expect(result.sections[0].children).toEqual(children)
+    expect(result.integrity_issues[0].diagnostic_path).toBe('document.sections[0].children[1]')
+  })
+
+  it('reserves total rejection for unrecognizable root structures', () => {
+    expect(normalizeLearningDocument({ ...root, sections: null }, report)).toBeNull()
+    expect(normalizeLearningDocument({ ...root, sections: [null] }, report)?.sections[0].unavailable).toBe(true)
+  })
+
+  it('does not trust a missing, corrupt or mismatched audit report', () => {
+    for (const review of [null, { status: 'passed' }, { ...report, document_id: 'other' }]) {
+      expect(normalizeLearningDocument({ ...root, sections: [section(0)] }, review)?.integrity_issues.length).toBeGreaterThan(0)
+    }
+  })
+
+  it('isolates duplicate section identifiers instead of breaking navigation', () => {
+    const result = normalizeLearningDocument({ ...root, sections: [section(0), section(0), section(1)] }, report)!
+    expect(new Set(result.sections.map((s) => s.id)).size).toBe(3)
+    expect(result.sections[0].unavailable).toBe(true)
+    expect(result.sections[1].unavailable).toBe(true)
+    expect(result.sections[2].unavailable).toBeUndefined()
+  })
+
+  it('shows a shared document and report issue once', () => {
+    const issue = { issue_id: 'shared', category: 'uncertainty', severity: 'warning', message: 'Verify this claim' }
+    const result = normalizeLearningDocument({ ...root, issues: [issue], sections: [section(0)] }, { ...report, issues: [issue] })!
+    expect(result.issues).toEqual([issue])
+  })
+})

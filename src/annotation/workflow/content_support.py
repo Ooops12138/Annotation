@@ -118,6 +118,7 @@ def _plan_content_tasks(run_id: str, blueprint: LearningBlueprint) -> list[Conte
             "由 Agent 根据学习目标和教材证据决定是否生成练习及题量；不为凑数编题",
         ]
         tasks.append(ContentTask(
+            depth_guidance="standard",
             task_id=f"task-{run_id}-{index:03d}",
             run_id=run_id,
             blueprint_version=blueprint_version,

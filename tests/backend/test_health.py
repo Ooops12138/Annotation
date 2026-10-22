@@ -45,16 +45,15 @@ def test_demo_document_renders_math_in_rich_node_text() -> None:
 
 
 def test_minimal_workflow_endpoint_uses_offline_provider_by_default() -> None:
-    response = client.post(f"/api/workflow/run?run_id=test-api-quiz-{uuid.uuid4().hex[:8]}")
+    books = client.get("/api/library").json()["books"]
+    response = client.post("/api/runs", json={"book_id": books[0]["book_id"], "run_id": f"test-api-quiz-{uuid.uuid4().hex[:8]}"})
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "ok"
-    assert payload["provider_metadata"]["provider"] == "mock"
+    assert payload["run"]["provider"] == "mock"
     assert payload["document"]["blueprint_version"].startswith("bp-fixture-001:v1")
-    assert payload["content_tasks"]
-    assert len(payload["content_tasks"]) <= len(payload["content_artifacts"])
     assert len(payload["quiz_artifacts"]) == 6
-    assert all(artifact["question_count"] == len(artifact["questions"]) for artifact in payload["quiz_artifacts"])
+    assert all("question_count" not in artifact for artifact in payload["quiz_artifacts"])
     assert payload["quiz_coverage"]["status"] == "passed"
     assert payload["quiz_artifact_path"]
     assert payload["review_report"]["report_id"] == payload["document"]["review_report_id"]
@@ -101,3 +100,7 @@ def test_saved_document_read_does_not_construct_model_provider(monkeypatch, tmp_
     response = client.get(f"/api/documents/{document_id}")
     assert response.status_code == 200
     assert response.json()["document"] is not None
+
+
+def test_retired_workflow_route_is_not_available():
+    assert client.post("/api/workflow/run").status_code == 404

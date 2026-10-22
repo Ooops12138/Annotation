@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from pathlib import Path
 from threading import Lock
@@ -14,19 +15,20 @@ from annotation.persistence import DEFAULT_DATABASE_PATH, PersistenceRepository,
 from annotation.retrieval import index_source_blocks
 
 
+logger = logging.getLogger(__name__)
+
 _ready_lock = Lock()
 _ready = False
 
 
 def repository() -> PersistenceRepository:
-    """Open the shared local database and run one-time compatibility setup."""
+    """Open the shared local database and register the local development textbook once."""
 
     global _ready
     repo = PersistenceRepository(DEFAULT_DATABASE_PATH)
     if not _ready:
         with _ready_lock:
             if not _ready:
-                repo.migrate_source_index()
                 _register_seed_book(repo)
                 _ready = True
     return repo
@@ -43,86 +45,42 @@ def _load_json(path: str | Path) -> dict[str, Any]:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def _normalize_legacy_document_node(value: Any) -> Any:
-    """Project retired Document IR nodes into the supported read contract.
-
-    Historical document artifacts remain immutable evidence.  Their retired
-    formula/example nodes are converted only in memory so the API can continue
-    serving them after the renderer contract becomes Markdown/Callout/Quiz.
-    """
-
-    if not isinstance(value, Mapping):
-        return value
-    node = dict(value)
-    node_type = node.get("type")
-    node_id = node.get("id")
-    source_refs = node.get("source_refs")
-    refs = {"source_refs": source_refs} if source_refs is not None else {}
-
-    if node_type == "formula" and isinstance(node_id, str):
-        latex = node.get("latex")
-        if isinstance(latex, str):
-            return {
-                "type": "markdown",
-                "id": node_id,
-                "content": f"$$\n{latex}\n$$",
-                **refs,
-            }
-
-    if node_type == "example" and isinstance(node_id, str):
-        title = node.get("title")
-        problem = node.get("problem")
-        solution = node.get("solution")
-        if isinstance(title, str) and isinstance(problem, str) and isinstance(solution, str):
-            return {
-                "type": "markdown",
-                "id": node_id,
-                "content": f"### {title or '例题'}\n\n**问题**\n\n{problem}\n\n**解析**\n\n{solution}",
-                **refs,
-            }
-
+def _document_from_path(path: str | Path) -> dict[str, Any]:
+    """Validate the root only; local defects belong to the reading projection."""
+    payload = _load_json(path)
+    if not isinstance(payload, dict) or payload.get("schema_version") != "document-artifact-v1":
+        raise ValueError("unsupported_document_schema")
+    value = payload["document"]
+    if not isinstance(value, dict) or not isinstance(value.get("sections"), list):
+        raise ValueError("invalid_document_root")
+    LearningDocument.model_validate({**value, "sections": [], "issues": []})
     return value
 
 
-def _normalize_legacy_document(value: Any) -> Any:
-    if not isinstance(value, Mapping):
-        return value
-    document = dict(value)
-    sections = document.get("sections")
-    if not isinstance(sections, list):
-        return document
-    normalized_sections: list[Any] = []
-    for section in sections:
-        if not isinstance(section, Mapping):
-            normalized_sections.append(section)
-            continue
-        normalized_section = dict(section)
-        children = normalized_section.get("children")
-        if isinstance(children, list):
-            normalized_section["children"] = [
-                _normalize_legacy_document_node(child) for child in children
-            ]
-        normalized_sections.append(normalized_section)
-    document["sections"] = normalized_sections
-    return document
+def _document_source_refs(document: Mapping[str, Any]) -> list[str]:
+    refs: set[str] = set()
+    values = [document]
+    for section in document["sections"]:
+        if isinstance(section, dict) and isinstance(section.get("children"), list):
+            values.extend(node for node in section["children"] if isinstance(node, dict))
+    for value in values:
+        candidates = value.get("source_refs", [])
+        if isinstance(candidates, list):
+            refs.update(ref for ref in candidates if isinstance(ref, str))
+    return sorted(refs)
 
 
-def _document_from_path(path: str | Path) -> LearningDocument:
-    payload = _load_json(path)
-    return LearningDocument.model_validate(
-        _normalize_legacy_document(payload.get("document", payload))
-    )
-
-
-def _review_from_path(path: str | Path | None) -> ReviewReport | None:
-    if not path or not Path(path).is_file():
+def _review_from_path(path: str | Path | None) -> dict[str, Any] | None:
+    if not path:
         return None
-    payload = _load_json(path)
-    value = payload.get("report", payload)
     try:
-        return ReviewReport.model_validate(value)
-    except Exception:
+        payload = _load_json(path)
+    except (OSError, ValueError) as exc:
+        logger.warning("Cannot read review artifact %s: %s", path, exc)
         return None
+    # Preserve malformed issue records for explicit, scoped presentation diagnostics.
+    value = payload.get("report") if isinstance(payload, dict) else None
+    return value if isinstance(value, dict) else None
 
 
 _effective_document_status = project_document_status
@@ -518,7 +476,11 @@ def load_document_payload(repo: PersistenceRepository, document_id: str, *, vers
     if not version_row:
         return None
     artifact = repo.get_artifact(version_row["artifact_id"]) if version_row.get("artifact_id") else None
-    document = _document_from_path(artifact["path"]) if artifact else None
+    try:
+        document = _document_from_path(artifact["path"]) if artifact else None
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        logger.warning("Cannot read document artifact %s: %s", artifact["path"] if artifact else None, exc)
+        document = None
     metadata = version_row.get("metadata") or {}
     review = _review_from_path(metadata.get("review_artifact_path"))
     projected_status = _effective_document_status(
@@ -526,25 +488,23 @@ def load_document_payload(repo: PersistenceRepository, document_id: str, *, vers
         version_row.get("review_status"),
     )
     if document is not None:
-        # The SQLite version row is the compatibility/release projection.  A
-        # legacy artifact can carry the old ``published + at_risk`` pair, so
-        # normalize it on read without rewriting the immutable artifact.
-        document.status = projected_status
-    # A missing/corrupt artifact is itself a blocking integrity failure; never
-    # expose an apparently valid library entry with an empty document body.
+        document["status"] = projected_status
+    # An invalid root or a formal release block hides the document. Local
+    # defects and damaged review records remain visible to the projection.
     run = repo.get_run(version_row["run_id"]) if version_row.get("run_id") else None
     is_blocked = (
         version_row.get("document_status") == "blocked"
         or version_row.get("review_status") == "blocked"
         or document is None
-        or review is None
         or projected_status not in {"accepted", "published"}
+        or (review is not None and review.get("status") == "blocked")
         or (run is not None and run.get("status") in {"blocked", "failed"})
     )
     return {
         "status": "blocked" if is_blocked else "ok",
-        "document": None if is_blocked else (document.model_dump(mode="json") if document else None),
-        "review_report": review.model_dump(mode="json") if review else None,
+        "document": None if is_blocked else document,
+        "source_locations": repo.source_locations(_document_source_refs(document)) if document else {},
+        "review_report": review,
         "document_record": document_row,
         "document_version": version_row,
         "run": run,
@@ -565,91 +525,6 @@ def load_run_payload(repo: PersistenceRepository, run_id: str) -> dict[str, Any]
     content_row = next((item for item in artifacts if item.get("kind") == "content"), None)
     fact_check_row = next((item for item in artifacts if item.get("kind") == "fact_check"), None)
     interactive_component_row = next((item for item in artifacts if item.get("kind") == "interactive_component"), None)
-    if loop_summary is None:
-        blueprint_row = next((item for item in artifacts if item.get("kind") == "blueprint"), None)
-        if blueprint_row:
-            try:
-                payload = _load_json(blueprint_row["path"])
-                if payload.get("hierarchy_trace") is not None:
-                    loop_summary = _blueprint_loop_summary({"blueprint_hierarchy_trace": payload["hierarchy_trace"],
-                        "blueprint_trace_path": blueprint_row["path"]})
-                trace = payload.get("loop_trace") or {}
-                loop_summary = {
-                    "trace_id": trace.get("trace_id"),
-                    "attempt_count": len(trace.get("attempts") or []),
-                    "max_attempts": trace.get("max_attempts"),
-                    "final_status": trace.get("final_status"),
-                    "stop_reason": trace.get("stop_reason"),
-                    "trace_path": blueprint_row.get("path"),
-                } if trace else loop_summary
-            except (OSError, ValueError, TypeError):
-                loop_summary = None
-    if not content_loop_summary:
-        if content_row:
-            try:
-                payload = _load_json(content_row["path"])
-                content_loop_summary = payload.get("content_loop_summary")
-                if content_loop_summary is not None and not content_loop_summary.get("trace_path"):
-                    content_loop_summary = {**content_loop_summary, "trace_path": content_row.get("path")}
-                if content_loop_summary is None and payload.get("content_loop_traces"):
-                    traces = payload["content_loop_traces"]
-                    statuses = [str(item.get("final_status") or item.get("status") or "") for item in traces]
-                    content_loop_summary = {
-                        "unit_count": len(traces),
-                        "accepted_count": sum(status == "accepted" for status in statuses),
-                        "blocked_count": sum(status == "blocked" for status in statuses),
-                        "failed_count": sum(status == "failed" for status in statuses),
-                        "attempt_count": sum(len(item.get("attempts") or []) for item in traces),
-                        "final_status": "failed" if "failed" in statuses else "blocked" if "blocked" in statuses else "accepted",
-                        "trace_path": content_row.get("path"),
-                    }
-            except (OSError, ValueError, TypeError):
-                content_loop_summary = None
-    if content_loop_summary is not None and not content_loop_summary.get("trace_path") and content_row:
-        content_loop_summary = {**content_loop_summary, "trace_path": content_row.get("path")}
-    if fact_check_compact_summary is None and fact_check_row:
-        try:
-            fact_check_payload = _load_json(fact_check_row["path"])
-            artifact_payload = fact_check_payload.get("fact_check")
-            fact_check_compact_summary = fact_check_payload.get("summary")
-            if fact_check_compact_summary is None and isinstance(artifact_payload, Mapping):
-                fact_check_compact_summary = artifact_payload.get("summary")
-            if isinstance(fact_check_compact_summary, Mapping):
-                fact_check_compact_summary = dict(fact_check_compact_summary)
-                artifact_status = (
-                    artifact_payload.get("status")
-                    if isinstance(artifact_payload, Mapping)
-                    else None
-                )
-                status = fact_check_payload.get("status") or artifact_status
-                if status and not fact_check_compact_summary.get("final_status"):
-                    fact_check_compact_summary["final_status"] = status
-            elif fact_check_payload.get("status"):
-                fact_check_compact_summary = {"final_status": fact_check_payload["status"]}
-        except (OSError, ValueError, TypeError):
-            fact_check_compact_summary = None
-    if interactive_component_compact_summary is None and interactive_component_row:
-        try:
-            component_payload = _load_json(interactive_component_row["path"])
-            interactive_component_compact_summary = component_payload.get("summary")
-            trace_payload = component_payload.get("loop_trace")
-            if interactive_component_compact_summary is None and isinstance(trace_payload, Mapping):
-                interactive_component_compact_summary = {
-                    "component_count": len(component_payload.get("interactive_components") or []),
-                    "attempt_count": len(trace_payload.get("attempts") or []),
-                    "final_status": trace_payload.get("final_status"),
-                    "stop_reason": trace_payload.get("stop_reason"),
-                }
-            if isinstance(interactive_component_compact_summary, Mapping):
-                interactive_component_compact_summary = dict(interactive_component_compact_summary)
-                status = component_payload.get("status") or (
-                    trace_payload.get("final_status") if isinstance(trace_payload, Mapping) else None
-                )
-                if status and not interactive_component_compact_summary.get("final_status"):
-                    interactive_component_compact_summary["final_status"] = status
-                interactive_component_compact_summary.setdefault("trace_path", interactive_component_row.get("path"))
-        except (OSError, ValueError, TypeError):
-            interactive_component_compact_summary = None
     result: dict[str, Any] = {
         "status": run["status"],
         "run": run,

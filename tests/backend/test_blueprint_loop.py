@@ -243,3 +243,15 @@ def test_trace_artifact_contains_loop_and_run_summary(monkeypatch) -> None:
     assert len(blueprint_payload["loop_trace"]["attempts"]) == 1
     assert run_payload["blueprint_loop"]["attempt_count"] == 1
     assert run_payload["blueprint_loop"]["trace_path"] == state["blueprint_trace_path"]
+
+
+def test_real_blueprint_duplicate_ids_are_rejected_without_renaming():
+    import pytest
+    from annotation.workflow.graph import _blueprint_from_draft
+    from annotation.workflow.models import BlueprintDraft
+    draft = BlueprintDraft.model_validate({"title": "chapter", "knowledge_units": [
+        {"knowledge_unit_id": "duplicate", "title": title, "source_refs": ["src-1"]}
+        for title in ["one", "two"]
+    ]})
+    with pytest.raises(ProviderError, match="duplicate knowledge unit id"):
+        _blueprint_from_draft(draft=draft, state={"run_id": "r", "source_refs": ["src-1"]}, provider_name="test", fixture_adaptation=False)

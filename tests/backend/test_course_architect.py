@@ -146,6 +146,7 @@ def test_duplicate_architect_tasks_require_revision() -> None:
 def test_quiz_prompt_uses_architect_question_count() -> None:
     unit = _unit("ku-sup", "上确界", ["src-1"])
     task = ContentTask(
+        depth_guidance="standard",
         task_id="task-1",
         run_id="run-architect",
         blueprint_version="bp-architect:v1",
@@ -175,6 +176,7 @@ def test_interactive_planner_respects_content_task_policy() -> None:
     unit_required = _unit("ku-required", "基础概念", ["src-1"])
     unit_skip = _unit("ku-skip", "上确界", ["src-2"])
     required_task = ContentTask(
+        depth_guidance="standard",
         task_id="task-required",
         run_id="run-architect",
         blueprint_version="bp-architect:v1",
@@ -183,6 +185,7 @@ def test_interactive_planner_respects_content_task_policy() -> None:
         interactive_component_policy="required",
     )
     skip_task = ContentTask(
+        depth_guidance="standard",
         task_id="task-skip",
         run_id="run-architect",
         blueprint_version="bp-architect:v1",

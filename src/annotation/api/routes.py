@@ -115,6 +115,10 @@ def _run_response_from_state(result: dict[str, Any], state: dict[str, Any]) -> d
         "status": run.get("status") if run.get("status") in {"blocked", "failed"} else "ok",
         "run": run,
         "document": None if blocked else document.model_dump(mode="json") if document else None,
+        "source_locations": {
+            block.source_ref: {"source_ref": block.source_ref, "page_number": block.page_number, "block_index": block.block_index}
+            for block in state.get("source_blocks", [])
+        },
         "document_id": document.document_id if document else None,
         "document_status": document.status if document else None,
         "review_report": report.model_dump(mode="json") if report else None,
@@ -136,58 +140,6 @@ def _run_response_from_state(result: dict[str, Any], state: dict[str, Any]) -> d
         "fact_check_artifact_path": state.get("fact_check_artifact_path"),
         "interactive_component_summary": interactive_component_compact_summary,
         "interactive_component_artifact_path": state.get("interactive_component_artifact_path"),
-    }
-
-
-def _stored_compatibility_payload(repo: Any, run_id: str) -> dict[str, Any] | None:
-    """Recreate the original workflow endpoint response without model calls."""
-
-    loaded = load_run_payload(repo, run_id)
-    if not loaded:
-        return None
-    run = loaded.get("run") or {}
-    version = loaded.get("document_version") or {}
-    metadata = version.get("metadata") or {}
-    artifacts = {item.get("kind"): item for item in loaded.get("artifacts", [])}
-    content_payload = _read_artifact_payload((artifacts.get("content") or {}).get("path")) or {}
-    quiz_payload = _read_artifact_payload((artifacts.get("quiz") or {}).get("path")) or {}
-    fact_check_row = artifacts.get("fact_check") or {}
-    interactive_component_row = artifacts.get("interactive_component") or {}
-    blueprint_payload = _read_artifact_payload((artifacts.get("blueprint") or {}).get("path")) or {}
-    source_payload = _read_artifact_payload((artifacts.get("source") or {}).get("path")) or {}
-    document = loaded.get("document")
-    report = loaded.get("review_report")
-    blocked = loaded.get("status") == "blocked" or not document
-    return {
-        "status": run.get("status") if run.get("status") in {"blocked", "failed"} else "ok",
-        "document": None if blocked else document,
-        "review_report": report,
-        "review_report_path": metadata.get("review_artifact_path") or (artifacts.get("review") or {}).get("path"),
-        "blueprint": blueprint_payload.get("blueprint"),
-        "blueprint_check": blueprint_payload.get("blueprint_check"),
-        "content_tasks": content_payload.get("tasks", []),
-        "context_packs": content_payload.get("context_packs", []),
-        "content_artifacts": content_payload.get("content_artifacts", []),
-        "quiz_artifacts": content_payload.get("quiz_artifacts") or quiz_payload.get("quiz_artifacts", []),
-        "quiz_coverage": content_payload.get("quiz_coverage") or quiz_payload.get("quiz_coverage"),
-        "content_artifact_checks": content_payload.get("checks", {}),
-        "content_artifact_path": (artifacts.get("content") or {}).get("path"),
-        "quiz_artifact_path": (artifacts.get("quiz") or {}).get("path"),
-        "fact_check_summary": loaded.get("fact_check_summary"),
-        "fact_check_artifact_path": fact_check_row.get("path"),
-        "interactive_component_summary": loaded.get("interactive_component_summary"),
-        "interactive_component_artifact_path": interactive_component_row.get("path"),
-        "source_document": source_payload.get("document"),
-        "source_block_count": len(source_payload.get("blocks", [])),
-        "provider_metadata": run.get("metadata", {}).get("provider_metadata") or {
-            "provider": run.get("provider", ""),
-            "model": run.get("model", ""),
-            "config_version": run.get("config_version", ""),
-        },
-        "errors": [run.get("error")] if run.get("error") else [],
-        "warnings": run.get("metadata", {}).get("warnings", []),
-        "blueprint_loop": loaded.get("blueprint_loop"),
-        "content_loop": loaded.get("content_loop"),
     }
 
 
@@ -354,6 +306,7 @@ def create_run(request: RunRequest) -> dict[str, Any]:
             "run": loaded.get("run"),
             "document": loaded.get("document"),
             "document_id": loaded.get("document_record", {}).get("document_id"),
+            "source_locations": loaded.get("source_locations", {}),
             "review_report": loaded.get("review_report"),
             "review_status": loaded.get("review_report", {}).get("status") if loaded.get("review_report") else None,
             "artifacts": {item.get("kind"): item for item in loaded.get("artifacts", [])},
@@ -514,60 +467,3 @@ def source_search(query: str, limit: int = 10) -> dict[str, object]:
         "document_id": document.artifact_id,
         "results": [result.__dict__ for result in results],
     }
-
-
-@router.post("/api/workflow/run")
-def run_workflow(run_id: str = "run-demo-001") -> dict[str, object]:
-    """Compatibility endpoint; successful run ids are served from SQLite."""
-    repo = repository()
-    try:
-        stored = _stored_compatibility_payload(repo, run_id)
-        if stored:
-            return stored
-        book = _book_for_run(repo)
-    finally:
-        repo.close()
-    try:
-        execution = _execute_run(book=book, requested_run_id=run_id)
-        if execution.get("stored"):
-            repo = repository()
-            try:
-                payload = _stored_compatibility_payload(repo, run_id)
-                return payload or {"status": "error", "errors": ["无法读取已保存运行"]}
-            finally:
-                repo.close()
-        state = execution["state"]
-        result = execution["result"]
-        response = _run_response_from_state(result, state)
-        # Keep all fields consumed by the original tests and CLI callers.
-        response.update({
-            "review_report_path": state.get("review_report_path"),
-            "blueprint": state.get("blueprint").model_dump(mode="json") if state.get("blueprint") else None,
-            "blueprint_check": state.get("blueprint_check").model_dump(mode="json") if state.get("blueprint_check") else None,
-            "content_tasks": [task.model_dump(mode="json") for task in state.get("content_tasks", [])],
-            "context_packs": [pack.model_dump(mode="json") for pack in state.get("context_packs", [])],
-            "content_artifacts": [artifact.model_dump(mode="json") for artifact in state.get("content_artifacts", [])],
-            "quiz_artifacts": [artifact.model_dump(mode="json") for artifact in state.get("quiz_artifacts", [])],
-            "quiz_coverage": (
-                state.get("quiz_coverage_report").model_dump(mode="json")
-                if state.get("quiz_coverage_report") is not None
-                and hasattr(state.get("quiz_coverage_report"), "model_dump")
-                else state.get("quiz_coverage_report")
-            ),
-            "content_artifact_checks": state.get("content_artifact_checks", {}),
-            "content_artifact_path": state.get("content_artifact_path"),
-            "quiz_artifact_path": state.get("quiz_artifact_path"),
-            "fact_check_summary": fact_check_summary(state),
-            "fact_check_artifact_path": state.get("fact_check_artifact_path"),
-            "source_document": state.get("source_document").model_dump(mode="json") if state.get("source_document") else None,
-            "source_block_count": len(state.get("source_blocks", [])),
-            "provider_metadata": state.get("provider_metadata", {}),
-            # _run_response_from_state already exposes the compact summary;
-            # full trace data remains available only through artifact_path.
-            "blueprint_loop": response.get("blueprint_loop"),
-        })
-        return response
-    except HTTPException as exc:
-        return {"status": "error", "document": None, "review_report": None, "review_report_path": None, "blueprint": None, "provider_metadata": {}, "errors": [str(exc.detail)]}
-    except Exception as exc:
-        return {"status": "error", "document": None, "review_report": None, "review_report_path": None, "blueprint": None, "provider_metadata": {}, "errors": [str(exc)]}

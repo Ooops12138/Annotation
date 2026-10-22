@@ -36,7 +36,15 @@ export interface LibraryResponse {
   documents: LibraryDocumentSummary[]
 }
 
+export interface SourceLocation {
+  source_ref: string
+  page_number: number
+  block_index: number
+}
+export type SourceLocations = Record<string, SourceLocation>
+
 export interface WorkflowRunResult {
+  source_locations?: SourceLocations
   status?: string
   run_id?: string
   book_id?: string
@@ -119,6 +127,7 @@ function normalizeLibraryPayload(payload: unknown): LibraryResponse {
 }
 
 export interface DocumentResponse {
+  source_locations?: SourceLocations
   status: 'ok' | 'blocked'
   document: LearningDocument | null
   review_report: ReviewReport | null

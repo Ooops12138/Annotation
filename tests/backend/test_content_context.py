@@ -50,6 +50,7 @@ def test_context_pack_prioritizes_declared_refs_and_neighbors() -> None:
         knowledge_units=[unit],
     )
     task = ContentTask(
+        depth_guidance="standard",
         task_id="task-context-001",
         run_id="run-context",
         blueprint_version="bp-context:v1",
@@ -86,6 +87,7 @@ def test_context_pack_does_not_treat_task_sources_as_required() -> None:
         knowledge_units=[unit],
     )
     task = ContentTask(
+        depth_guidance="standard",
         task_id="task-tiny-001",
         run_id="run-context",
         blueprint_version="bp-tiny:v1",
@@ -130,6 +132,7 @@ def test_context_pack_retrieves_from_objectives_without_task_sources() -> None:
         knowledge_units=[unit],
     )
     task = ContentTask(
+        depth_guidance="standard",
         task_id="task-section-001",
         run_id="run-context",
         blueprint_version="bp-section:v1",
@@ -152,7 +155,7 @@ def test_context_pack_preserves_degraded_retrieval_metadata():
                          title="上确界", kind="concept")
     blueprint = LearningBlueprint(artifact_id="bp", run_id="run", version=1, status="accepted", created_by="test",
                                   title="教材", knowledge_units=[unit])
-    task = ContentTask(task_id="task", run_id="run", blueprint_version="bp:v1", knowledge_unit_id="unit")
+    task = ContentTask(depth_guidance="standard", task_id="task", run_id="run", blueprint_version="bp:v1", knowledge_unit_id="unit")
     tool = HybridTextbookSearchTool(InMemoryTextbookSearchTool(blocks), UnavailableVectorTextbookSearchTool("ImportError"))
     pack = build_context_pack(task, unit, blueprint, blocks, search_tool=tool)
     assert pack.source_refs == ["src-a"]
@@ -167,7 +170,7 @@ def test_zero_retrieval_hits_do_not_substitute_book_introduction():
                          created_by="test", title="复数的共轭", kind="concept")
     blueprint = LearningBlueprint(artifact_id="bp", run_id="run-context", version=1, status="accepted",
                                   created_by="test", title="教材", knowledge_units=[unit])
-    task = ContentTask(task_id="task", run_id="run-context", blueprint_version="bp:v1", knowledge_unit_id="ku")
+    task = ContentTask(depth_guidance="standard", task_id="task", run_id="run-context", blueprint_version="bp:v1", knowledge_unit_id="ku")
     blocks = [_block("intro", 1, "第一章 引言")]
     pack = build_context_pack(task, unit, blueprint, blocks)
     assert pack.excerpts == [] and pack.source_refs == []
@@ -183,7 +186,7 @@ def test_semantic_context_keeps_raw_citations_and_chunk_audit_ref():
                          created_by="test", title="上确界", kind="concept")
     blueprint = LearningBlueprint(artifact_id="bp", run_id="run-context", version=1, status="accepted",
                                   created_by="test", title="教材", knowledge_units=[unit])
-    task = ContentTask(task_id="task-semantic", run_id="run-context", blueprint_version="bp:v1",
+    task = ContentTask(depth_guidance="standard", task_id="task-semantic", run_id="run-context", blueprint_version="bp:v1",
                        knowledge_unit_id="ku")
     pack = build_context_pack(task, unit, blueprint, semantic)
     excerpt = pack.excerpts[0]

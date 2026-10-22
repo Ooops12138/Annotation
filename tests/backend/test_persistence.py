@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 import sqlite3
 
 import pytest
@@ -56,38 +57,4 @@ def test_artifact_registration_is_immutable_and_idempotent(tmp_path) -> None:
     artifact.write_text("{\"ok\": false}", encoding="utf-8")
     with pytest.raises(ImmutableArtifactError):
         repository.register_artifact("run-artifact", "content", artifact, artifact_id="content-1")
-    repository.close()
-
-
-def test_legacy_source_index_migration_rebuilds_fts_idempotently(tmp_path) -> None:
-    legacy = tmp_path / "source-index.sqlite3"
-    with sqlite3.connect(legacy) as connection:
-        connection.executescript(
-            """
-            CREATE TABLE source_blocks (
-                source_ref TEXT PRIMARY KEY,
-                document_id TEXT NOT NULL,
-                page_number INTEGER NOT NULL,
-                block_index INTEGER NOT NULL,
-                text TEXT NOT NULL,
-                text_hash TEXT NOT NULL,
-                parser_version TEXT NOT NULL
-            );
-            INSERT INTO source_blocks VALUES
-                ('src-p1-b0', 'doc-1', 1, 0, 'complete ordered field', 'hash-1', 'parser-v1'),
-                ('src-p2-b0', 'doc-1', 2, 0, 'upper bound theorem', 'hash-2', 'parser-v1');
-            """
-        )
-    repository = PersistenceRepository(tmp_path / "annotation.sqlite3")
-    assert repository.migrate_source_index(legacy) == 2
-    assert repository.migrate_source_index(legacy) == 2
-    assert repository.connection.execute("SELECT COUNT(*) FROM source_blocks").fetchone()[0] == 2
-    rows = repository.connection.execute(
-        """
-        SELECT b.source_ref FROM source_blocks_fts f
-        JOIN source_blocks b ON b.source_ref = f.source_ref
-        WHERE source_blocks_fts MATCH 'theorem'
-        """
-    ).fetchall()
-    assert [row[0] for row in rows] == ["src-p2-b0"]
     repository.close()
