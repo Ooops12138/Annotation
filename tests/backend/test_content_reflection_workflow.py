@@ -122,7 +122,7 @@ def _install_source_fixture(monkeypatch) -> None:
             created_by="test",
             page_number=1,
             block_index=0,
-            text="测试教材证据。",
+            text="测试教材证据：概念、定理与例题。",
             text_hash="source-hash",
             parser_version="fixture",
             bbox=(0, 0, 1, 1),

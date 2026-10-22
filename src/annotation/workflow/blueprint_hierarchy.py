@@ -457,6 +457,26 @@ class BlueprintEngine:
         try:
             if not windows:
                 raise HierarchyStop("no_extracted_text")
+            if len({w.window_id for w in windows}) != len(windows):
+                raise HierarchyStop("duplicate_source_window")
+            # Verify input coverage independently of model-produced units.
+            # Context overlap never counts as ownership of omitted source.
+            spans: dict[str, list[tuple[int, int]]] = {}
+            owners = {ref: node.node_id for node in self.structure.nodes for span in node.owned_ranges
+                      for ref in self.structure.ordered_source_refs[span.start:span.end]}
+            for window in windows:
+                for span in window.slices:
+                    if owners.get(span.source_ref) != window.node_id:
+                        raise HierarchyStop(f"invalid_window_owner:{span.source_ref}")
+                    spans.setdefault(span.source_ref, []).append((span.start, span.end))
+            for ref in self.structure.ordered_source_refs:
+                end = 0
+                for start, stop in sorted(spans.get(ref, [])):
+                    if start != end or stop <= start or stop > len(self.blocks[ref].text):
+                        raise HierarchyStop(f"source_window_gap_or_overlap:{ref}")
+                    end = stop
+                if end != len(self.blocks[ref].text):
+                    raise HierarchyStop(f"source_window_missing:{ref}")
             groups = []
             for window in windows:
                 try:
@@ -524,6 +544,11 @@ class BlueprintEngine:
             if coordination_count == 0:
                 groups = [self.coordinate(groups, "group-final")]
             ordered = _dependency_order(groups[0].unit_ids, self.units)
+            for record in self.trace.windows:
+                for original_id in record.unit_ids:
+                    unit_id = self._canonical(original_id)
+                    if unit_id not in ordered or record.window.node_id not in self.units[unit_id].structure_node_ids:
+                        raise HierarchyStop(f"window_unit_lost:{record.window.window_id}")
             blueprint = LearningBlueprint(artifact_id=f"bp-{uuid.uuid4().hex[:12]}", run_id=self.document.run_id,
                 version=1, status="accepted", created_by=f"provider:{self.provider.provider}", title=self.document.title,
                 source_refs=self.structure.ordered_source_refs, knowledge_units=[self.units[u] for u in ordered])

@@ -162,6 +162,19 @@ def test_context_pack_preserves_degraded_retrieval_metadata():
     assert restored.retrieval_calls[0].metadata["degraded"] is True
 
 
+def test_zero_retrieval_hits_do_not_substitute_book_introduction():
+    unit = KnowledgeUnit(artifact_id="ku", run_id="run-context", version=1, status="accepted",
+                         created_by="test", title="复数的共轭", kind="concept")
+    blueprint = LearningBlueprint(artifact_id="bp", run_id="run-context", version=1, status="accepted",
+                                  created_by="test", title="教材", knowledge_units=[unit])
+    task = ContentTask(task_id="task", run_id="run-context", blueprint_version="bp:v1", knowledge_unit_id="ku")
+    blocks = [_block("intro", 1, "第一章 引言")]
+    pack = build_context_pack(task, unit, blueprint, blocks)
+    assert pack.excerpts == [] and pack.source_refs == []
+    assert pack.retrieval_calls and all(c.status == "no_results" for c in pack.retrieval_calls)
+    assert "document_fallback" not in pack.retrieval_strategy
+
+
 def test_semantic_context_keeps_raw_citations_and_chunk_audit_ref():
     from annotation.ingestion.semantic_chunker import build_semantic_blocks
     raw = [_block("raw-1", 1, "上确界定义。"), _block("raw-2", 2, "它是所有上界中的最小者。")]

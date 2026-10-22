@@ -170,6 +170,8 @@ SQLite artifact 索引中。题目通过结构、答案和来源检查后才进�
 
 ## 文档入口
 
+- [单章复评（2026-10-22）](docs/p0-reevaluation-2026-10-22.md)：已有真实运行的结构核对、内容初评、运行状态冲突与当前 PDF 分窗预检；未新增付费调用。
+- [复评问题修复（2026-10-22）](docs/p0-fixes-2026-10-22.md)：状态优先级、零命中证据占位、事实补查、覆盖检查及数学修订候选；包含续跑快照纠正和历史数据库备份记录。
 - [TODO.md](TODO.md)：下一窗口只读这里，按清单推进。
 - [tasks/backlog.md](tasks/backlog.md)：当前任务边界和完成定义。
 - [docs/requirements.md](docs/requirements.md)：当前需求与 P0 范围。

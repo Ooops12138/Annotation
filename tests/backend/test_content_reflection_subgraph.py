@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from annotation.domain.artifacts import ContentTask, ContextExcerpt, ContextPack, KnowledgeUnit
 from annotation.providers.models import (
     ProviderCapabilities,
@@ -204,3 +206,29 @@ def test_non_retryable_provider_error_fails_without_retrying_the_unit() -> None:
     assert trace.attempts[0].route == "fail"
     assert trace.attempts[0].generation_error_category == "authentication"
     assert result["final_artifacts"][0].status == "blocked"
+
+
+@pytest.mark.parametrize("has_hits", [False, True])
+def test_agent_can_retrieve_from_empty_bootstrap_but_cannot_generate_without_evidence(has_hits):
+    from annotation.domain.artifacts import LearningBlueprint
+    from annotation.retrieval import InMemoryTextbookSearchTool
+    from test_content_context import _block
+    class RetrievalProvider(ScriptedContentProvider):
+        provider = "retrieval-fixture"
+    state = _state()
+    state["context_pack"] = state["context_pack"].model_copy(update={"excerpts": [], "source_refs": [], "selected_source_refs": []})
+    state["blueprint"] = LearningBlueprint(artifact_id="blueprint", run_id=state["run_id"], version=1,
+        status="accepted", created_by="test", title="教材", knowledge_units=[state["unit"]])
+    state["source_blocks"] = [_block("src-1", 1, "教材证据")]
+    state["retrieval_service"] = InMemoryTextbookSearchTool(state["source_blocks"])
+    provider = RetrievalProvider([
+        {"textbook_queries": ["教材证据" if has_hits else "从未出现的查询"], "stop_after_retrieval": True},
+        *([_draft(refs=["src-1"]), {"issues": []}] if has_hits else []),
+    ])
+    result = build_content_reflection_subgraph(provider, max_attempts=3).invoke(state)
+    trace = result["content_loop_trace"]
+    assert trace.final_status == ("accepted" if has_hits else "blocked")
+    assert [r.schema.__name__ for r in provider.calls] == (["RetrievalDecision", "ContentDraft", "ContentCritiqueDraft"] if has_hits else ["RetrievalDecision"])
+    if not has_hits:
+        assert trace.stop_reason == "context_pack_empty"
+        assert not result["context_pack"].source_refs

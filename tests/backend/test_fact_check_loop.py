@@ -435,6 +435,72 @@ def test_default_policy_does_not_invoke_an_injected_web_skill() -> None:
     assert result["fact_check_status"] == "at_risk"
 
 
+def test_callout_assertions_are_extracted_without_turning_distractors_into_facts():
+    from annotation.workflow.fact_check import _targets
+    _, _, _, content, quizzes, _ = _fixture(with_quiz=True)
+    content.metadata["callouts"] = [{"title": "等号条件", "content": "无条件存在比例系数。", "tone": "note"}]
+    targets = _targets(content, quizzes[0])
+    assert targets[1]["target_id"] == "content-1:callout-1"
+    assert targets[1]["artifact_id"] == content.artifact_id
+    assert targets[1]["role"] == "explanation"
+    assert "无条件存在比例系数" in targets[1]["text"]
+    assert len(targets) == 5  # body, callout, question, answer, explanation
+
+
+def test_assessment_batches_keep_every_claim_and_deduplicate_shared_evidence():
+    from annotation.workflow.fact_check import _assess_claims, _context_pack_evidence
+    from annotation.domain.artifacts import FactCheckClaim
+    provider = ScriptedFactCheckProvider(claim_target_index=0, claim_text="断言", verdict="supported")
+    _, _, pack, _, _, _ = _fixture()
+    evidence, _ = _context_pack_evidence(pack)
+    claims = [FactCheckClaim(claim_id=f"fact-claim-batch-{i}", artifact_id="content-1", knowledge_unit_id="unit-1",
+                            target_id="content-1", role="explanation", kind="fact", text="断言", query="上确界") for i in range(13)]
+    assessments, error = _assess_claims(provider, claims=claims,
+        evidence_by_claim={c.claim_id: (evidence, [], []) for c in claims},
+        content_artifact_id="content-1", quiz_artifact_id=None, round_number=0, run_id="batch-test")
+    assert error is None
+    assert [a.claim_id for a in assessments] == [c.claim_id for c in claims]
+    assert [r.metadata["claim_count"] for r in provider.calls] == [5, 5, 3]
+    assert all(r.metadata["run_id"] == "batch-test" for r in provider.calls)
+    assert all(r.prompt.count('"text": "上确界是所有上界中最小的上界。"') == 1 for r in provider.calls)
+
+
+def test_nonempty_irrelevant_context_triggers_supplemental_textbook_search():
+    class EvidenceAwareProvider(ScriptedFactCheckProvider):
+        def generate_structured(self, request):
+            if request.schema.__name__ == "FactCheckAssessmentsDraft":
+                self.calls.append(request)
+                claim_id = re.search(r'"claim_id":\s*"(fact-claim-[^"]+)"', request.prompt).group(1)
+                sufficient = "所有上界中最小的上界" in request.prompt
+                value = request.schema.model_validate({"assessments": [{
+                    "claim_id": claim_id, "verdict": "supported" if sufficient else "insufficient",
+                    "judgement": "定义支持" if sufficient else "只有引言", "sufficient_textbook_evidence": sufficient,
+                }]})
+                return StructuredGenerationResponse(value=value, raw_text=value.model_dump_json(), provider=self.provider,
+                    model=self.model, base_url=self.base_url, config_version=self.config_version, duration_ms=0)
+            return super().generate_structured(request)
+
+    blueprint, task, pack, content, quizzes, blocks = _fixture()
+    pack.excerpts[0].text = "第一章 引言"
+    provider = EvidenceAwareProvider(claim_target_index=0, claim_text="上确界是最小上界。", verdict="insufficient")
+    result = run_fact_check_loop(provider, run_id="fact-check-test", blueprint=blueprint, tasks=[task],
+        context_packs=[pack], content_artifacts=[content], quiz_artifacts=quizzes, source_blocks=blocks,
+        valid_source_refs=["src-1"], policy=FactCheckPolicy())
+    trace = result["fact_check_artifact"].unit_traces[0]
+    assert trace.final_status == "accepted", trace.model_dump()
+    assessment = trace.rounds[0].assessments[0]
+    assert "textbook:ok" in assessment.stop_reason
+    assert len(assessment.textbook_evidence) == 2
+    assert len([r for r in provider.calls if r.schema.__name__ == "FactCheckAssessmentsDraft"]) == 2
+
+    disabled_provider = EvidenceAwareProvider(claim_target_index=0, claim_text="上确界是最小上界。", verdict="insufficient")
+    disabled = run_fact_check_loop(disabled_provider, run_id="fact-check-test", blueprint=blueprint, tasks=[task],
+        context_packs=[pack], content_artifacts=[content], quiz_artifacts=quizzes, source_blocks=blocks,
+        valid_source_refs=["src-1"], policy=FactCheckPolicy(), additional_retrieval_enabled=False)
+    assert disabled["fact_check_status"] == "at_risk"
+    assert len([r for r in disabled_provider.calls if r.schema.__name__ == "FactCheckAssessmentsDraft"]) == 1
+
+
 def test_top_level_workflow_runs_fact_check_before_document_assembly(monkeypatch) -> None:
     blueprint, _task, _pack, _content, _quizzes, blocks = _fixture()
     run_id = "fact-check-top-level"
@@ -471,7 +537,8 @@ def test_top_level_workflow_runs_fact_check_before_document_assembly(monkeypatch
             title="测试教材",
             locator="fixture://textbook",
         )
-        return source, [block.model_copy(update={"run_id": run_id, "document_id": source.artifact_id}) for block in blocks]
+        return source, [block.model_copy(update={"run_id": run_id, "document_id": source.artifact_id,
+            "text": block.text + " 本节也讨论补充定理和补充例题。"}) for block in blocks]
 
     import annotation.workflow.graph as graph_module
 

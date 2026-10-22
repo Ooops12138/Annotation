@@ -295,6 +295,22 @@ def test_too_small_budget_fails_before_model_and_empty_source_is_blocked():
     assert empty.trace.stop_reason == "no_extracted_text"
 
 
+@pytest.mark.parametrize("defect", ["omit", "duplicate", "truncate", "wrong_owner"])
+def test_source_coverage_defects_stop_before_any_model_call(defect):
+    engine, windows, _ = engine_for(["第1章 实数", "第2章 复数"])
+    if defect == "omit":
+        windows = windows[:1]
+    elif defect == "duplicate":
+        windows.append(windows[0])
+    elif defect == "truncate":
+        windows[-1].slices[-1].end -= 1
+    else:
+        windows[-1].node_id = windows[0].node_id
+    assert engine.run(windows) is None
+    assert engine.trace.final_status == "blocked"
+    assert engine.provider.calls == []
+
+
 def test_hierarchical_workflow_persists_failed_and_successful_scan_diagnostics(monkeypatch):
     import annotation.workflow.graph as graph_module
     from annotation.workflow import run_minimal_workflow

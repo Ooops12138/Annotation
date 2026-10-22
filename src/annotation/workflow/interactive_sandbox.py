@@ -57,7 +57,8 @@ def run_interactive_component_sandbox(
 
     safe_run = "".join(character if character.isalnum() or character in "._-" else "-" for character in run_id).strip(".-") or "run"
     safe_task = "".join(character if character.isalnum() or character in "._-" else "-" for character in task_id).strip(".-") or "task"
-    output_root = Path(root or (STORAGE_DIR / "artifacts" / "interactive_components")) / safe_run
+    # The child runs from web/, so file arguments must not depend on its cwd.
+    output_root = (Path(root or (STORAGE_DIR / "artifacts" / "interactive_components")) / safe_run).resolve()
     output_root.mkdir(parents=True, exist_ok=True)
     nonce = uuid.uuid4().hex[:10]
     input_path = output_root / f"sandbox-input-{safe_task}-a{attempt}-{nonce}.json"
@@ -88,7 +89,7 @@ def run_interactive_component_sandbox(
     except subprocess.TimeoutExpired:
         return _report(
             status="timeout",
-            error="interactive component sandbox process exceeded the 10 second budget",
+            error=f"interactive component sandbox process exceeded the {SANDBOX_TIMEOUT_SECONDS + 10} second process budget",
             duration_ms=round((time.monotonic() - started) * 1000),
         )
     except OSError as exc:

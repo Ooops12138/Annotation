@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+
+import pytest
 
 from annotation.api.persistence_service import _document_from_path, load_document_payload, persist_workflow_result
 from annotation.domain.artifacts import (
@@ -170,6 +173,58 @@ def test_service_hides_blocked_document_but_keeps_review(tmp_path) -> None:
     assert payload and payload["status"] == "blocked"
     assert payload["document"] is None
     assert payload["review_report"]["status"] == "blocked"
+    repo.close()
+
+
+@pytest.mark.parametrize("field,status", [
+    ("interactive_component_status", "blocked"),
+    ("content_loop_status", "failed"),
+    ("fact_check_status", "failed"),
+])
+def test_upstream_success_cannot_publish_after_a_later_stage_stops(tmp_path, field, status):
+    repo = PersistenceRepository(tmp_path / "db.sqlite3")
+    pdf = tmp_path / "book.pdf"
+    pdf.write_bytes(b"pdf")
+    book = repo.register_book(pdf)
+    state = _state(tmp_path)
+    state.update(workflow_status="succeeded", **{field: status})
+    repo.create_run(book["book_id"], run_id=state["run_id"])
+    result = persist_workflow_result(repo, book=book, state=state)
+    assert result["run"]["status"] == status
+    assert result["document_version"] is None
+    assert repo.list_document_versions("doc-service") == []
+    repo.close()
+
+
+def test_unreviewed_result_cannot_be_registered_as_success(tmp_path):
+    repo = PersistenceRepository(tmp_path / "db.sqlite3")
+    pdf = tmp_path / "book.pdf"
+    pdf.write_bytes(b"pdf")
+    book = repo.register_book(pdf)
+    state = _state(tmp_path)
+    state.update(workflow_status="succeeded", review_report=None, review_report_path=None)
+    repo.create_run(book["book_id"], run_id=state["run_id"])
+    result = persist_workflow_result(repo, book=book, state=state)
+    assert result["run"]["status"] == "failed"
+    assert result["document_version"] is None
+    repo.close()
+
+
+def test_legacy_draft_without_review_is_hidden_without_rewriting_it(tmp_path):
+    repo = PersistenceRepository(tmp_path / "db.sqlite3")
+    pdf = tmp_path / "book.pdf"
+    pdf.write_bytes(b"pdf")
+    book = repo.register_book(pdf)
+    state = _state(tmp_path)
+    original = Path(state["document_artifact_path"]).read_bytes()
+    repo.create_run(book["book_id"], run_id=state["run_id"])
+    result = persist_workflow_result(repo, book=book, state=state)
+    version = result["document_version"]
+    repo.connection.execute("UPDATE document_versions SET document_status='draft', review_status=NULL, metadata_json='{}' WHERE document_version_id=?", (version["document_version_id"],))
+    repo.connection.commit()
+    payload = load_document_payload(repo, "doc-service")
+    assert payload["status"] == "blocked" and payload["document"] is None
+    assert Path(state["document_artifact_path"]).read_bytes() == original
     repo.close()
 
 

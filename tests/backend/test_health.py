@@ -79,18 +79,25 @@ def test_library_read_does_not_construct_model_provider(monkeypatch) -> None:
     assert response.json()["status"] == "ok"
 
 
-def test_saved_document_read_does_not_construct_model_provider(monkeypatch) -> None:
+def test_saved_document_read_does_not_construct_model_provider(monkeypatch, tmp_path) -> None:
+    from annotation.persistence import PersistenceRepository
+    from annotation.api.persistence_service import persist_workflow_result
+    from test_persistence_service import _state
+    database = tmp_path / "library.sqlite3"
+    repo = PersistenceRepository(database)
+    pdf = tmp_path / "book.pdf"
+    pdf.write_bytes(b"pdf")
+    book = repo.register_book(pdf)
+    state = _state(tmp_path)
+    repo.create_run(book["book_id"], run_id=state["run_id"])
+    persist_workflow_result(repo, book=book, state=state)
+    repo.close()
+    monkeypatch.setattr("annotation.api.routes.repository", lambda: PersistenceRepository(database))
     def fail_provider():
         raise AssertionError("document reads must not initialize a model provider")
 
     monkeypatch.setattr("annotation.api.routes.create_provider_from_env", fail_provider)
-    library = client.get("/api/library").json()
-    document_id = next(
-        document["document_id"]
-        for book in library.get("books", [])
-        for document in book.get("documents", [])
-        if document.get("current_version", {}).get("review_status") != "blocked"
-    )
+    document_id = state["document"].document_id
     response = client.get(f"/api/documents/{document_id}")
     assert response.status_code == 200
     assert response.json()["document"] is not None

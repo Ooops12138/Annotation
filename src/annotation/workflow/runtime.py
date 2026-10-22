@@ -375,7 +375,8 @@ def build_minimal_graph(
             if not unit:
                 warnings.append(f"content_task_missing_unit: {task.task_id}")
                 continue
-            pack = build_context_pack(task, unit, blueprint, semantic_blocks, context_window=context_window, search_tool=textbook_tool)
+            pack = build_context_pack(task, unit, blueprint, semantic_blocks, context_window=context_window,
+                search_tool=textbook_tool, fixture_fallback=getattr(model_provider, "provider", "") == "mock")
             packs.append(pack)
             if pack.omitted_source_refs:
                 warnings.append(f"context_pack_omitted_sources:{task.task_id}:{','.join(pack.omitted_source_refs)}")
@@ -514,7 +515,7 @@ def build_minimal_graph(
                 traces.append(trace)
                 artifacts.extend(final_artifacts)
                 continue
-            if not pack.excerpts:
+            if not pack.excerpts and (getattr(model_provider, "provider", "") == "mock" or "scripted" in getattr(model_provider, "provider", "")):
                 trace, final_artifacts = preflight_trace(
                     task=task,
                     unit=unit,

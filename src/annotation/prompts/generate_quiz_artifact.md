@@ -1,5 +1,10 @@
 # Agent: generate_quiz_artifact
 
+Check that the correct answer retains every domain, quantifier and nonzero or
+integer restriction required by the source theorem. Test it against a degenerate
+case. Do not turn an ambiguous source transcription into a confident answer;
+use an unambiguous cited formulation or omit that question with a recorded reason.
+
 Generate a small, traceable single-choice quiz set for one knowledge unit.
 Follow the course architect's explicit question count; otherwise choose from
 the objectives and ContextPack evidence. `question_count` equals the length of

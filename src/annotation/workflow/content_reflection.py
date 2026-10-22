@@ -121,6 +121,7 @@ def build_content_reflection_subgraph(
                 task, unit, state["blueprint"],
                 build_semantic_blocks(state.get("source_blocks", [])),
                 search_tool=state.get("retrieval_service"), retrieval_queries=queries,
+                fixture_fallback=provider_name == "mock",
             )
             if plan.stop_after_retrieval:
                 break
@@ -208,6 +209,10 @@ def build_content_reflection_subgraph(
             **retrieval_result,
         }
         try:
+            if not pack.excerpts:
+                result.update(generation_error="教材检索未返回可用证据，未生成正文。",
+                              generation_error_category="no_evidence")
+                return result
             # Mock/Sequence fixtures intentionally remain local.  This keeps
             # existing Blueprint loop call-count tests stable while recording
             # a fully shaped generation and Critic attempt in the trace.
@@ -400,7 +405,9 @@ def build_content_reflection_subgraph(
             or critic_status != "succeeded"
             or has_critic_block
         )
-        if non_retryable_error:
+        if state.get("generation_error_category") == "no_evidence":
+            route, stop_reason, final_status = "block", "context_pack_empty", "blocked"
+        elif non_retryable_error:
             route, stop_reason, final_status = "fail", "non_retryable_provider_error", "failed"
         elif requires_revision and attempt < max_attempts:
             route, stop_reason, final_status = "revise", None, None

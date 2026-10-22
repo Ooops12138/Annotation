@@ -116,6 +116,14 @@ def _targets(content: ContentArtifact, quiz: QuizArtifact | None) -> list[dict[s
         "text": content.content,
         "source_refs": list(content.source_refs),
     }]
+    for index, callout in enumerate(content.metadata.get("callouts", []), start=1):
+        targets.append({
+            "target_id": f"{content.artifact_id}:callout-{index}",
+            "artifact_id": content.artifact_id,
+            "role": "explanation",
+            "text": f"{callout.get('title', '')}\n{callout.get('content', '')}",
+            "source_refs": list(content.source_refs),
+        })
     if quiz is None:
         return targets
     for question in quiz.questions:
@@ -208,9 +216,38 @@ def _assess_claims(
     content_artifact_id: str,
     quiz_artifact_id: str | None,
     round_number: int,
+    run_id: str = "",
 ) -> tuple[list[FactCheckAssessment], str | None]:
     if not claims:
         return [], None
+
+    # Bound the structured response and avoid repeating a large ContextPack
+    # once for every assertion in a unit.
+    if len(claims) > 5:
+        assessments: list[FactCheckAssessment] = []
+        errors: list[str] = []
+        for offset in range(0, len(claims), 5):
+            checked, error = _assess_claims(
+                provider, claims=claims[offset:offset + 5], evidence_by_claim=evidence_by_claim,
+                content_artifact_id=content_artifact_id, quiz_artifact_id=quiz_artifact_id,
+                round_number=round_number, run_id=run_id,
+            )
+            assessments.extend(checked)
+            if error:
+                errors.append(error)
+        return assessments, ";".join(_unique(errors)) or None
+
+    def evidence_table(kind: int) -> str:
+        records = {
+            item.evidence_id: _dump(item)
+            for claim in claims for item in evidence_by_claim[claim.claim_id][kind]
+        }
+        return json.dumps({
+            "records": list(records.values()),
+            "claims": [{"claim_id": claim.claim_id, "evidence_ids": [
+                item.evidence_id for item in evidence_by_claim[claim.claim_id][kind]
+            ]} for claim in claims],
+        }, ensure_ascii=False, indent=2)
 
     prompt = load_prompt(
         "assess_fact_check_claims",
@@ -218,14 +255,8 @@ def _assess_claims(
             {"claim_id": claim.claim_id, "target_id": claim.target_id, "role": claim.role, "text": claim.text, "query": claim.query}
             for claim in claims
         ], ensure_ascii=False, indent=2),
-        TEXTBOOK_EVIDENCE=json.dumps([
-            {"claim_id": claim.claim_id, "evidence": [_dump(item) for item in evidence_by_claim[claim.claim_id][0]]}
-            for claim in claims
-        ], ensure_ascii=False, indent=2),
-        EXTERNAL_EVIDENCE=json.dumps([
-            {"claim_id": claim.claim_id, "evidence": [_dump(item) for item in evidence_by_claim[claim.claim_id][1]]}
-            for claim in claims
-        ], ensure_ascii=False, indent=2),
+        TEXTBOOK_EVIDENCE=evidence_table(0),
+        EXTERNAL_EVIDENCE=evidence_table(1),
     )
     drafts: dict[str, FactCheckAssessmentDraft] = {}
     error: str | None = None
@@ -234,7 +265,8 @@ def _assess_claims(
             prompt=prompt,
             schema=FactCheckAssessmentsDraft,
             max_output_tokens=_output_limit(provider, 3200),
-            metadata={"agent": "assess_fact_check_claims", "round": round_number},
+            metadata={"agent": "assess_fact_check_claims", "round": round_number, "run_id": run_id,
+                      "claim_count": len(claims)},
         ))
         output = FactCheckAssessmentsDraft.model_validate(_dump(response.value))
         valid_ids = {claim.claim_id for claim in claims}
@@ -552,8 +584,35 @@ def _check_unit(
             content_artifact_id=current_content.artifact_id,
             quiz_artifact_id=current_quiz.artifact_id if current_quiz else None,
             round_number=round_number,
+            run_id=content.run_id,
         )
         assessments.extend(checked)
+
+        # Existing excerpts can be unrelated headings. Supplement assertions
+        # judged insufficient even when the snapshot was nonempty.
+        if additional_retrieval_enabled and not assessment_error:
+            insufficient_ids = {item.claim_id for item in checked if item.verdict == "insufficient"}
+            follow_up = []
+            for claim in factual_claims:
+                if claim.claim_id not in insufficient_ids or "context_pack:used" not in evidence[claim.claim_id][2]:
+                    continue
+                extra, reason = _search_textbook(textbook_skill, claim, valid_source_refs, policy.textbook_result_limit)
+                textbook, external, reasons = evidence[claim.claim_id]
+                existing_excerpts = {(item.source_ref, item.text) for item in textbook}
+                extra = [item for item in extra if (item.source_ref, item.text) not in existing_excerpts]
+                evidence[claim.claim_id] = (textbook + extra, external, [*reasons, reason])
+                if extra:
+                    follow_up.append(claim)
+            if follow_up:
+                reassessed, _ = _assess_claims(
+                    provider, claims=follow_up, evidence_by_claim=evidence,
+                    content_artifact_id=current_content.artifact_id,
+                    quiz_artifact_id=current_quiz.artifact_id if current_quiz else None,
+                    round_number=round_number, run_id=content.run_id,
+                )
+                replacement = {item.claim_id: item for item in reassessed}
+                assessments = [replacement.get(item.claim_id, item) for item in assessments]
+                checked = [replacement.get(item.claim_id, item) for item in checked]
 
         if policy.web_enabled and additional_retrieval_enabled and not assessment_error:
             follow_up = [
@@ -573,6 +632,7 @@ def _check_unit(
                     content_artifact_id=current_content.artifact_id,
                     quiz_artifact_id=current_quiz.artifact_id if current_quiz else None,
                     round_number=round_number,
+                    run_id=content.run_id,
                 )
                 if reassessment_error is None:
                     replacement = {item.claim_id: item for item in reassessed}

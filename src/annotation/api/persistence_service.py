@@ -357,17 +357,17 @@ def persist_workflow_result(
         or (interactive_component_compact_summary or {}).get("final_status")
         or ""
     )
+    # A resumed workflow may retain an upstream success marker. No success
+    # marker can override a later stage's failure or block.
+    stage_statuses = {
+        workflow_status, blueprint_loop_status, content_loop_status,
+        interactive_component_status,
+        str(state.get("fact_check_status") or (fact_check_compact_summary or {}).get("final_status") or ""),
+    }
     terminal_status = (
-        workflow_status
-        if workflow_status in {"blocked", "failed", "succeeded"}
-        else content_loop_status
-        if content_loop_status in {"blocked", "failed"}
-        else interactive_component_status
-        if interactive_component_status in {"blocked", "failed"}
-        else blueprint_loop_status
-        if blueprint_loop_status in {"blocked", "failed"}
-        else "failed"
-        if state.get("errors")
+        "failed" if "failed" in stage_statuses
+        else "blocked" if "blocked" in stage_statuses
+        else "failed" if state.get("errors")
         else "succeeded"
     )
     effective_status = _effective_document_status(
@@ -403,7 +403,8 @@ def persist_workflow_result(
     # A blocked content or Blueprint quality loop, or a technical failure, is a
     # complete run even though it intentionally has no learner document/version
     # to publish.
-    if document is None or terminal_status in {"blocked", "failed"}:
+    if document is None or report is None or terminal_status in {"blocked", "failed"}:
+        incomplete = [label for label, value in (("最终文档缺失", document), ("最终审核缺失", report)) if value is None]
         run = repo.update_run(
             run_id,
             status="blocked" if terminal_status == "blocked" else "failed",
@@ -411,7 +412,7 @@ def persist_workflow_result(
             model=str(state.get("provider_metadata", {}).get("model", "")),
             config_version=str(state.get("provider_metadata", {}).get("config_version", "")),
             origin=origin,
-            error="; ".join(state.get("errors", [])) or None,
+            error="; ".join([*state.get("errors", []), *incomplete]) or None,
             metadata={
                 "artifact_ids": {kind: item["artifact_id"] for kind, item in artifacts.items()},
                 "warnings": list(state.get("warnings", [])),
@@ -531,12 +532,15 @@ def load_document_payload(repo: PersistenceRepository, document_id: str, *, vers
         document.status = projected_status
     # A missing/corrupt artifact is itself a blocking integrity failure; never
     # expose an apparently valid library entry with an empty document body.
+    run = repo.get_run(version_row["run_id"]) if version_row.get("run_id") else None
     is_blocked = (
         version_row.get("document_status") == "blocked"
         or version_row.get("review_status") == "blocked"
         or document is None
+        or review is None
+        or projected_status not in {"accepted", "published"}
+        or (run is not None and run.get("status") in {"blocked", "failed"})
     )
-    run = repo.get_run(version_row["run_id"]) if version_row.get("run_id") else None
     return {
         "status": "blocked" if is_blocked else "ok",
         "document": None if is_blocked else (document.model_dump(mode="json") if document else None),

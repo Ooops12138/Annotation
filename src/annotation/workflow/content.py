@@ -111,6 +111,7 @@ def build_context_pack(
     safety_margin_tokens: int = 400,
     search_tool: TextbookSearchTool | None = None,
     retrieval_queries: list[str] | list[tuple[str, str]] | None = None,
+    fixture_fallback: bool = False,
 ) -> ContextPack:
     """Retrieve task evidence through a provider-neutral tool and audit it.
 
@@ -180,9 +181,9 @@ def build_context_pack(
             error_code=result.error_code.value if result.error_code else None,
             returned_excerpts=returned,
         ))
-    if not candidates:
+    if not candidates and fixture_fallback:
         candidates = [("document_fallback", block) for block in ordered_blocks[:3]]
-    else:
+    elif candidates:
         # The tool returns the primary evidence. Small adjacent blocks keep
         # definitions and their immediate qualifications together without
         # turning Blueprint source_refs into an allowlist.
