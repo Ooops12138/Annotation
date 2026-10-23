@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import {
   getDocument,
+  getRun,
   getLibrary,
   startRun,
   uploadBook,
@@ -12,6 +13,26 @@ import {
 
 function messageFrom(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback
+}
+
+function saveActiveRun(value: { run_id: string; book_id: string }) {
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.setItem('annotation.activeRun', JSON.stringify(value))
+  } catch { /* Generation can continue when browser storage is unavailable. */ }
+}
+
+function clearActiveRun() {
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.removeItem('annotation.activeRun')
+  } catch { /* Browser storage is optional. */ }
+}
+
+function readActiveRun(): { run_id?: string; book_id?: string } | null {
+  if (typeof localStorage === 'undefined') return null
+  try { return JSON.parse(localStorage.getItem('annotation.activeRun') || 'null') } catch {
+    clearActiveRun()
+    return null
+  }
 }
 
 export const useAppStore = defineStore('app', {
@@ -30,6 +51,7 @@ export const useAppStore = defineStore('app', {
     loading: false,
     uploading: false,
     generating: false,
+    progress: null as WorkflowRunResult['progress'],
     error: '',
     libraryError: '',
   }),
@@ -135,10 +157,17 @@ export const useAppStore = defineStore('app', {
         throw error
       }
       this.generating = true
+      this.progress = { status: 'queued', label: '等待开始', completed: 0, total: 15 }
       this.error = ''
       this.selectedBookId = bookId
       try {
-        const result = await startRun(bookId)
+        const result = await startRun(bookId, (snapshot) => {
+          this.run = snapshot
+          this.progress = snapshot.progress || this.progress
+          if (snapshot.run_id) saveActiveRun({ run_id: snapshot.run_id, book_id: bookId })
+        })
+        clearActiveRun()
+        this.progress = result.progress || null
         this.sourceLocations = result.source_locations ?? {}
         this.run = result
         this.reviewReport = result.review_report ?? null
@@ -160,6 +189,56 @@ export const useAppStore = defineStore('app', {
       } catch (error) {
         this.error = messageFrom(error, '学习文档生成失败')
         throw error
+      } finally {
+        this.generating = false
+      }
+    },
+
+    async resumeRun(this: any) {
+      const saved = readActiveRun()
+      if (!saved?.run_id || !saved.book_id) return
+      this.generating = true
+      this.selectedBookId = saved.book_id
+      try {
+        const initial = await getRun(saved.run_id)
+        if (initial.progress?.status !== 'running' && initial.status !== 'running') {
+          clearActiveRun()
+          this.run = initial
+          this.sourceLocations = initial.source_locations ?? {}
+          this.progress = initial.progress || null
+          if (['ok', 'succeeded'].includes(initial.status || '') && initial.document) {
+            this.document = initial.document
+            this.selectedDocumentId = initial.document.document_id
+            this.reviewReport = initial.review_report ?? null
+          } else if (initial.status === 'blocked') {
+            this.document = null
+            this.error = '本次生成被阻塞，请稍后重试。'
+          } else if (initial.status === 'failed') {
+            this.error = String((initial.run as any)?.error || '学习文档生成失败')
+          }
+          await this.loadLibrary().catch(() => undefined)
+          return
+        }
+        this.progress = initial.progress || null
+        const result = await startRun(saved.book_id, (snapshot) => {
+          this.run = snapshot
+          this.progress = snapshot.progress || this.progress
+        }, saved.run_id)
+        clearActiveRun()
+        this.progress = result.progress || null
+        this.run = result
+        this.sourceLocations = result.source_locations ?? {}
+        if (['ok', 'succeeded'].includes(result.status || '') && result.document) {
+          this.document = result.document
+          this.selectedDocumentId = result.document.document_id
+          this.reviewReport = result.review_report ?? null
+        } else if (result.status === 'blocked') {
+          this.document = null
+          this.error = '本次生成被阻塞，请稍后重试。'
+        }
+        await this.loadLibrary().catch(() => undefined)
+      } catch (error) {
+        this.error = messageFrom(error, '运行状态恢复失败')
       } finally {
         this.generating = false
       }

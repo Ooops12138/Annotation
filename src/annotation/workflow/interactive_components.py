@@ -106,12 +106,12 @@ def plan_interactive_component(
     tasks_by_id = {task.task_id: task for task in tasks}
     packs_by_task = {pack.task_id: pack for pack in context_packs}
     units_by_id = {unit.artifact_id: unit for unit in units}
-    candidates: list[tuple[int, int, ContentTask, ContextPack, KnowledgeUnit, ContentArtifact, list[str]]] = []
+    candidates: list[tuple[int, ContentTask, ContextPack, KnowledgeUnit, ContentArtifact, list[str]]] = []
     for artifact in content_artifacts:
         if artifact.status != "accepted" or not artifact.task_id:
             continue
         task = tasks_by_id.get(artifact.task_id)
-        if task is not None and task.interactive_component_policy == "skip":
+        if task is None or task.interactive_component_policy != "required":
             continue
         pack = packs_by_task.get(artifact.task_id)
         unit = units_by_id.get(task.knowledge_unit_id) if task is not None else None
@@ -120,8 +120,7 @@ def plan_interactive_component(
         refs = _unique(ref for ref in artifact.source_refs if ref in set(pack.source_refs))
         if not refs:
             continue
-        priority = 1 if task.interactive_component_policy == "required" else 0
-        candidates.append((priority, _component_score(unit, artifact), task, pack, unit, artifact, refs))
+        candidates.append((_component_score(unit, artifact), task, pack, unit, artifact, refs))
     if not candidates:
         plan = InteractiveComponentPlan(
             plan_id=f"interactive-plan-{uuid.uuid4().hex[:12]}",
@@ -131,9 +130,9 @@ def plan_interactive_component(
         )
         return plan, None, None, None, None
     # Stable tie-breaking makes test runs auditable and repeatable.
-    _, _, content_task, pack, unit, artifact, refs = sorted(
+    _, content_task, pack, unit, artifact, refs = sorted(
         candidates,
-        key=lambda item: (-item[0], -item[1], item[3].task_id, item[5].artifact_id),
+        key=lambda item: (-item[0], item[2].task_id, item[4].artifact_id),
     )[0]
     plan = InteractiveComponentPlan(
         plan_id=f"interactive-plan-{uuid.uuid4().hex[:12]}",
@@ -142,11 +141,7 @@ def plan_interactive_component(
         knowledge_unit_id=unit.artifact_id,
         accepted_content_artifact_id=artifact.artifact_id,
         source_refs=refs,
-        reason=(
-            "课程架构师要求该知识单元生成交互式组件。"
-            if content_task.interactive_component_policy == "required"
-            else "选择来源完整且适合用图形观察的已接受知识单元。"
-        ),
+        reason="课程架构师要求尝试为该知识单元生成交互式组件，失败时省略组件。",
     )
     task = InteractiveComponentTask(
         task_id=f"interactive-task-{uuid.uuid4().hex[:12]}",
@@ -793,7 +788,7 @@ def _not_needed_result(plan: InteractiveComponentPlan, *, max_attempts: int) -> 
     }
 
 
-def run_interactive_component_loop(
+def _run_single_component_loop(
     provider: ModelProvider,
     *,
     run_id: str,
@@ -805,7 +800,7 @@ def run_interactive_component_loop(
     max_attempts: int,
     sandbox_runner: SandboxRunner = run_interactive_component_sandbox,
 ) -> dict[str, Any]:
-    """Plan and execute at most one sandbox-validated A-004 component."""
+    """Execute the isolated loop for one requested knowledge unit."""
 
     plan, task, unit, content, pack = plan_interactive_component(
         run_id=run_id,
@@ -840,7 +835,7 @@ def run_interactive_component_loop(
         task.status = "not_needed"
     else:
         task.status = "blocked"
-    artifacts = [final_artifact] if final_artifact is not None else []
+    artifacts = [final_artifact] if trace.final_status in {"accepted", "at_risk"} and final_artifact is not None and final_artifact.status == "accepted" else []
     return {
         "interactive_component_plan": trace.plan,
         "interactive_component_task": task,
@@ -853,6 +848,65 @@ def run_interactive_component_loop(
             "final_status": trace.final_status,
             "stop_reason": trace.stop_reason,
         },
+    }
+
+
+def run_interactive_component_loop(
+    provider: ModelProvider, *, run_id: str, tasks: list[ContentTask],
+    context_packs: list[ContextPack], content_artifacts: list[ContentArtifact],
+    units: list[KnowledgeUnit], valid_source_refs: list[str], max_attempts: int,
+    sandbox_runner: SandboxRunner = run_interactive_component_sandbox,
+) -> dict[str, Any]:
+    """Attempt every requested unit independently, retaining successful components."""
+    results: list[dict[str, Any]] = []
+    for content_task in tasks:
+        if content_task.interactive_component_policy != "required":
+            continue
+        try:
+            result = _run_single_component_loop(
+                provider, run_id=run_id, tasks=[content_task], context_packs=context_packs,
+                content_artifacts=content_artifacts, units=units, valid_source_refs=valid_source_refs,
+                max_attempts=max_attempts, sandbox_runner=sandbox_runner,
+            )
+        except Exception as exc:
+            result = {
+                "interactive_component_artifacts": [],
+                "interactive_component_status": "failed",
+                "interactive_component_summary": {
+                    "component_count": 0, "attempt_count": 0, "final_status": "failed",
+                    "stop_reason": "unexpected_error", "error": f"{type(exc).__name__}: {exc}",
+                },
+            }
+        result["content_task_id"] = content_task.task_id
+        result["knowledge_unit_id"] = content_task.knowledge_unit_id
+        results.append(result)
+    if not results:
+        plan, *_ = plan_interactive_component(
+            run_id=run_id, tasks=[], context_packs=context_packs,
+            content_artifacts=content_artifacts, units=units,
+        )
+        return {**_not_needed_result(plan, max_attempts=max_attempts), "interactive_component_results": []}
+    artifacts = [artifact for result in results for artifact in result["interactive_component_artifacts"]]
+    statuses = [result["interactive_component_status"] for result in results]
+    status = (
+        "at_risk" if artifacts and any(value in {"failed", "blocked", "at_risk"} for value in statuses)
+        else "accepted" if artifacts else "failed" if "failed" in statuses
+        else "blocked" if "blocked" in statuses else "not_needed"
+    )
+    summary = {
+        "component_count": len(artifacts), "requested_count": len(results),
+        "failed_count": sum(value in {"failed", "blocked"} for value in statuses),
+        "attempt_count": sum(result["interactive_component_summary"].get("attempt_count", 0) for result in results),
+        "final_status": status, "stop_reason": "completed",
+    }
+    # Keep the single-unit projection readable for existing diagnostic clients.
+    single = results[0] if len(results) == 1 else {}
+    return {
+        **single,
+        "interactive_component_results": results,
+        "interactive_component_artifacts": artifacts,
+        "interactive_component_status": status,
+        "interactive_component_summary": {**(single.get("interactive_component_summary") or {}), **summary},
     }
 
 

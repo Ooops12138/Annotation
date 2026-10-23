@@ -13,7 +13,7 @@ Return only valid JSON matching this shape:
       "knowledge_unit_id": "exact id from the blueprint",
       "quiz_count": 0,
       "depth_guidance": "concise|standard|detailed",
-      "interactive_component_policy": "auto|required|skip",
+      "interactive_component_policy": "required|skip",
       "content_agent_strategy": "single|parallel",
       "execution_group": 1,
       "acceptance_criteria": ["concrete checks for downstream agents"]
@@ -33,10 +33,12 @@ Decision rules:
 - `quiz_count` is the exact number of single-choice questions the quiz agent
   should produce for this unit. It may be 0. Choose it from the learning
   objectives and available textbook evidence; do not pad for symmetry.
-- `interactive_component_policy` is `required` only when a visual or
-  interactive representation is clearly useful and supported by the unit's
-  evidence, `skip` when static content is enough, and `auto` when the component
-  agent should decide from the accepted content.
+- `interactive_component_policy` is `required` when a visual or interactive
+  representation is clearly useful and supported by the unit's evidence;
+  otherwise use `skip`. `required` requests a generation attempt, not a release
+  requirement. Every requested unit is attempted independently; there is no per-run component count limit. A failed component
+  is omitted without blocking the document. Do not make explanation or quiz
+  acceptance depend on the component being available.
 - `content_agent_strategy` is `parallel` only when independent content agents
   should produce competing drafts for the same unit. Use `single` for ordinary
   sequential generation.

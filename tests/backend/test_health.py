@@ -1,10 +1,92 @@
 from fastapi.testclient import TestClient
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 
+from annotation.api import routes
 from annotation.main import app
 
 
 client = TestClient(app)
+
+
+def test_async_run_completes_and_restores_offline_document(monkeypatch, tmp_path) -> None:
+    from annotation.persistence import PersistenceRepository
+
+    seed = client.get("/api/library").json()["books"][0]
+    database = tmp_path / "library.sqlite3"
+    repo = PersistenceRepository(database)
+    book = repo.register_book(seed["stored_path"])
+    repo.close()
+    monkeypatch.setattr(routes, "repository", lambda: PersistenceRepository(database))
+    monkeypatch.setenv("MODEL_PROVIDER", "mock")
+    started, release = Event(), Event()
+    workflow = routes.run_minimal_workflow
+
+    def paused_workflow(**kwargs):
+        callback = kwargs["progress_callback"]
+
+        def publish(stage, state, phase):
+            callback(stage, state, phase)
+            if stage == "ingest" and phase == "started":
+                started.set()
+                assert release.wait(20)
+
+        return workflow(**{**kwargs, "progress_callback": publish})
+
+    monkeypatch.setattr(routes, "run_minimal_workflow", paused_workflow)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        monkeypatch.setattr(routes, "_run_executor", executor)
+        run_id = f"test-progress-{uuid.uuid4().hex[:8]}"
+        try:
+            response = client.post("/api/runs", json={"book_id": book["book_id"], "run_id": run_id, "async_run": True})
+            assert response.status_code == 200
+            assert started.wait(10)
+            snapshot = client.get(f"/api/runs/{run_id}").json()
+            assert snapshot["status"] == "running"
+            assert snapshot["progress"]["stage"] == "ingest"
+            assert snapshot["progress"]["status"] == "running"
+            # Attaching to a running task must not submit another generation.
+            attached = client.post("/api/runs", json={"book_id": book["book_id"], "run_id": run_id, "async_run": True}).json()
+            assert attached["run_id"] == run_id
+        finally:
+            release.set()
+    restored = client.get(f"/api/runs/{run_id}").json()
+    assert restored["status"] == "succeeded"
+    assert restored["document"]["sections"]
+    assert restored["source_locations"]
+    assert restored["progress"]["completed"] == restored["progress"]["total"]
+    assert restored["progress"]["label"]
+    repo = PersistenceRepository(database)
+    try:
+        assert len(repo.list_runs(book["book_id"])) == 1
+        assert not repo.list_documents(book["book_id"])
+    finally:
+        repo.close()
+
+
+def test_async_run_persists_initial_progress_snapshot(monkeypatch) -> None:
+    class DeferredExecutor:
+        def __init__(self) -> None:
+            self.submitted = []
+
+        def submit(self, function, *args) -> None:
+            self.submitted.append((function, args))
+
+    executor = DeferredExecutor()
+    monkeypatch.setattr(routes, "_run_executor", executor)
+    book_id = client.get("/api/library").json()["books"][0]["book_id"]
+    run_id = f"test-async-{uuid.uuid4().hex[:8]}"
+
+    started = client.post("/api/runs", json={"book_id": book_id, "run_id": run_id, "async_run": True})
+    assert started.status_code == 200
+    assert started.json()["progress"]["status"] == "queued"
+    assert len(executor.submitted) == 1
+
+    snapshot = client.get(f"/api/runs/{run_id}").json()
+    assert snapshot["run_id"] == run_id
+    assert snapshot["status"] == "running"
+    assert snapshot["progress"]["label"] == "等待开始"
 
 
 def test_health() -> None:

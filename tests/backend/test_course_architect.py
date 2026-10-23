@@ -2,11 +2,25 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+from pydantic import ValidationError
+
 from annotation.domain.artifacts import ContentArtifact, ContentTask, ContextExcerpt, ContextPack, KnowledgeUnit, LearningBlueprint
 from annotation.providers.models import ProviderCapabilities, StructuredGenerationRequest, StructuredGenerationResponse
 from annotation.workflow.course_architect import plan_content_tasks_with_architect
-from annotation.workflow.interactive_components import plan_interactive_component
+from annotation.workflow.interactive_components import plan_interactive_component, run_interactive_component_loop
 from annotation.workflow.quiz import build_quiz_prompt
+from annotation.workflow.models import ContentTaskDraft
+
+
+def test_component_policy_defaults_to_skip_and_rejects_auto():
+    draft = ContentTaskDraft(knowledge_unit_id="unit", depth_guidance="standard")
+    assert draft.interactive_component_policy == "skip"
+    with pytest.raises(ValidationError):
+        ContentTaskDraft(knowledge_unit_id="unit", depth_guidance="standard", interactive_component_policy="auto")
+    with pytest.raises(ValidationError):
+        ContentTask(task_id="task", run_id="run", blueprint_version="bp:v1", knowledge_unit_id="unit",
+                    depth_guidance="standard", interactive_component_policy="auto")
 
 
 class ArchitectProvider:
@@ -214,3 +228,13 @@ def test_interactive_planner_respects_content_task_policy() -> None:
     assert plan.knowledge_unit_id == unit_required.artifact_id
     assert task is not None
     assert task.knowledge_unit_id == unit_required.artifact_id
+
+    required_task.interactive_component_policy = "skip"
+    # No provider or browser is needed when every task explicitly skips components.
+    result = run_interactive_component_loop(
+        None, run_id="run-architect", tasks=[required_task, skip_task],
+        context_packs=packs, content_artifacts=artifacts, units=[unit_required, unit_skip],
+        valid_source_refs=["src-1", "src-2"], max_attempts=3,
+    )
+    assert result["interactive_component_status"] == "not_needed"
+    assert result["interactive_component_artifacts"] == []

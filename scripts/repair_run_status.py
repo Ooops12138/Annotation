@@ -18,12 +18,12 @@ def repair_run(manifest_path: Path, database: Path, output_dir: Path, *, apply: 
     paths = manifest.get("paths", {})
     statuses = []
     reasons = []
-    for key in ("blueprint_loop", "content_loop", "fact_check_summary", "interactive_component_summary"):
+    for key in ("blueprint_loop", "content_loop", "fact_check_summary"):
         status = (manifest.get(key) or {}).get("final_status")
         if status in {"blocked", "failed"}:
             statuses.append(status)
             reasons.append(f"{key}:{status}")
-    for key in ("fact_check", "interactive_components"):
+    for key in ("fact_check",):
         if paths.get(key):
             p = Path(paths[key])
             if not p.is_absolute():

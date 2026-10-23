@@ -52,6 +52,14 @@ export interface WorkflowRunResult {
   document_id?: string | null
   review_report?: ReviewReport | null
   run?: Record<string, unknown>
+  progress?: {
+    stage?: string
+    label?: string
+    completed?: number
+    total?: number
+    status?: string
+    phase?: string
+  } | null
   errors?: string[]
   warnings?: string[]
   blueprint_loop?: {
@@ -164,17 +172,35 @@ export async function uploadBook(file: File | Blob, filename?: string): Promise<
 }
 
 /** Explicitly start a new generation run for a selected textbook. */
-export async function startRun(bookId: string): Promise<WorkflowRunResult> {
-  const response = await fetchApi('/api/runs', {
+export async function getRun(runId: string): Promise<WorkflowRunResult> {
+  const response = await fetchApi(`/api/runs/${encodeURIComponent(runId)}`)
+  const payload = await readJson<any>(response, '运行状态读取失败')
+  if (!isRecord(payload) || typeof payload.status !== 'string') throw new Error('运行响应格式无效')
+  return payload as WorkflowRunResult
+}
+
+export async function startRun(
+  bookId: string,
+  onSnapshot?: (snapshot: WorkflowRunResult) => void,
+  existingRunId?: string,
+): Promise<WorkflowRunResult> {
+  const response = existingRunId ? await fetchApi(`/api/runs/${encodeURIComponent(existingRunId)}`) : await fetchApi('/api/runs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ book_id: bookId }),
+    body: JSON.stringify({ book_id: bookId, async_run: true, run_id: existingRunId }),
   })
-  const payload = await readJson<any>(response, '学习文档生成失败')
+  let payload = await readJson<any>(response, '学习文档生成失败')
   if (!isRecord(payload) || typeof payload.status !== 'string') throw new Error('运行响应格式无效')
-  const result = payload
-  if (result?.status === 'error' || result?.status === 'failed') {
-    throw new Error(Array.isArray(result.errors) ? result.errors.join('；') : result.error || '学习文档生成失败')
+  let snapshot = payload as WorkflowRunResult
+  onSnapshot?.(snapshot)
+  const runId = typeof snapshot.run_id === 'string' ? snapshot.run_id : undefined
+  while (runId && ['queued', 'running'].includes(snapshot.status || '')) {
+    await new Promise((resolve) => window.setTimeout(resolve, 900))
+    snapshot = await getRun(runId)
+    onSnapshot?.(snapshot)
   }
-  return result as WorkflowRunResult
+  if (snapshot.status === 'error' || snapshot.status === 'failed' || snapshot.progress?.status === 'failed') {
+    throw new Error(Array.isArray(snapshot.errors) ? snapshot.errors.join('；') : String(snapshot.error || snapshot.run?.error || '学习文档生成失败'))
+  }
+  return snapshot
 }

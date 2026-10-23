@@ -11,9 +11,39 @@ function response(payload: unknown, status = 200): Response {
 
 afterEach(() => {
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 describe('document library API boundary', () => {
+  it('polls queued and running snapshots until the document is available', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('window', { setTimeout })
+    const queued = { status: 'running', run_id: 'run-1', progress: { status: 'queued', completed: 0 } }
+    const running = { status: 'running', run_id: 'run-1', progress: { status: 'running', label: '读取教材' } }
+    const finished = { status: 'succeeded', run_id: 'run-1', document: { document_id: 'doc-1' } }
+    const fetchMock = vi.fn().mockResolvedValueOnce(response(queued)).mockResolvedValueOnce(response(running)).mockResolvedValueOnce(response(finished))
+    vi.stubGlobal('fetch', fetchMock)
+    const onSnapshot = vi.fn()
+    const pending = startRun('book-1', onSnapshot)
+    await vi.runAllTimersAsync()
+    expect(await pending).toEqual(finished)
+    expect(onSnapshot.mock.calls.map(([value]) => value)).toEqual([queued, running, finished])
+    expect(fetchMock.mock.calls.slice(1)).toEqual([
+      ['http://127.0.0.1:8000/api/runs/run-1', undefined],
+      ['http://127.0.0.1:8000/api/runs/run-1', undefined],
+    ])
+  })
+
+  it('only reads an existing run when reconnecting, including a terminal run', async () => {
+    const blocked = { status: 'blocked', run_id: 'run-1', document: null }
+    const fetchMock = vi.fn().mockResolvedValue(response(blocked))
+    vi.stubGlobal('fetch', fetchMock)
+    expect(await startRun('book-1', undefined, 'run-1')).toEqual(blocked)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8000/api/runs/run-1', undefined)
+  })
+
   it('reads the library with GET and normalizes nested repository records', async () => {
     const fetchMock = vi.fn().mockResolvedValue(response({
       status: 'ok',
@@ -57,7 +87,7 @@ describe('document library API boundary', () => {
 
     expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8000/api/runs', expect.objectContaining({
       method: 'POST',
-      body: JSON.stringify({ book_id: 'book-1' }),
+      body: JSON.stringify({ book_id: 'book-1', async_run: true }),
     }))
   })
   it.each([

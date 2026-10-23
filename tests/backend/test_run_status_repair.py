@@ -30,7 +30,7 @@ def test_repair_is_explicit_backed_up_and_preserves_artifact(tmp_path):
     original = artifact_path.read_bytes()
     manifest = tmp_path / "stopped.json"
     manifest.write_text(json.dumps(dict(run_id=state["run_id"], paths=dict(document=None, review=None),
-                                      interactive_component_summary=dict(final_status="blocked"))), encoding="utf-8")
+                                      content_loop=dict(final_status="blocked"))), encoding="utf-8")
     with sqlite3.connect(database) as connection:
         connection.execute("UPDATE artifacts SET path=? WHERE kind='run'", (str(manifest.resolve()),))
     output = tmp_path / "repair"
@@ -56,6 +56,7 @@ def test_repair_is_explicit_backed_up_and_preserves_artifact(tmp_path):
 
 def test_repair_refuses_manifest_without_evidence_of_a_stopped_run(tmp_path):
     manifest = tmp_path / "complete.json"
-    manifest.write_text(json.dumps(dict(run_id="complete", paths=dict(document="doc.json", review="review.json"))))
+    manifest.write_text(json.dumps(dict(run_id="complete", paths=dict(document="doc.json", review="review.json"),
+                                       interactive_component_summary=dict(final_status="failed"))))
     with pytest.raises(ValueError, match="No supported repair"):
         module.repair_run(manifest, tmp_path / "db.sqlite3", tmp_path / "repair", apply=True)

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import {
   getDocument,
+  getRun,
   getLibrary,
   startRun,
   uploadBook,
@@ -10,6 +11,7 @@ import { useAppStore } from './app'
 
 vi.mock('../lib/api', () => ({
   getDocument: vi.fn(),
+  getRun: vi.fn(),
   getLibrary: vi.fn(),
   startRun: vi.fn(),
   uploadBook: vi.fn(),
@@ -34,13 +36,48 @@ const document = {
 
 afterEach(() => {
   vi.clearAllMocks()
+  vi.unstubAllGlobals()
 })
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  const values = new Map<string, string>()
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value),
+    removeItem: (key: string) => values.delete(key),
+  })
 })
 
 describe('document library store', () => {
+  it('restores a running task and its source locations after refresh', async () => {
+    localStorage.setItem('annotation.activeRun', JSON.stringify({ run_id: 'run-1', book_id: 'book-1' }))
+    vi.mocked(getRun).mockResolvedValue({ status: 'running', run_id: 'run-1', progress: { status: 'running', label: '读取教材' } })
+    vi.mocked(getLibrary).mockResolvedValue(library)
+    vi.mocked(startRun).mockImplementation(async (_bookId, onSnapshot) => {
+      onSnapshot?.({ status: 'running', progress: { label: '生成练习' } })
+      return { status: 'succeeded', document, source_locations: { 'src-1': { source_ref: 'src-1', page_number: 1, block_index: 0 } } }
+    })
+    const store = useAppStore()
+    await store.resumeRun()
+    expect(startRun).toHaveBeenCalledWith('book-1', expect.any(Function), 'run-1')
+    expect(store.document).toEqual(document)
+    expect(store.sourceLocations['src-1'].page_number).toBe(1)
+    expect(store.generating).toBe(false)
+    expect(localStorage.getItem('annotation.activeRun')).toBeNull()
+  })
+
+  it('restores a completed task without starting generation', async () => {
+    localStorage.setItem('annotation.activeRun', JSON.stringify({ run_id: 'run-1', book_id: 'book-1' }))
+    vi.mocked(getRun).mockResolvedValue({ status: 'succeeded', document })
+    vi.mocked(getLibrary).mockResolvedValue(library)
+    const store = useAppStore()
+    await store.resumeRun()
+    expect(startRun).not.toHaveBeenCalled()
+    expect(store.document).toEqual(document)
+    expect(localStorage.getItem('annotation.activeRun')).toBeNull()
+  })
+
   it('loads the library without starting a workflow', async () => {
     vi.mocked(getLibrary).mockResolvedValue(library)
     const store = useAppStore()
@@ -98,7 +135,7 @@ describe('document library store', () => {
 
     await store.generate()
 
-    expect(startRun).toHaveBeenCalledWith('book-1')
+    expect(startRun).toHaveBeenCalledWith('book-1', expect.any(Function))
     expect(store.document).toEqual(document)
     expect(store.selectedDocumentId).toBe('doc-1')
   })

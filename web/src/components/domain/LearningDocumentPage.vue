@@ -120,6 +120,7 @@ function handleUploadKeydown(event: KeyboardEvent) {
 onMounted(() => {
   // Library loading is read-only. No model-triggering request occurs here.
   app.loadLibrary().catch(() => undefined)
+  app.resumeRun()
 })
 
 watch(() => app.error, (error) => {
@@ -232,7 +233,8 @@ watch(blocked, (isBlocked) => {
         </div>
         <div v-else-if="app.loading || app.generating" class="annotation-loading" role="status">
           <LoaderCircle class="spin" :size="16" stroke-width="1.5" aria-hidden="true" />
-          <span>{{ app.generating ? '正在生成学习文档，完成后会自动打开。' : '正在打开已保存的学习文档…' }}</span>
+          <span v-if="app.generating">{{ app.progress?.label || '正在生成学习文档…' }}（{{ app.progress?.completed || 0 }}/{{ app.progress?.total || 15 }}）</span>
+          <span v-else>正在打开已保存的学习文档…</span>
         </div>
         <div v-else-if="!selectedBook" class="library-welcome" role="status">
           <p class="library-label">从这里继续</p>

@@ -189,7 +189,7 @@ class ContentTask(BaseModel):
     quiz_count: int | None = Field(default=None, ge=0)
     depth_guidance: Literal["concise", "standard", "detailed"]
     source_refs: list[str] = Field(default_factory=list)
-    interactive_component_policy: Literal["auto", "required", "skip"] = "auto"
+    interactive_component_policy: Literal["required", "skip"] = "skip"
     content_agent_strategy: Literal["single", "parallel"] = "single"
     execution_group: int = Field(default=1, ge=1)
     acceptance_criteria: list[str] = Field(default_factory=list)

@@ -171,10 +171,11 @@ def audit_run(manifest_path: Path, database: Path | None = None) -> tuple[dict, 
             issue("unauthorized_publication", "document", "未通过审核却标为 published。")
     stages = {kind: payloads.get(kind, {}).get("status") for kind in ("fact_check", "interactive_components")}
     for kind, status in stages.items():
+        severity = "warning" if kind == "interactive_components" else "blocking"
         if status in {"blocked", "failed"}:
-            issue("stage_blocked", kind, f"阶段状态为 {status}。")
+            issue("stage_blocked", kind, f"阶段状态为 {status}。", severity)
         elif status not in {"accepted", "passed", "at_risk", "not_needed"}:
-            issue("stage_unknown", kind, f"缺少可识别的终态：{status!r}。")
+            issue("stage_unknown", kind, f"缺少可识别的终态：{status!r}。", severity)
     if review.get("status") != "passed":
         severity = "blocking" if review.get("status") in {"blocked", "needs_revision"} else "warning"
         issue("review_not_passed", "review", f"审核状态为 {review.get('status')!r}。", severity)
@@ -197,7 +198,7 @@ def audit_run(manifest_path: Path, database: Path | None = None) -> tuple[dict, 
             issue("historical_manifest", run_id, f"正在审计历史快照；SQLite 最新清单是 {database_latest_manifest}。", "warning")
         if not database_run:
             issue("database_run_missing", run_id, "SQLite 没有对应运行。")
-        elif not stale and database_run["status"] == "succeeded" and (not document or not review or any(s in {"blocked", "failed"} for s in stages.values())):
+        elif not stale and database_run["status"] == "succeeded" and (not document or not review or stages["fact_check"] in {"blocked", "failed"}):
             issue("database_status_conflict", run_id, "SQLite 为 succeeded，但缺少文档/审核或某阶段已阻塞。")
 
     def sample(kind: str, artifact: dict, unit_id: str) -> dict:

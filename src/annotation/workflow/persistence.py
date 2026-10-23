@@ -41,7 +41,13 @@ def _immutable_path(path: Path) -> Path:
 def _model_dump(value: Any) -> Any:
     """Serialize Pydantic artifacts while accepting test-friendly mappings."""
 
-    return value.model_dump(mode="json") if hasattr(value, "model_dump") else value
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    if isinstance(value, Mapping):
+        return {key: _model_dump(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_model_dump(item) for item in value]
+    return value
 
 
 def _blueprint_loop_payload(state: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -326,6 +332,7 @@ def write_interactive_component_artifact(state: Mapping[str, Any], *, root: str 
         "task": _model_dump(state.get("interactive_component_task")) if state.get("interactive_component_task") is not None else None,
         "interactive_components": [_model_dump(artifact) for artifact in artifacts],
         "loop_trace": trace_payload,
+        "unit_results": _model_dump(state.get("interactive_component_results", [])),
     }
     return _write_json(path, payload)
 

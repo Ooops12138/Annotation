@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +39,19 @@ router = APIRouter()
 class RunRequest(BaseModel):
     book_id: str
     run_id: str | None = Field(default=None, min_length=1, max_length=160)
+    async_run: bool = False
+
+
+_run_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="annotation-run")
+_RUN_STAGES = {
+    "ingest": "读取教材", "prepare_blueprint": "理解教材结构", "hierarchical_blueprint": "整理学习蓝图",
+    "generate_blueprint_attempt": "生成学习蓝图", "check_blueprint_attempt": "检查学习蓝图",
+    "plan_content_tasks": "规划知识单元", "build_context_packs": "准备教材依据",
+    "content_reflection_loops": "生成并检查讲解", "generate_quiz_artifacts": "生成练习",
+    "fact_check_artifacts": "核对关键事实", "interactive_component_loop": "准备互动内容",
+    "assemble_document_ir": "装配学习文档", "validate_document_ir": "检查文档结构",
+    "review": "完成质量检查", "assemble": "发布学习文档",
+}
 
 
 def _safe_run_id(value: str) -> str:
@@ -140,10 +154,11 @@ def _run_response_from_state(result: dict[str, Any], state: dict[str, Any]) -> d
         "fact_check_artifact_path": state.get("fact_check_artifact_path"),
         "interactive_component_summary": interactive_component_compact_summary,
         "interactive_component_artifact_path": state.get("interactive_component_artifact_path"),
+        "progress": (run.get("metadata") or {}).get("progress"),
     }
 
 
-def _execute_run(*, book: dict[str, Any], requested_run_id: str | None = None, origin: str = "workflow") -> dict[str, Any]:
+def _execute_run(*, book: dict[str, Any], requested_run_id: str | None = None, origin: str = "workflow", allow_existing_running: bool = False) -> dict[str, Any]:
     repo = repository()
     try:
         run_id = requested_run_id or new_run_id()
@@ -152,7 +167,7 @@ def _execute_run(*, book: dict[str, Any], requested_run_id: str | None = None, o
             loaded = load_run_payload(repo, run_id)
             if loaded:
                 return {"stored": True, "payload": loaded}
-        if existing and existing.get("status") == "running":
+        if existing and existing.get("status") == "running" and not allow_existing_running:
             raise HTTPException(status_code=409, detail=f"运行正在进行：{run_id}")
         if existing and existing.get("status") in {"failed", "blocked"}:
             run_id = new_run_id(_safe_run_id(run_id))
@@ -167,7 +182,10 @@ def _execute_run(*, book: dict[str, Any], requested_run_id: str | None = None, o
                 config_version=provider.config_version,
             )
         except Exception as exc:
-            repo.update_run(run_id, status="failed", error=str(exc))
+            failed = repo.get_run(run_id) or {}
+            progress = dict((failed.get("metadata") or {}).get("progress") or {})
+            progress["status"] = "failed"
+            repo.update_run(run_id, status="failed", error=str(exc), metadata={**(failed.get("metadata") or {}), "progress": progress})
             raise HTTPException(status_code=500, detail=f"模型配置失败：{exc}") from exc
 
         try:
@@ -182,7 +200,9 @@ def _execute_run(*, book: dict[str, Any], requested_run_id: str | None = None, o
                 run_id=run_id,
                 pdf_path=book["stored_path"],
                 document_id=logical_document_id,
+                progress_callback=lambda stage, snapshot, phase: _publish_run_progress(repo, run_id, stage, snapshot, phase),
             )
+            last_progress = ((repo.get_run(run_id) or {}).get("metadata") or {}).get("progress") or {}
             result = persist_workflow_result(
                 repo,
                 book=book,
@@ -190,14 +210,54 @@ def _execute_run(*, book: dict[str, Any], requested_run_id: str | None = None, o
                 origin=origin,
                 publish_document=provider.provider != "mock",
             )
+            finished = repo.get_run(run_id) or {}
+            progress = dict(last_progress)
+            progress["status"] = result["run"].get("status", "succeeded")
+            if progress["status"] == "succeeded":
+                progress.update({"completed": len(_RUN_STAGES), "total": len(_RUN_STAGES)})
+            repo.update_run(run_id, metadata={**(finished.get("metadata") or {}), "progress": progress})
+            result["run"] = repo.get_run(run_id)
             return {"stored": False, "state": state, "result": result}
         except HTTPException:
             raise
         except Exception as exc:
-            repo.update_run(run_id, status="failed", error=str(exc))
+            failed = repo.get_run(run_id) or {}
+            progress = dict((failed.get("metadata") or {}).get("progress") or {})
+            progress["status"] = "failed"
+            repo.update_run(run_id, status="failed", error=str(exc), metadata={**(failed.get("metadata") or {}), "progress": progress})
             raise HTTPException(status_code=500, detail=f"工作流运行失败：{exc}") from exc
     finally:
         repo.close()
+
+
+def _publish_run_progress(repo: Any, run_id: str, stage: str, state: dict[str, Any], phase: str) -> None:
+    """Persist the small learner-facing projection; workflow artifacts remain separate."""
+    if stage not in _RUN_STAGES:
+        return
+    run = repo.get_run(run_id) or {}
+    metadata = run.get("metadata") or {}
+    previous = metadata.get("progress") or {}
+    stage_index = list(_RUN_STAGES).index(stage)
+    completed = max(int(previous.get("completed", 0)), stage_index + int(phase == "completed"))
+    repo.update_run(run_id, metadata={
+        "progress": {
+            "stage": stage,
+            "label": _RUN_STAGES.get(stage, "处理生成步骤"),
+            "completed": completed,
+            "total": len(_RUN_STAGES),
+            "status": "running",
+            "phase": phase,
+        }
+    })
+
+
+def _background_run(book: dict[str, Any], run_id: str) -> None:
+    try:
+        _execute_run(book=book, requested_run_id=run_id, allow_existing_running=True)
+    except Exception:
+        # _execute_run records terminal failure; the worker must not surface
+        # an unhandled exception to the server process.
+        return
 
 
 @router.get("/health")
@@ -280,6 +340,24 @@ def create_run(request: RunRequest) -> dict[str, Any]:
         book = _book_for_run(repo, request.book_id)
     finally:
         repo.close()
+    if request.async_run:
+        run_id = request.run_id or new_run_id()
+        repo = repository()
+        try:
+            existing = repo.get_run(run_id)
+            if existing and existing.get("status") == "running":
+                return {"status": "running", "run_id": run_id, "run": existing, "progress": (existing.get("metadata") or {}).get("progress")}
+            if existing and existing.get("status") == "succeeded":
+                loaded = load_run_payload(repo, run_id)
+                return loaded or {"status": "succeeded", "run_id": run_id, "run": existing}
+            if existing:
+                run_id = new_run_id(_safe_run_id(run_id))
+            repo.create_run(book["book_id"], run_id=run_id, metadata={"progress": {"stage": "queued", "label": "等待开始", "completed": 0, "total": len(_RUN_STAGES), "status": "queued"}})
+            created = repo.get_run(run_id)
+        finally:
+            repo.close()
+        _run_executor.submit(_background_run, book, run_id)
+        return {"status": "running", "run_id": run_id, "run": created, "progress": (created or {}).get("metadata", {}).get("progress")}
     execution = _execute_run(book=book, requested_run_id=request.run_id)
     if execution.get("stored"):
         loaded = execution["payload"]
@@ -334,6 +412,8 @@ def get_run(run_id: str) -> dict[str, Any]:
         payload = load_run_payload(repo, run_id)
         if not payload:
             raise HTTPException(status_code=404, detail=f"未找到运行：{run_id}")
+        payload["run_id"] = run_id
+        payload["book_id"] = (payload.get("run") or {}).get("book_id")
         content_row = next(
             (item for item in payload.get("artifacts", []) if item.get("kind") == "content"),
             None,
@@ -347,6 +427,7 @@ def get_run(run_id: str) -> dict[str, Any]:
         payload["quiz_artifacts"] = content_payload.get("quiz_artifacts") or quiz_payload.get("quiz_artifacts", [])
         payload["quiz_coverage"] = content_payload.get("quiz_coverage") or quiz_payload.get("quiz_coverage")
         payload["quiz_artifact_path"] = quiz_row.get("path")
+        payload["progress"] = (payload.get("run") or {}).get("metadata", {}).get("progress")
         return payload
     finally:
         repo.close()

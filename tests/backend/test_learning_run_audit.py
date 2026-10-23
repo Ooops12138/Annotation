@@ -104,7 +104,7 @@ def test_blocked_review_cannot_pass_structural_release_gate(tmp_path):
     assert result["release_verdict"] == "blocked"
 
 
-def test_blocked_component_conflicts_with_database_success(tmp_path):
+def test_blocked_component_is_a_warning_and_allows_database_success(tmp_path):
     manifest, paths = saved_run(tmp_path)
     mutate(paths["interactive_components"], lambda d: d.update(status="blocked"))
     db = tmp_path / "library.sqlite3"
@@ -112,7 +112,9 @@ def test_blocked_component_conflicts_with_database_success(tmp_path):
         con.execute("CREATE TABLE runs(run_id,status,provider,model,origin)")
         con.execute("INSERT INTO runs VALUES ('r','succeeded','test','test','test')")
     result, _ = audit.audit_run(manifest, db)
-    assert {"stage_blocked", "database_status_conflict"} <= {f["code"] for f in result["findings"]}
+    assert result["structural_status"] == "passed"
+    assert "database_status_conflict" not in {f["code"] for f in result["findings"]}
+    assert next(f for f in result["findings"] if f["code"] == "stage_blocked")["severity"] == "warning"
     with sqlite3.connect(db) as con:
         assert con.execute("SELECT status FROM runs").fetchone()[0] == "succeeded"
 

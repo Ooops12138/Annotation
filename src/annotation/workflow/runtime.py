@@ -79,6 +79,7 @@ from annotation.retrieval import HybridTextbookSearchTool, LlamaIndexChromaTextb
 def build_minimal_graph(
     provider: ModelProvider | None = None,
     *,
+    progress_callback: Callable[[str, WorkflowState, str], None] | None = None,
     blueprint_max_attempts: int | None = None,
     content_reflection_max_attempts: int | None = None,
     fact_check_max_corrections: int | None = None,
@@ -97,7 +98,6 @@ def build_minimal_graph(
         web_query_limit=configured_fact_check_web_query_limit(),
     )
     additional_fact_retrieval = configured_fact_check_additional_retrieval_enabled()
-    component_max_attempts = configured_interactive_component_max_attempts(interactive_component_max_attempts)
 
     def ingest(state: WorkflowState) -> dict[str, Any]:
         run_id = state.get("run_id", f"run-{uuid.uuid4().hex[:10]}")
@@ -765,32 +765,32 @@ def build_minimal_graph(
         kwargs: dict[str, Any] = {}
         if interactive_component_sandbox_runner is not None:
             kwargs["sandbox_runner"] = interactive_component_sandbox_runner
-        return run_interactive_component_loop(
-            model_provider,
-            run_id=state["run_id"],
-            tasks=state.get("content_tasks", []),
-            context_packs=state.get("context_packs", []),
-            content_artifacts=state.get("content_artifacts", []),
-            units=list(state["blueprint"].knowledge_units),
-            valid_source_refs=state.get("source_refs", []),
-            max_attempts=component_max_attempts,
-            **kwargs,
-        )
-
-    def next_interactive_component_route(state: WorkflowState) -> str:
-        status = state.get("interactive_component_status", "failed")
-        return "accept" if status in {"accepted", "at_risk", "not_needed"} else "block" if status == "blocked" else "fail"
-
-    def record_interactive_component_blocked_run(state: WorkflowState) -> dict[str, Any]:
-        return {"workflow_status": "blocked"}
-
-    def record_interactive_component_failed_run(state: WorkflowState) -> dict[str, Any]:
-        trace = state.get("interactive_component_loop_trace")
-        reason = getattr(trace, "stop_reason", None) or "unknown"
-        return {
-            "workflow_status": "failed",
-            "errors": _merge_messages(state.get("errors"), [f"interactive_component_failed: {reason}" ]),
-        }
+        try:
+            component_max_attempts = configured_interactive_component_max_attempts(interactive_component_max_attempts)
+            return run_interactive_component_loop(
+                model_provider,
+                run_id=state["run_id"],
+                tasks=state.get("content_tasks", []),
+                context_packs=state.get("context_packs", []),
+                content_artifacts=state.get("content_artifacts", []),
+                units=list(state["blueprint"].knowledge_units),
+                valid_source_refs=state.get("source_refs", []),
+                max_attempts=component_max_attempts,
+                **kwargs,
+            )
+        except Exception as exc:
+            # Components are optional output. Preserve diagnostics without
+            # putting failed candidates or their errors in the learner document.
+            return {
+                "interactive_component_artifacts": [],
+                "interactive_component_status": "failed",
+                "interactive_component_summary": {
+                    "component_count": 0,
+                    "final_status": "failed",
+                    "stop_reason": "unexpected_error",
+                    "error": f"{type(exc).__name__}: {exc}",
+                },
+            }
 
     def assemble_document_ir(state: WorkflowState) -> dict[str, Any]:
         artifacts = [artifact for artifact in state.get("content_artifacts", []) if artifact.status == "accepted"]
@@ -949,14 +949,22 @@ def build_minimal_graph(
         "generate_quiz_artifacts": generate_quiz_artifacts,
         "fact_check_artifacts": fact_check_artifacts,
         "interactive_component_loop": interactive_component_loop,
-        "record_interactive_component_blocked_run": record_interactive_component_blocked_run,
-        "record_interactive_component_failed_run": record_interactive_component_failed_run,
         "assemble_document_ir": assemble_document_ir,
         "validate_document_ir": validate_document_ir,
         "review": review,
         "assemble": assemble,
     }.items():
-        graph.add_node(name, node)
+        if progress_callback is None:
+            graph.add_node(name, node)
+            continue
+
+        def tracked_node(state: WorkflowState, *, _name: str = name, _node: Callable[..., Any] = node) -> dict[str, Any]:
+            progress_callback(_name, state, "started")
+            update = _node(state)
+            progress_callback(_name, {**state, **update}, "completed")
+            return update
+
+        graph.add_node(name, tracked_node)
     graph.add_edge(START, "ingest")
     graph.add_edge("ingest", "prepare_blueprint")
     graph.add_conditional_edges("prepare_blueprint", lambda state: state.get("blueprint_mode", "single"),
@@ -997,17 +1005,7 @@ def build_minimal_graph(
     graph.add_edge("record_content_failed_run", END)
     graph.add_edge("generate_quiz_artifacts", "fact_check_artifacts")
     graph.add_edge("fact_check_artifacts", "interactive_component_loop")
-    graph.add_conditional_edges(
-        "interactive_component_loop",
-        next_interactive_component_route,
-        {
-            "accept": "assemble_document_ir",
-            "block": "record_interactive_component_blocked_run",
-            "fail": "record_interactive_component_failed_run",
-        },
-    )
-    graph.add_edge("record_interactive_component_blocked_run", END)
-    graph.add_edge("record_interactive_component_failed_run", END)
+    graph.add_edge("interactive_component_loop", "assemble_document_ir")
     graph.add_edge("assemble_document_ir", "validate_document_ir")
     graph.add_edge("validate_document_ir", "review")
     graph.add_edge("review", "assemble")
@@ -1029,6 +1027,7 @@ def run_minimal_workflow(
     fact_check_web_enabled: bool | None = None,
     interactive_component_max_attempts: int | None = None,
     interactive_component_sandbox_runner: Callable[..., Any] | None = None,
+    progress_callback: Callable[[str, WorkflowState, str], None] | None = None,
 ) -> WorkflowState:
     initial: WorkflowState = {"run_id": run_id}
     if blueprint:
@@ -1040,8 +1039,9 @@ def run_minimal_workflow(
         initial["pdf_path"] = str(pdf_path)
     if document_id:
         initial["document_id"] = document_id
-    state = build_minimal_graph(
+    graph = build_minimal_graph(
         provider,
+        progress_callback=progress_callback,
         blueprint_max_attempts=blueprint_max_attempts,
         content_reflection_max_attempts=content_reflection_max_attempts,
         fact_check_max_corrections=fact_check_max_corrections,
@@ -1049,7 +1049,8 @@ def run_minimal_workflow(
         fact_check_web_enabled=fact_check_web_enabled,
         interactive_component_max_attempts=interactive_component_max_attempts,
         interactive_component_sandbox_runner=interactive_component_sandbox_runner,
-    ).invoke(initial)
+    )
+    state = graph.invoke(initial)
     # Keep the graph independently testable while ensuring API/CLI callers
     # can reconstruct the result without relying on process memory.
     persist_workflow_snapshots(state)

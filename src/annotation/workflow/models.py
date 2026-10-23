@@ -92,7 +92,7 @@ class ContentTaskDraft(BaseModel):
     quiz_count: int | None = Field(default=None, ge=0)
     depth_guidance: Literal["concise", "standard", "detailed"]
     source_refs: list[str] = Field(default_factory=list)
-    interactive_component_policy: Literal["auto", "required", "skip"] = "auto"
+    interactive_component_policy: Literal["required", "skip"] = "skip"
     content_agent_strategy: Literal["single", "parallel"] = "single"
     execution_group: int = Field(default=1, ge=1)
     acceptance_criteria: list[str] = Field(default_factory=list)
@@ -295,6 +295,7 @@ class WorkflowState(TypedDict, total=False):
     fact_check_status: str
     fact_check_artifact_path: str
     interactive_component_plan: InteractiveComponentPlan
+    interactive_component_results: list[dict[str, Any]]
     interactive_component_task: InteractiveComponentTask
     interactive_component_artifacts: list[InteractiveComponentArtifact]
     interactive_component_loop_trace: InteractiveComponentLoopTrace

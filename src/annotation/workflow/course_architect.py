@@ -59,7 +59,7 @@ def _default_criteria(unit, draft: ContentTaskDraft | None = None) -> list[str]:
     else:
         criteria.append("由 Agent 根据学习目标和教材证据决定是否生成练习及题量；不为凑数编题")
     if draft is not None and draft.interactive_component_policy == "required":
-        criteria.append("该单元需要交互式组件；组件必须基于教材来源且通过沙盒检查")
+        criteria.append("尝试生成基于教材来源且通过沙盒检查的交互式组件；失败时省略组件，不阻塞讲解和练习")
     elif draft is not None and draft.interactive_component_policy == "skip":
         criteria.append("该单元不生成交互式组件，使用静态讲解和测验完成学习闭环")
     return criteria
@@ -102,7 +102,7 @@ def _tasks_from_draft(
             quiz_count=item.quiz_count if item is not None else None,
             depth_guidance=item.depth_guidance if item is not None else "standard",
             source_refs=[],
-            interactive_component_policy=item.interactive_component_policy if item is not None else "auto",
+            interactive_component_policy=item.interactive_component_policy if item is not None else "skip",
             content_agent_strategy=item.content_agent_strategy if item is not None else "single",
             execution_group=item.execution_group if item is not None else index,
             acceptance_criteria=criteria,
@@ -128,7 +128,7 @@ def _mock_task_plan(blueprint: LearningBlueprint) -> ContentTaskPlanDraft:
             knowledge_unit_id=unit.artifact_id,
             quiz_count=objective_count or None,
             depth_guidance="standard",
-            interactive_component_policy="auto" if wants_component else "skip",
+            interactive_component_policy="required" if wants_component else "skip",
             content_agent_strategy="single",
             execution_group=index,
             acceptance_criteria=[],

@@ -177,7 +177,6 @@ def test_service_hides_blocked_document_but_keeps_review(tmp_path) -> None:
 
 
 @pytest.mark.parametrize("field,status", [
-    ("interactive_component_status", "blocked"),
     ("content_loop_status", "failed"),
     ("fact_check_status", "failed"),
 ])
@@ -193,6 +192,24 @@ def test_upstream_success_cannot_publish_after_a_later_stage_stops(tmp_path, fie
     assert result["run"]["status"] == status
     assert result["document_version"] is None
     assert repo.list_document_versions("doc-service") == []
+    repo.close()
+
+
+@pytest.mark.parametrize("status", ["blocked", "failed"])
+def test_component_failure_is_diagnostic_and_does_not_block_publication(tmp_path, status):
+    repo = PersistenceRepository(tmp_path / "db.sqlite3")
+    pdf = tmp_path / "book.pdf"
+    pdf.write_bytes(b"pdf")
+    book = repo.register_book(pdf)
+    state = _state(tmp_path)
+    state["interactive_component_status"] = status
+    state["interactive_component_summary"] = {"final_status": status, "component_count": 0, "stop_reason": "test"}
+    repo.create_run(book["book_id"], run_id=state["run_id"])
+    result = persist_workflow_result(repo, book=book, state=state)
+    assert result["run"]["status"] == "succeeded"
+    assert result["run"]["metadata"]["interactive_component_summary"]["final_status"] == status
+    assert result["document_version"] is not None
+    assert load_document_payload(repo, "doc-service")["document"] is not None
     repo.close()
 
 

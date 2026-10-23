@@ -310,16 +310,11 @@ def persist_workflow_result(
     workflow_status = str(state.get("workflow_status") or "")
     blueprint_loop_status = str((loop_summary or {}).get("final_status") or "")
     content_loop_status = str(state.get("content_loop_status") or (content_loop_summary or {}).get("final_status") or "")
-    interactive_component_status = str(
-        state.get("interactive_component_status")
-        or (interactive_component_compact_summary or {}).get("final_status")
-        or ""
-    )
     # A resumed workflow may retain an upstream success marker. No success
-    # marker can override a later stage's failure or block.
+    # marker can override a required content stage's failure or block.
+    # Component status remains diagnostic and does not gate publication.
     stage_statuses = {
         workflow_status, blueprint_loop_status, content_loop_status,
-        interactive_component_status,
         str(state.get("fact_check_status") or (fact_check_compact_summary or {}).get("final_status") or ""),
     }
     terminal_status = (
@@ -535,9 +530,26 @@ def load_run_payload(repo: PersistenceRepository, run_id: str) -> dict[str, Any]
         "fact_check_artifact_path": fact_check_row.get("path") if fact_check_row else None,
         "interactive_component_summary": interactive_component_compact_summary,
         "interactive_component_artifact_path": interactive_component_row.get("path") if interactive_component_row else None,
+        "progress": (run.get("metadata") or {}).get("progress"),
     }
     if version:
         result.update(load_document_payload(repo, version["document_id"], version=int(version["version"])) or {})
+    elif run["status"] == "succeeded" and (run.get("metadata") or {}).get("document_published") is False:
+        # Offline previews have durable artifacts but deliberately no library version.
+        document_row = next((item for item in artifacts if item.get("kind") == "document"), None)
+        review_row = next((item for item in artifacts if item.get("kind") == "review"), None)
+        try:
+            document = _document_from_path(document_row["path"]) if document_row else None
+        except (OSError, ValueError, KeyError, TypeError):
+            document = None
+        review = _review_from_path(review_row["path"] if review_row else None)
+        blocked = document is None or document.get("status") == "blocked" or (review is not None and review.get("status") == "blocked")
+        result.update({
+            "status": "blocked" if blocked else "succeeded",
+            "document": None if blocked else document,
+            "review_report": review,
+            "source_locations": repo.source_locations(_document_source_refs(document)) if document else {},
+        })
     return result
 
 
