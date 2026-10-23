@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from typing import Any, Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -244,6 +245,7 @@ class ContentReflectionState(TypedDict, total=False):
     final_draft: ContentDraft | None
     final_artifacts: list[ContentArtifact]
     source_blocks: list[SourceBlock]
+    semantic_blocks: list[SourceBlock]
     blueprint: LearningBlueprint
     retrieval_service: Any
     retrieval_decision: RetrievalDecision | None
@@ -255,6 +257,9 @@ class WorkflowState(TypedDict, total=False):
     pdf_path: str
     source_document: SourceDocument
     source_blocks: list[SourceBlock]
+    semantic_blocks: list[SourceBlock]
+    # Ephemeral resources shared by the two content nodes; never persisted.
+    content_retrieval_connection: sqlite3.Connection | None
     source_refs: list[str]
     textbook_structure: TextbookStructure
     blueprint_windows: list[BlueprintWindow]

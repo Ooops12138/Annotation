@@ -364,7 +364,7 @@ def build_minimal_graph(
         # Content uses semantic chunks; fact checking continues to use original
         # source blocks in its own stage so its citation granularity is unchanged.
         semantic_blocks = build_semantic_blocks(state["source_blocks"])
-        connection = sqlite3.connect(":memory:")
+        connection = state["content_retrieval_connection"]
         index_source_blocks(connection, semantic_blocks)
         textbook_tool = SQLiteFts5TextbookDatabaseSearchSkill(connection)
         for task in state.get("content_tasks", []):
@@ -377,8 +377,7 @@ def build_minimal_graph(
             packs.append(pack)
             if pack.omitted_source_refs:
                 warnings.append(f"context_pack_omitted_sources:{task.task_id}:{','.join(pack.omitted_source_refs)}")
-        connection.close()
-        return {"context_packs": packs, "warnings": _merge_messages(state.get("warnings"), warnings)}
+        return {"semantic_blocks": semantic_blocks, "context_packs": packs, "warnings": _merge_messages(state.get("warnings"), warnings)}
 
     def content_reflection_loops(state: WorkflowState) -> dict[str, Any]:
         """Run one isolated reflection subgraph per knowledge unit in order."""
@@ -397,9 +396,8 @@ def build_minimal_graph(
         warnings: list[str] = []
         provider_metadata: dict[str, Any] = dict(state.get("provider_metadata", {}))
         upstream_failed = False
-        retrieval_connection = sqlite3.connect(":memory:")
-        semantic_blocks = build_semantic_blocks(state.get("source_blocks", []))
-        index_source_blocks(retrieval_connection, semantic_blocks)
+        retrieval_connection = state["content_retrieval_connection"]
+        semantic_blocks = state["semantic_blocks"]
         textbook_tool = SQLiteFts5TextbookDatabaseSearchSkill(retrieval_connection)
         if rag_enabled():
             try:
@@ -553,6 +551,7 @@ def build_minimal_graph(
                 "fixture_adaptation": getattr(model_provider, "provider", "") == "mock",
                 "attempts": [],
                 "source_blocks": state.get("source_blocks", []),
+                "semantic_blocks": semantic_blocks,
                 "blueprint": blueprint,
                 "retrieval_service": retrieval_service,
             })
@@ -580,7 +579,6 @@ def build_minimal_graph(
                     provider_metadata = dict(metadata)
 
         summary = _content_loop_summary(traces)
-        retrieval_connection.close()
         status = summary["final_status"]
         result: dict[str, Any] = {
             "content_tasks": state.get("content_tasks", []),
@@ -954,15 +952,31 @@ def build_minimal_graph(
         "review": review,
         "assemble": assemble,
     }.items():
-        if progress_callback is None:
-            graph.add_node(name, node)
-            continue
-
         def tracked_node(state: WorkflowState, *, _name: str = name, _node: Callable[..., Any] = node) -> dict[str, Any]:
-            progress_callback(_name, state, "started")
-            update = _node(state)
-            progress_callback(_name, {**state, **update}, "completed")
-            return update
+            connection = state.get("content_retrieval_connection")
+            if _name == "build_context_packs":
+                # Consecutive LangGraph nodes may run on different worker threads;
+                # the graph accesses this connection sequentially, never concurrently.
+                connection = sqlite3.connect(":memory:", check_same_thread=False)
+                state = {**state, "content_retrieval_connection": connection}
+            try:
+                if progress_callback is not None:
+                    progress_callback(_name, state, "started")
+                update = _node(state)
+                if progress_callback is not None:
+                    progress_callback(_name, {**state, **update}, "completed")
+                if _name == "build_context_packs":
+                    update["content_retrieval_connection"] = connection
+                elif _name == "content_reflection_loops":
+                    update["content_retrieval_connection"] = None
+                return update
+            except BaseException:
+                if connection is not None:
+                    connection.close()
+                raise
+            finally:
+                if _name == "content_reflection_loops" and connection is not None:
+                    connection.close()
 
         graph.add_node(name, tracked_node)
     graph.add_edge(START, "ingest")

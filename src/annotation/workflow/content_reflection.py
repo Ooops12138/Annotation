@@ -99,6 +99,9 @@ def build_content_reflection_subgraph(
         plan = RetrievalDecision(textbook_queries=[unit.title, *unit.learning_objectives][:4], web_queries=[])
         queries: list[tuple[str, str]] = []
         pack = state["context_pack"]
+        semantic_blocks = state.get("semantic_blocks")
+        if semantic_blocks is None:
+            semantic_blocks = build_semantic_blocks(state.get("source_blocks", []))
         for round_number in range(2):
             if provider_name != "mock":
                 prompt = load_prompt(
@@ -119,7 +122,7 @@ def build_content_reflection_subgraph(
             queries.extend(item for item in round_queries if item not in queries)
             pack = build_context_pack(
                 task, unit, state["blueprint"],
-                build_semantic_blocks(state.get("source_blocks", [])),
+                semantic_blocks,
                 search_tool=state.get("retrieval_service"), retrieval_queries=queries,
                 fixture_fallback=provider_name == "mock",
             )
@@ -128,9 +131,10 @@ def build_content_reflection_subgraph(
         return {
             **state,
             "context_pack": pack,
+            "semantic_blocks": semantic_blocks,
             "retrieval_decision": plan,
             "valid_source_refs": list(dict.fromkeys([*state.get("valid_source_refs", []), *pack.source_refs])),
-        }, {"retrieval_decision": plan, "context_pack": pack}
+        }, {"retrieval_decision": plan, "context_pack": pack, "semantic_blocks": semantic_blocks}
 
     def generate_candidate(state: ContentReflectionState) -> dict[str, Any]:
         retrieval_result: dict[str, Any] = {}

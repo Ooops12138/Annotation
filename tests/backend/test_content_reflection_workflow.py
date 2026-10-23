@@ -307,3 +307,99 @@ def test_enabled_vector_reaches_content_agent_and_context_audit(monkeypatch):
     assert searched and calls
     assert any(c.metadata.get("branch_1_embedding_fingerprint") == "test-vector-space" for c in calls)
     assert state["content_artifacts"]
+
+
+def test_content_reuses_chunks_and_fts_across_units_and_runs(monkeypatch):
+    import sqlite3
+    import pytest
+    import annotation.workflow.runtime as runtime
+    import annotation.workflow.content_reflection as reflection
+
+    _install_source_fixture(monkeypatch)
+    monkeypatch.setenv("RAG_ENABLED", "false")
+    chunk_calls, indexed_connections, used_blocks = [], [], []
+    chunker, indexer = runtime.build_semantic_blocks, runtime.index_source_blocks
+    context_builder = reflection.build_context_pack
+
+    def chunks(blocks):
+        result = chunker(blocks)
+        chunk_calls.append(result)
+        return result
+
+    def index(connection, blocks):
+        indexed_connections.append(connection)
+        return indexer(connection, blocks)
+
+    def context(*args, **kwargs):
+        used_blocks.append(args[3])
+        return context_builder(*args, **kwargs)
+
+    def unexpected_chunking(_blocks):
+        raise AssertionError("content subgraph must reuse the run's semantic blocks")
+
+    monkeypatch.setattr(runtime, "build_semantic_blocks", chunks)
+    monkeypatch.setattr(runtime, "index_source_blocks", index)
+    monkeypatch.setattr(reflection, "build_context_pack", context)
+    monkeypatch.setattr(reflection, "build_semantic_blocks", unexpected_chunking)
+    for _ in range(2):
+        run_id = f"reuse-content-{uuid.uuid4().hex[:8]}"
+        state = run_minimal_workflow(provider=MockProvider(), run_id=run_id, blueprint=_blueprint(run_id))
+        assert len(state["content_artifacts"]) == 3
+        assert state["content_retrieval_connection"] is None
+        assert used_blocks and all(blocks is chunk_calls[-1] for blocks in used_blocks)
+        used_blocks.clear()
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            indexed_connections[-1].execute("SELECT 1")
+    assert len(chunk_calls) == len(indexed_connections) == 2
+    assert chunk_calls[0] is not chunk_calls[1]
+
+
+def test_content_index_is_closed_when_context_building_raises(monkeypatch):
+    import sqlite3
+    import pytest
+    import annotation.workflow.runtime as runtime
+
+    _install_source_fixture(monkeypatch)
+    connections = []
+    indexer = runtime.index_source_blocks
+
+    def index(connection, blocks):
+        connections.append(connection)
+        return indexer(connection, blocks)
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("context failed")
+
+    monkeypatch.setattr(runtime, "index_source_blocks", index)
+    monkeypatch.setattr(runtime, "build_context_pack", fail)
+    run_id = f"reuse-error-{uuid.uuid4().hex[:8]}"
+    with pytest.raises(RuntimeError, match="context failed"):
+        run_minimal_workflow(provider=MockProvider(), run_id=run_id, blueprint=_blueprint(run_id))
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        connections[0].execute("SELECT 1")
+
+
+def test_content_index_is_closed_when_reflection_raises(monkeypatch):
+    import sqlite3
+    import pytest
+    import annotation.workflow.runtime as runtime
+
+    _install_source_fixture(monkeypatch)
+    connections = []
+    indexer = runtime.index_source_blocks
+
+    def index(connection, blocks):
+        connections.append(connection)
+        return indexer(connection, blocks)
+
+    class BrokenSubgraph:
+        def invoke(self, state):
+            raise RuntimeError("reflection failed")
+
+    monkeypatch.setattr(runtime, "index_source_blocks", index)
+    monkeypatch.setattr(runtime, "build_content_reflection_subgraph", lambda *args, **kwargs: BrokenSubgraph())
+    run_id = f"reuse-reflection-error-{uuid.uuid4().hex[:8]}"
+    with pytest.raises(RuntimeError, match="reflection failed"):
+        run_minimal_workflow(provider=MockProvider(), run_id=run_id, blueprint=_blueprint(run_id))
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        connections[0].execute("SELECT 1")
