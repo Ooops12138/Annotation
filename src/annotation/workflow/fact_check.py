@@ -157,7 +157,7 @@ def _extract_claims(
 ) -> tuple[list[FactCheckClaim], str | None]:
     """Extract facts and viewpoints; quiz distractors are not supplied as targets."""
 
-    if str(getattr(provider, "provider", "unknown")) == "mock":
+    if getattr(provider, "workflow", None) is not None:
         return [], None
 
     targets = _targets(content, quiz)
@@ -534,8 +534,9 @@ def _fact_check_retrieval_decision(
 ) -> FactCheckRetrievalDecision:
     """Let the fact-check agent choose whether and where to retrieve evidence."""
 
-    if str(getattr(provider, "provider", "")) == "mock":
-        return FactCheckRetrievalDecision(action="use_context")
+    workflow_capabilities = getattr(provider, "workflow", None)
+    if workflow_capabilities is not None:
+        return workflow_capabilities.fact_check_retrieval_decision()
     prompt = load_prompt(
         "fact_check_retrieval",
         CLAIM=json.dumps(_dump(claim), ensure_ascii=False, indent=2),
@@ -641,10 +642,9 @@ def _check_unit(
 
         # Existing excerpts can be unrelated headings. Supplement assertions
         # judged insufficient even when the snapshot was nonempty.
-        # Retrieval is chosen by the agent before assessment. A second,
-        # program-triggered search in the same round would override that
-        # decision and duplicate tool calls.
-        if False and additional_retrieval_enabled and not assessment_error:
+        # An insufficient assessment may trigger bounded supplemental retrieval
+        # when the caller explicitly enables it.
+        if additional_retrieval_enabled and not assessment_error:
             insufficient_ids = {item.claim_id for item in checked if item.verdict == "insufficient"}
             follow_up = []
             for claim in factual_claims:
@@ -668,7 +668,7 @@ def _check_unit(
                 assessments = [replacement.get(item.claim_id, item) for item in assessments]
                 checked = [replacement.get(item.claim_id, item) for item in checked]
 
-        if False and policy.web_enabled and additional_retrieval_enabled and not assessment_error:
+        if policy.web_enabled and additional_retrieval_enabled and not assessment_error:
             follow_up = [
                 claim for claim in factual_claims
                 if next((item for item in checked if item.claim_id == claim.claim_id), None)

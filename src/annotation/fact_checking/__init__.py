@@ -17,8 +17,6 @@ from .contracts import (
     WebSearchRequest,
 )
 from .skills import (
-    DeterministicMockWebResourceSearchSkill,
-    DeterministicMockWebSearchProvider,
     DisabledVectorTextbookSearchTool,
     DisabledWebResourceSearchSkill,
     ProviderBackedWebResourceSearchSkill,
@@ -31,8 +29,6 @@ from .skills import (
 )
 
 __all__ = [
-    "DeterministicMockWebResourceSearchSkill",
-    "DeterministicMockWebSearchProvider",
     "DisabledWebResourceSearchSkill",
     "DisabledVectorTextbookSearchTool",
     "EvidenceKind",

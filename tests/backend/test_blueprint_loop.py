@@ -4,7 +4,8 @@ import json
 import uuid
 
 from annotation.domain.artifacts import KnowledgeUnit, LearningBlueprint, SourceBlock, SourceDocument
-from annotation.providers import ProviderError, SequenceProvider
+from annotation.providers import ProviderError
+from tests.support.providers import SequenceProvider
 from annotation.workflow import run_minimal_workflow
 
 
@@ -254,4 +255,4 @@ def test_real_blueprint_duplicate_ids_are_rejected_without_renaming():
         for title in ["one", "two"]
     ]})
     with pytest.raises(ProviderError, match="duplicate knowledge unit id"):
-        _blueprint_from_draft(draft=draft, state={"run_id": "r", "source_refs": ["src-1"]}, provider_name="test", fixture_adaptation=False)
+        _blueprint_from_draft(draft=draft, state={"run_id": "r", "source_refs": ["src-1"]}, provider_name="test")

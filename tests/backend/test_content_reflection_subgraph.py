@@ -85,7 +85,6 @@ def _state() -> dict[str, Any]:
         "context_pack": pack,
         "valid_source_refs": ["src-1"],
         "max_attempts": 3,
-        "fixture_adaptation": False,
         "attempt": 0,
         "attempts": [],
     }

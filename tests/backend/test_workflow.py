@@ -1,4 +1,4 @@
-from annotation.providers import MockProvider
+from annotation.offline import OfflineFixtureProvider
 from annotation.workflow import run_minimal_workflow
 from annotation.workflow.content_support import _formula_format_issues
 from annotation.workflow.graph import _review_report_for, _source_context
@@ -72,7 +72,7 @@ def test_source_context_uses_all_non_empty_blocks_by_default() -> None:
 
 
 def test_minimal_langgraph_workflow_produces_traceable_document() -> None:
-    state = run_minimal_workflow(provider=MockProvider(), run_id="run-test-001")
+    state = run_minimal_workflow(provider=OfflineFixtureProvider(), run_id="run-test-001")
     assert not state.get("errors")
     assert state["blueprint"].run_id == "run-test-001"
     assert state["document"].run_id == "run-test-001"
@@ -80,7 +80,7 @@ def test_minimal_langgraph_workflow_produces_traceable_document() -> None:
         "published" if state["review_report"].status == "passed" else "accepted"
     )
     assert state["document"].blueprint_version.startswith("bp-fixture-001:v1")
-    assert state["provider_metadata"]["provider"] == "mock"
+    assert state["provider_metadata"]["provider"] == "offline"
     assert len(state["document"].source_refs) <= 5
     assert not state.get("warnings")
     assert len(state["blueprint"].knowledge_units) >= 4
@@ -112,7 +112,7 @@ def test_minimal_langgraph_workflow_produces_traceable_document() -> None:
 
 def test_workflow_can_use_a_stable_logical_document_id() -> None:
     state = run_minimal_workflow(
-        provider=MockProvider(),
+        provider=OfflineFixtureProvider(),
         run_id="run-stable-document-id",
         document_id="doc-book-stable",
     )
@@ -140,8 +140,8 @@ def test_formula_format_review_keeps_text_math_and_rejects_malformed_math() -> N
 
 
 def test_review_report_version_is_incremented_for_a_repeated_run() -> None:
-    first = run_minimal_workflow(provider=MockProvider(), run_id="run-review-version-test")
-    second = run_minimal_workflow(provider=MockProvider(), run_id="run-review-version-test")
+    first = run_minimal_workflow(provider=OfflineFixtureProvider(), run_id="run-review-version-test")
+    second = run_minimal_workflow(provider=OfflineFixtureProvider(), run_id="run-review-version-test")
     assert second["review_report"].version > first["review_report"].version
     assert second["review_report_path"] != first["review_report_path"]
     assert second["review_report"].revision_of == first["review_report"].report_id

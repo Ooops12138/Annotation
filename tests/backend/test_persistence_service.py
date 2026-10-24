@@ -129,7 +129,7 @@ def _state(tmp_path, *, blocked: bool = False) -> dict:
         "document": document,
         "review_report": report,
         "review_report_path": str(review_path),
-        "provider_metadata": {"provider": "mock", "model": "fixture"},
+        "provider_metadata": {"provider": "offline", "model": "offline-fixture"},
         "warnings": [],
         "errors": [],
     }

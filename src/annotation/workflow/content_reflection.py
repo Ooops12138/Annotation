@@ -31,8 +31,6 @@ from annotation.workflow.content_support import (
     _content_issue,
     _critic_review_issues,
     _dedupe_review_issues,
-    _mock_content_critique,
-    _mock_content_draft,
     _unit_context,
 )
 from annotation.workflow.graph import _metadata, _provider_metadata
@@ -52,22 +50,11 @@ def build_content_reflection_subgraph(
     """
 
     provider_name = str(getattr(provider, "provider", "unknown"))
+    workflow_capabilities = getattr(provider, "workflow", None)
 
     def response_limit(default: int) -> int:
         limit = getattr(getattr(provider, "capabilities", None), "max_output_tokens", None)
         return min(default, int(limit)) if limit else default
-
-    def mock_metadata(agent: str) -> dict[str, Any]:
-        return {
-            "agent": agent,
-            "provider": provider_name,
-            "model": getattr(provider, "model", "fixture-model"),
-            "base_url": getattr(provider, "base_url", None),
-            "config_version": getattr(provider, "config_version", "mock-v1"),
-            "duration_ms": 0,
-            "usage": {},
-            "fixture_adaptation": True,
-        }
 
     def artifact_from_draft(
         *,
@@ -79,7 +66,6 @@ def build_content_reflection_subgraph(
         task = state["task"]
         unit = state["unit"]
         pack = state["context_pack"]
-        fixture_adaptation = bool(state.get("fixture_adaptation"))
         primary = _content_artifact_from_draft(
             draft=draft,
             task=task,
@@ -87,7 +73,6 @@ def build_content_reflection_subgraph(
             pack=pack,
             run_id=state["run_id"],
             provider_name=provider_name,
-            fixture_adaptation=fixture_adaptation,
             attempt=attempt,
             prompt_version=prompt_version,
         )
@@ -103,9 +88,9 @@ def build_content_reflection_subgraph(
         if semantic_blocks is None:
             semantic_blocks = build_semantic_blocks(state.get("source_blocks", []))
         for round_number in range(3):
-            if provider_name == "mock" and pack.excerpts:
-                plan = RetrievalDecision(action="write")
-            if provider_name != "mock":
+            if workflow_capabilities is not None:
+                plan = workflow_capabilities.content_retrieval_decision(pack, unit)
+            else:
                 prompt = load_prompt(
                     "content_agent_retrieval",
                     KNOWLEDGE_UNIT_CONTEXT=_content_prompt_unit(unit),
@@ -139,7 +124,7 @@ def build_content_reflection_subgraph(
                 task, unit, state["blueprint"],
                 semantic_blocks,
                 search_tool=state.get("retrieval_service"), retrieval_queries=round_queries,
-                fixture_fallback=provider_name == "mock",
+                fixture_fallback=bool(workflow_capabilities is not None),
             )
             seen = {e.chunk_ref or e.source_ref for e in pack.excerpts}
             excerpts = list(pack.excerpts)
@@ -250,14 +235,13 @@ def build_content_reflection_subgraph(
                 result.update(generation_error="教材检索未返回可用证据，未生成正文。",
                               generation_error_category="no_evidence")
                 return result
-            # Mock/Sequence fixtures intentionally remain local.  This keeps
+            # Offline fixtures intentionally remain local. This keeps
             # existing Blueprint loop call-count tests stable while recording
             # a fully shaped generation and Critic attempt in the trace.
-            if provider_name == "mock":
-                draft = _mock_content_draft(unit, pack)
-                metadata = mock_metadata(agent)
+            if workflow_capabilities is not None:
+                draft = workflow_capabilities.content_draft(unit, pack)
+                metadata = workflow_capabilities.fixture_metadata(agent)
                 raw_output = draft.model_dump_json()
-                fixture_adaptation = True
             else:
                 response = provider.generate_structured(StructuredGenerationRequest(
                     prompt=prompt,
@@ -279,14 +263,12 @@ def build_content_reflection_subgraph(
                 metadata = _metadata(response)
                 metadata["agent"] = agent
                 raw_output = response.raw_text
-                fixture_adaptation = False
             result.update({
                 "generation_status": "succeeded",
                 "generation_raw_output": raw_output,
                 "generation_parsed_output": draft.model_dump(mode="json"),
                 "generation_provider_metadata": metadata,
                 "candidate_draft": draft,
-                "fixture_adaptation": fixture_adaptation,
             })
             result["candidate_artifact"] = artifact_from_draft(
                 draft=draft,
@@ -363,9 +345,9 @@ def build_content_reflection_subgraph(
             "critic_feedback": [],
         }
         try:
-            if provider_name == "mock":
-                critique = _mock_content_critique()
-                metadata = mock_metadata("critique_content_artifact")
+            if workflow_capabilities is not None:
+                critique = workflow_capabilities.content_critique()
+                metadata = workflow_capabilities.fixture_metadata("critique_content_artifact")
                 raw_output = critique.model_dump_json()
             else:
                 response = provider.generate_structured(StructuredGenerationRequest(

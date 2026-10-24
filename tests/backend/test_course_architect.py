@@ -14,10 +14,10 @@ from annotation.workflow.models import ContentTaskDraft
 
 
 def test_component_policy_defaults_to_skip_and_rejects_auto():
-    draft = ContentTaskDraft(knowledge_unit_id="unit", depth_guidance="standard")
+    draft = ContentTaskDraft(title="Unit", covered_objectives={"unit": ["objective"]}, depth_guidance="standard")
     assert draft.interactive_component_policy == "skip"
     with pytest.raises(ValidationError):
-        ContentTaskDraft(knowledge_unit_id="unit", depth_guidance="standard", interactive_component_policy="auto")
+        ContentTaskDraft(title="Unit", covered_objectives={"unit": ["objective"]}, depth_guidance="standard", interactive_component_policy="auto")
     with pytest.raises(ValidationError):
         ContentTask(task_id="task", run_id="run", blueprint_version="bp:v1", knowledge_unit_id="unit",
                     depth_guidance="standard", interactive_component_policy="auto")
@@ -81,23 +81,19 @@ def test_course_architect_generates_structured_content_tasks() -> None:
     provider = ArchitectProvider({
         "tasks": [
             {
-                "knowledge_unit_id": "ku-sup",
+                "title": "上确界",
+                "covered_objectives": {"ku-sup": ["理解上确界"]},
                 "quiz_count": 2,
                 "depth_guidance": "detailed",
-                "source_refs": ["src-1", "unknown"],
                 "interactive_component_policy": "required",
-                "content_agent_strategy": "parallel",
-                "execution_group": 1,
                 "acceptance_criteria": ["说明上确界与最大元的差别。"],
             },
             {
-                "knowledge_unit_id": "ku-basic",
+                "title": "基础概念",
+                "covered_objectives": {"ku-basic": ["理解基础概念"]},
                 "quiz_count": 0,
                 "depth_guidance": "concise",
-                "source_refs": ["src-2"],
                 "interactive_component_policy": "skip",
-                "content_agent_strategy": "single",
-                "execution_group": 2,
                 "acceptance_criteria": [],
             },
         ]
@@ -110,7 +106,7 @@ def test_course_architect_generates_structured_content_tasks() -> None:
     assert [task.knowledge_unit_id for task in tasks] == ["ku-sup", "ku-basic"]
     assert tasks[0].quiz_count == 2
     assert tasks[0].interactive_component_policy == "required"
-    assert tasks[0].content_agent_strategy == "parallel"
+    assert tasks[0].covered_objectives == {"ku-sup": ["理解上确界"]}
     assert tasks[0].source_refs == []
     assert not any("dropped_source_refs" in warning for warning in result["warnings"])
     assert "说明上确界与最大元的差别。" in tasks[0].acceptance_criteria
@@ -124,8 +120,8 @@ def test_large_blueprint_task_planning_batches_without_losing_global_order(monke
     class BatchProvider(ArchitectProvider):
         def generate_structured(self, request):
             context = json.loads(request.prompt.split("## Learning Blueprint", 1)[1].split("```json", 1)[1].split("```", 1)[0])
-            self.payload = {"tasks": [{"knowledge_unit_id": u["knowledge_unit_id"], "quiz_count": 0,
-                "depth_guidance": "detailed", "execution_group": index + 1} for index, u in enumerate(context["knowledge_units"])]}
+            self.payload = {"tasks": [{"title": u["title"], "covered_objectives": {u["knowledge_unit_id"]: u["learning_objectives"]},
+                "quiz_count": 0, "depth_guidance": "detailed"} for u in context["knowledge_units"]]}
             return super().generate_structured(request)
 
     blueprint = _blueprint()
@@ -133,10 +129,9 @@ def test_large_blueprint_task_planning_batches_without_losing_global_order(monke
     provider = BatchProvider({})
     result = plan_content_tasks_with_architect(provider, run_id="batch-run", blueprint=blueprint)
     assert result["content_task_planning_metadata"]["status"] == "succeeded"
-    assert len(provider.calls) == 3
+    assert len(provider.calls) == 1
     assert [t.knowledge_unit_id for t in result["content_tasks"]] == [u.artifact_id for u in blueprint.knowledge_units]
     assert len({t.task_id for t in result["content_tasks"]}) == 23
-    assert [t.execution_group for t in result["content_tasks"]] == list(range(1, 24))
     assert all(t.depth_guidance == "detailed" and t.quiz_count == 0 for t in result["content_tasks"])
     budget = PromptBudget.for_provider(provider, output_limit=5000)
     assert all(budget.fits(call.prompt, ContentTaskPlanDraft) for call in provider.calls)
@@ -152,9 +147,14 @@ def test_oversized_single_architect_unit_blocks_without_a_model_call(monkeypatch
 
 
 def test_duplicate_architect_tasks_require_revision() -> None:
-    provider = ArchitectProvider({"tasks": [{"knowledge_unit_id": unit_id, "depth_guidance": "standard"} for unit_id in ("ku-sup", "ku-sup", "ku-basic")]})
+    provider = ArchitectProvider({"tasks": [
+        {"title": "Supremum A", "covered_objectives": {"ku-sup": ["理解上确界"]}, "depth_guidance": "standard"},
+        {"title": "Supremum B", "covered_objectives": {"ku-sup": ["理解上确界"]}, "depth_guidance": "standard"},
+        {"title": "Basic", "covered_objectives": {"ku-basic": ["理解基础概念"]}, "depth_guidance": "standard"},
+    ]})
     result = plan_content_tasks_with_architect(provider, run_id="duplicate-plan", blueprint=_blueprint())
-    assert result["content_task_planning_metadata"]["status"] == "needs_revision"
+    assert result["content_task_planning_metadata"]["status"] == "succeeded"
+    assert len(result["content_tasks"]) == 3
 
 
 def test_quiz_prompt_uses_architect_question_count() -> None:

@@ -28,6 +28,7 @@ from annotation.workflow import run_minimal_workflow
 
 class ScriptedFactCheckProvider:
     provider = "fact-check-scripted"
+    profile = "live"
     model = "fact-check-scripted-model"
     base_url = None
     config_version = "test-v1"
@@ -56,17 +57,17 @@ class ScriptedFactCheckProvider:
         schema_name = request.schema.__name__
         if schema_name == "ContentTaskPlanDraft":
             blueprint_section = request.prompt.split("## Learning Blueprint", maxsplit=1)[-1]
-            unit_ids = list(dict.fromkeys(re.findall(r'"knowledge_unit_id":\s*"([^"]+)"', blueprint_section)))
+            blueprint_data = re.search(r"```json\s*(\{.*?\})\s*```", blueprint_section, re.S)
+            units = __import__("json").loads(blueprint_data.group(1))["knowledge_units"]
             payload = {
                 "tasks": [{
-                    "knowledge_unit_id": unit_id,
+                    "title": unit["title"],
+                    "covered_objectives": {unit["knowledge_unit_id"]: unit["learning_objectives"]},
                     "quiz_count": 0,
                     "depth_guidance": "standard",
                     "interactive_component_policy": "skip",
-                    "content_agent_strategy": "single",
-                    "execution_group": index,
                     "acceptance_criteria": ["基于教材检索结果解释概念。"],
-                } for index, unit_id in enumerate(unit_ids, start=1)],
+                } for unit in units],
             }
         elif schema_name == "RetrievalDecision":
             payload = ({"action": "search", "textbook_queries": [self.query]}

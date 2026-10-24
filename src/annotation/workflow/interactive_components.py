@@ -161,53 +161,12 @@ def plan_interactive_component(
     return plan, task, unit, artifact, pack
 
 
-def _mock_draft(task: InteractiveComponentTask) -> InteractiveComponentDraft:
-    """Deterministic interval fixture used only by the built-in mock provider."""
-
-    spec = IntervalLineSpec(
-        component_id="interval-supremum-line",
-        title="观察区间的右端点与上确界",
-        learning_objective="区分区间 [0,1) 的上确界 1 与不存在的最大元。",
-        source_refs=list(task.source_refs),
-        accessibility=ComponentAccessibility(
-            aria_label="区间 [0,1) 的数轴图示",
-            description="数轴显示从 0 到 1 的区间，右端点为空心圆，因此 1 不属于该集合。",
-            observation="右端点 1 是上确界，但由于端点开放，集合没有最大元。",
-        ),
-        controls=[ToggleControlSpec(
-            control_id="show-supremum",
-            label="标出上确界",
-            default_value=False,
-        )],
-        test_actions=[ComponentTestAction(
-            action="toggle",
-            control_id="show-supremum",
-            value=True,
-            expected_text="上确界",
-        )],
-        annotations=[],
-        interval_start=0,
-        interval_end=1,
-        left_endpoint="closed",
-        right_endpoint="open",
-        supremum=1,
-        maximum=None,
-    )
-    return InteractiveComponentDraft(
-        task_id=task.task_id,
-        knowledge_unit_id=task.knowledge_unit_id,
-        context_pack_id=task.context_pack_id,
-        spec=spec,
-    )
-
-
 def _artifact_from_draft(
     *,
     draft: InteractiveComponentDraft,
     task: InteractiveComponentTask,
     provider_name: str,
     attempt: int,
-    fixture_adaptation: bool,
     prompt_version: str,
 ) -> InteractiveComponentArtifact | None:
     if draft.spec is None:
@@ -226,7 +185,7 @@ def _artifact_from_draft(
         context_pack_id=task.context_pack_id,
         spec=draft.spec,
         prompt_version=prompt_version,
-        metadata={"attempt": attempt, "fixture_adaptation": fixture_adaptation},
+        metadata={"attempt": attempt},
     )
 
 
@@ -358,17 +317,9 @@ def _critic_issues(
     return result
 
 
-def _mock_metadata(provider: ModelProvider, agent: str) -> dict[str, Any]:
-    return {
-        "agent": agent,
-        "provider": getattr(provider, "provider", "mock"),
-        "model": getattr(provider, "model", "fixture-model"),
-        "base_url": getattr(provider, "base_url", None),
-        "config_version": getattr(provider, "config_version", "mock-v1"),
-        "duration_ms": 0,
-        "usage": {},
-        "fixture_adaptation": True,
-    }
+def _fixture_metadata(provider: ModelProvider, agent: str) -> dict[str, Any]:
+    capabilities = getattr(provider, "workflow", None)
+    return capabilities.fixture_metadata(agent) if capabilities is not None else {}
 
 
 def build_interactive_component_subgraph(
@@ -380,6 +331,7 @@ def build_interactive_component_subgraph(
     """Build the A-004 per-component LangGraph subgraph."""
 
     provider_name = str(getattr(provider, "provider", "unknown"))
+    workflow_capabilities = getattr(provider, "workflow", None)
 
     def output_limit(default: int) -> int:
         limit = getattr(getattr(provider, "capabilities", None), "max_output_tokens", None)
@@ -442,11 +394,10 @@ def build_interactive_component_subgraph(
             "critic_feedback": [],
         }
         try:
-            if provider_name == "mock":
-                draft = _mock_draft(task)
-                metadata = _mock_metadata(provider, agent)
+            if workflow_capabilities is not None:
+                draft = workflow_capabilities.component_draft(task)
+                metadata = _fixture_metadata(provider, agent)
                 raw_output = draft.model_dump_json()
-                fixture_adaptation = True
             else:
                 response = provider.generate_structured(StructuredGenerationRequest(
                     prompt=prompt,
@@ -465,7 +416,6 @@ def build_interactive_component_subgraph(
                 metadata = _metadata(response)
                 metadata["agent"] = agent
                 raw_output = response.raw_text
-                fixture_adaptation = False
             result.update({
                 "generation_status": "succeeded",
                 "generation_raw_output": raw_output,
@@ -477,7 +427,6 @@ def build_interactive_component_subgraph(
                     task=task,
                     provider_name=provider_name,
                     attempt=attempt,
-                    fixture_adaptation=fixture_adaptation,
                     prompt_version=prompt_version,
                 ),
             })
@@ -567,9 +516,9 @@ def build_interactive_component_subgraph(
             "critic_feedback": [],
         }
         try:
-            if provider_name == "mock":
-                critique = InteractiveComponentCritiqueDraft()
-                metadata = _mock_metadata(provider, "critique_interactive_component")
+            if workflow_capabilities is not None:
+                critique = workflow_capabilities.component_critique()
+                metadata = _fixture_metadata(provider, "critique_interactive_component")
                 raw_output = critique.model_dump_json()
             else:
                 response = provider.generate_structured(StructuredGenerationRequest(

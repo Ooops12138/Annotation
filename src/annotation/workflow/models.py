@@ -262,7 +262,6 @@ class ContentReflectionState(TypedDict, total=False):
     context_pack: ContextPack
     valid_source_refs: list[str]
     max_attempts: int
-    fixture_adaptation: bool
     attempt: int
     attempts: list[ContentAttemptTrace]
     generation_stage: str

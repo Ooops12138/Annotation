@@ -9,12 +9,13 @@ from annotation.providers.models import (
     StructuredGenerationRequest,
     StructuredGenerationResponse,
 )
-from annotation.providers import MockProvider
+from annotation.offline import OfflineFixtureProvider
 from annotation.workflow import run_minimal_workflow
 
 
 class WorkflowContentProvider:
     provider = "workflow-scripted"
+    profile = "live"
     model = "workflow-scripted-model"
     base_url = None
     config_version = "test-v1"
@@ -35,21 +36,20 @@ class WorkflowContentProvider:
             payload = {
                 "tasks": [
                     {
-                        "knowledge_unit_id": unit_id,
+                        "title": f"测试单元 {index}",
+                        "covered_objectives": {unit_id: [
+                            {"unit-1": "理解概念", "unit-2": "理解定理", "unit-3": "理解例题"}[unit_id]
+                        ]},
                         "quiz_count": 0,
                         "depth_guidance": "standard",
-                        "source_refs": ["src-1"],
                         "interactive_component_policy": "skip",
-                        "content_agent_strategy": "single",
-                        "execution_group": index,
                         "acceptance_criteria": ["使用测试教材证据。"],
                     }
                     for index, unit_id in enumerate(self.quiz_unit_ids, start=1)
                 ]
             }
         elif schema_name == "RetrievalDecision":
-            payload = ({"action": "search", "textbook_queries": ["测试教材证据"]}
-                if 'estimated_input_tokens=0' in request.prompt else {"action": "write"})
+            payload = {"action": "search", "textbook_queries": ["测试教材证据"]} if 'estimated_input_tokens=0' in request.prompt else {"action": "write"}
         elif schema_name == "ContentDraft":
             payload: dict[str, Any] = {
                 "title": "测试单元",
@@ -246,9 +246,9 @@ def test_agent_cannot_write_when_retrieved_evidence_exceeds_budget(monkeypatch) 
     assert all(trace.attempts[0].generation_status == "provider_error" for trace in state["content_loop_traces"])
 
 
-def test_mock_workflow_keeps_six_unit_quiz_regression_and_emits_six_content_traces() -> None:
+def test_offline_workflow_keeps_six_unit_quiz_regression_and_emits_six_content_traces() -> None:
     state = run_minimal_workflow(
-        provider=MockProvider(),
+        provider=OfflineFixtureProvider(),
         run_id=f"content-mock-regression-{uuid.uuid4().hex[:8]}",
     )
 
@@ -276,7 +276,7 @@ def test_enabled_vector_initialization_failure_keeps_workflow_fts(monkeypatch):
         raise RuntimeError("index unavailable")
     monkeypatch.setattr(runtime, "LlamaIndexChromaTextbookSearchTool", broken_vector)
     run_id = f"rag-degraded-{uuid.uuid4().hex[:8]}"
-    state = run_minimal_workflow(provider=MockProvider(), run_id=run_id, blueprint=_blueprint(run_id))
+    state = run_minimal_workflow(provider=OfflineFixtureProvider(), run_id=run_id, blueprint=_blueprint(run_id))
     assert "vector_index_initialization_failed:RuntimeError" in state["warnings"]
     calls = [c for pack in state["context_packs"] for c in pack.retrieval_calls]
     assert calls
@@ -305,7 +305,7 @@ def test_enabled_vector_reaches_content_agent_and_context_audit(monkeypatch):
         return Vector()
     monkeypatch.setattr(runtime, "LlamaIndexChromaTextbookSearchTool", make_vector)
     run_id = f"rag-enabled-{uuid.uuid4().hex[:8]}"
-    state = run_minimal_workflow(provider=MockProvider(), run_id=run_id, blueprint=_blueprint(run_id))
+    state = run_minimal_workflow(provider=OfflineFixtureProvider(), run_id=run_id, blueprint=_blueprint(run_id))
     calls = [c for pack in state["context_packs"] for c in pack.retrieval_calls]
     assert searched and calls
     assert any(c.metadata.get("branch_1_embedding_fingerprint") == "test-vector-space" for c in calls)
@@ -346,7 +346,7 @@ def test_content_reuses_chunks_and_fts_across_units_and_runs(monkeypatch):
     monkeypatch.setattr(reflection, "build_semantic_blocks", unexpected_chunking)
     for _ in range(2):
         run_id = f"reuse-content-{uuid.uuid4().hex[:8]}"
-        state = run_minimal_workflow(provider=MockProvider(), run_id=run_id, blueprint=_blueprint(run_id))
+        state = run_minimal_workflow(provider=OfflineFixtureProvider(), run_id=run_id, blueprint=_blueprint(run_id))
         assert len(state["content_artifacts"]) == 3
         assert state["content_retrieval_connection"] is None
         assert used_blocks and all(blocks is chunk_calls[-1] for blocks in used_blocks)
@@ -380,7 +380,7 @@ def test_content_index_is_closed_when_tool_preparation_raises(monkeypatch):
     monkeypatch.setattr(runtime, "index_source_blocks", failing_index)
     run_id = f"reuse-error-{uuid.uuid4().hex[:8]}"
     with pytest.raises(RuntimeError, match="context failed"):
-        run_minimal_workflow(provider=MockProvider(), run_id=run_id, blueprint=_blueprint(run_id))
+        run_minimal_workflow(provider=OfflineFixtureProvider(), run_id=run_id, blueprint=_blueprint(run_id))
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         connections[0].execute("SELECT 1")
 
@@ -406,6 +406,6 @@ def test_content_index_is_closed_when_reflection_raises(monkeypatch):
     monkeypatch.setattr(runtime, "build_content_reflection_subgraph", lambda *args, **kwargs: BrokenSubgraph())
     run_id = f"reuse-reflection-error-{uuid.uuid4().hex[:8]}"
     with pytest.raises(RuntimeError, match="reflection failed"):
-        run_minimal_workflow(provider=MockProvider(), run_id=run_id, blueprint=_blueprint(run_id))
+        run_minimal_workflow(provider=OfflineFixtureProvider(), run_id=run_id, blueprint=_blueprint(run_id))
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         connections[0].execute("SELECT 1")

@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from annotation.api.persistence_service import load_run_payload, persist_workflow_result
 from annotation.main import app
 from annotation.persistence import PersistenceRepository
-from annotation.providers import SequenceProvider
+from tests.support.providers import SequenceProvider
 from annotation.workflow import run_minimal_workflow
 
 from test_blueprint_loop import _payload, _install_source_fixture

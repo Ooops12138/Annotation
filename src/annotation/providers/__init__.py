@@ -1,6 +1,5 @@
 """Provider boundary used by workflow nodes."""
 
-from .mock import MockProvider, SequenceProvider
 from .factory import create_provider_from_env
 from .models import (
     GenerationRequest,
@@ -11,6 +10,7 @@ from .models import (
     ProviderError,
     StructuredGenerationRequest,
     StructuredGenerationResponse,
+    WorkflowProviderCapabilities,
 )
 from .openai import OpenAICompatibleProvider, OpenAIProvider
 
@@ -19,8 +19,6 @@ __all__ = [
     "GenerationResponse",
     "ModelEvent",
     "ModelProvider",
-    "MockProvider",
-    "SequenceProvider",
     "create_provider_from_env",
     "OpenAICompatibleProvider",
     "OpenAIProvider",
@@ -28,4 +26,5 @@ __all__ = [
     "ProviderError",
     "StructuredGenerationRequest",
     "StructuredGenerationResponse",
+    "WorkflowProviderCapabilities",
 ]

@@ -10,7 +10,7 @@ from annotation.prompt_loader import load_prompt
 from annotation.providers import ModelProvider, ProviderError, StructuredGenerationRequest
 from annotation.workflow.graph import _metadata, _provider_metadata
 from annotation.workflow.content_support import _plan_content_tasks
-from annotation.workflow.models import ContentTaskDraft, ContentTaskPlanDraft
+from annotation.workflow.models import ContentTaskPlanDraft
 from annotation.workflow.budget import PromptBudget
 
 
@@ -124,25 +124,6 @@ def teaching_blueprint(blueprint: LearningBlueprint, tasks: list[ContentTask]) -
     return blueprint.model_copy(update={"knowledge_units": units})
 
 
-def _mock_task_plan(blueprint: LearningBlueprint) -> ContentTaskPlanDraft:
-    tasks: list[ContentTaskDraft] = []
-    for index, unit in enumerate(blueprint.knowledge_units, start=1):
-        objective_count = len(unit.learning_objectives)
-        wants_component = any(
-            token in " ".join([unit.title, *unit.learning_objectives])
-            for token in ("上确界", "区间", "函数", "复数", "数轴")
-        )
-        tasks.append(ContentTaskDraft(
-            title=unit.title,
-            covered_objectives={unit.artifact_id: list(unit.learning_objectives)},
-            quiz_count=objective_count or None,
-            depth_guidance="standard",
-            interactive_component_policy="required" if wants_component else "skip",
-            acceptance_criteria=[],
-        ))
-    return ContentTaskPlanDraft(tasks=tasks)
-
-
 def _plan_content_task_batch(
     provider: ModelProvider,
     *,
@@ -169,18 +150,11 @@ def _plan_content_task_batch(
     status = "succeeded"
     try:
         budget = PromptBudget.for_provider(provider, output_limit=5000)
-        if provider_name == "mock":
-            draft = _mock_task_plan(blueprint)
+        workflow_capabilities = getattr(provider, "workflow", None)
+        if workflow_capabilities is not None:
+            draft = workflow_capabilities.plan_content_tasks(blueprint)
             raw_output = draft.model_dump_json()
-            metadata.update({
-                "provider": "mock",
-                "model": getattr(provider, "model", "fixture-model"),
-                "base_url": getattr(provider, "base_url", None),
-                "config_version": getattr(provider, "config_version", "mock-v1"),
-                "duration_ms": 0,
-                "usage": {},
-                "fixture_adaptation": True,
-            })
+            metadata.update(workflow_capabilities.fixture_metadata("plan_content_tasks"))
         else:
             budget.check(prompt, ContentTaskPlanDraft)
             response = provider.generate_structured(StructuredGenerationRequest(

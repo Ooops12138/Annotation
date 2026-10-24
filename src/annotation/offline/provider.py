@@ -1,51 +1,106 @@
-"""Deterministic provider for local development and workflow tests."""
+"""Deterministic fixtures for offline development and regression runs."""
 
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping
 from typing import Any
 
 from pydantic import BaseModel
 
-from .models import (
+from annotation.providers.models import (
     GenerationRequest,
     GenerationResponse,
     ModelEvent,
     ProviderCapabilities,
+    ProviderError,
     StructuredGenerationRequest,
     StructuredGenerationResponse,
-    ProviderError,
+    WorkflowProviderCapabilities,
 )
+from .content import content_critique, content_draft
+from .course import task_plan
+from .components import component_draft
+from .quiz import quiz_draft
 
 
-class MockProvider:
-    provider = "mock"
-    # Only this built-in fixture is allowed to adapt empty source refs for
-    # deterministic offline regression tests.  Real or sequence providers
-    # must preserve the model output exactly.
-    fixture_adaptation = True
+class OfflineWorkflowCapabilities(WorkflowProviderCapabilities):
+    """Workflow fixtures supported by the explicit offline profile."""
+
+    def use_blueprint_fixture(self, provider: Any) -> bool:
+        return not bool(getattr(provider, "structured_payload", {}))
+
+    def blueprint_draft(self, schema: type[BaseModel], payload: Mapping[str, Any]) -> BaseModel:
+        return schema.model_validate(payload)
+
+    def blueprint_source_refs(self, unit: Any, state: Mapping[str, Any]) -> tuple[list[str], bool]:
+        valid = set(state["source_refs"])
+        refs = [ref for ref in unit.source_refs if ref in valid]
+        if refs:
+            return refs, False
+        return list(state["source_refs"][:3]), True
+
+    def blueprint_artifact_id(self, fallback: str) -> str:
+        return "bp-fixture-001"
+
+    def fixture_metadata(self, agent: str) -> dict[str, Any]:
+        return {"agent": agent, "provider": "offline", "model": "offline-fixture",
+                "base_url": None, "config_version": "offline-v1", "duration_ms": 0,
+                "usage": {}, "fixture_adaptation": True}
+
+    def plan_content_tasks(self, blueprint: Any) -> BaseModel:
+        return task_plan(blueprint)
+
+    def content_draft(self, unit: Any, pack: Any) -> BaseModel:
+        return content_draft(unit, pack)
+
+    def content_critique(self) -> BaseModel:
+        return content_critique()
+
+    def quiz_draft(self, unit: Any, pack: Any, requested_count: int | None) -> BaseModel:
+        return quiz_draft(unit, pack, requested_count)
+
+    def component_draft(self, task: Any) -> BaseModel:
+        return component_draft(task)
+
+    def component_critique(self) -> BaseModel:
+        from annotation.domain.artifacts import InteractiveComponentCritiqueDraft
+        return InteractiveComponentCritiqueDraft()
+
+    def content_retrieval_decision(self, pack: Any, unit: Any) -> BaseModel:
+        from annotation.workflow.models import RetrievalDecision
+        return RetrievalDecision(action="write") if pack.excerpts else RetrievalDecision(
+            action="search", textbook_queries=[unit.title])
+
+    def quiz_retrieval_decision(self) -> BaseModel:
+        from annotation.domain.artifacts import QuizRetrievalDecision
+        return QuizRetrievalDecision(action="use_context")
+
+    def fact_check_retrieval_decision(self) -> BaseModel:
+        from annotation.domain.artifacts import FactCheckRetrievalDecision
+        return FactCheckRetrievalDecision(action="use_context")
+
+class OfflineFixtureProvider:
+    provider = "offline"
+    profile = "offline"
 
     def __init__(
         self,
         *,
-        model: str = "fixture-model",
-        config_version: str = "mock-v1",
+        model: str = "offline-fixture",
+        config_version: str = "offline-v1",
         structured_payload: Mapping[str, Any] | None = None,
     ) -> None:
         self.model = model
         self.base_url = None
         self.config_version = config_version
-        # A caller-provided payload is used for every request (handy for
-        # contract tests).  Built-in fixtures, however, must be selected per
-        # requested schema; otherwise the Blueprint fixture is accidentally
-        # reused for ContentDraft.
         self.structured_payload = dict(structured_payload or {})
         self.capabilities = ProviderCapabilities(
             supports_structured_output=True,
             supports_streaming=True,
             supports_json_schema=True,
         )
+        self.workflow = OfflineWorkflowCapabilities()
 
     def check_capability(self, capability: str) -> bool:
         return bool(getattr(self.capabilities, capability, False))
@@ -54,7 +109,7 @@ class MockProvider:
 
     def generate(self, request: GenerationRequest) -> GenerationResponse:
         return GenerationResponse(
-            text=f"Mock response: {request.prompt}",
+            text=f"Offline fixture response: {request.prompt}",
             provider=self.provider,
             model=self.model,
             base_url=self.base_url,
@@ -89,10 +144,10 @@ class MockProvider:
             elif request.schema.__name__ == "ContentTaskPlanDraft":
                 payload = {"tasks": []}
         try:
-            value = request.schema.model_validate(payload)
+            value = self.workflow.blueprint_draft(request.schema, payload)
         except Exception as exc:
             raise ProviderError(
-                f"mock structured payload does not match schema: {exc}",
+                f"offline structured fixture does not match schema: {exc}",
                 category="schema",
                 raw_output=json.dumps(payload, ensure_ascii=False, default=str),
             ) from exc
@@ -107,73 +162,5 @@ class MockProvider:
         )
 
     def stream(self, request: GenerationRequest) -> Iterator[ModelEvent]:
-        yield ModelEvent(type="token", text=f"Mock response: {request.prompt}")
+        yield ModelEvent(type="token", text=f"Offline fixture response: {request.prompt}")
         yield ModelEvent(type="done")
-
-
-class SequenceProvider(MockProvider):
-    """Deterministic provider for replaying a finite structured-output sequence.
-
-    This is intentionally small and local: it gives loop tests a provider that
-    can emit a blocking candidate, a repaired candidate, or a typed
-    ``ProviderError`` without making a network call.
-    """
-
-    # It deliberately follows the offline MockProvider content path after the
-    # Blueprint sequence is consumed, so loop tests count only Blueprint calls.
-    provider = "mock"
-    fixture_adaptation = False
-
-    def __init__(
-        self,
-        responses: Sequence[Mapping[str, Any] | ProviderError | Exception | Callable[[StructuredGenerationRequest[Any]], Any]],
-        *,
-        model: str = "sequence-fixture",
-        config_version: str = "mock-sequence-v1",
-    ) -> None:
-        super().__init__(model=model, config_version=config_version)
-        # A non-empty marker prevents the Blueprint graph from treating this
-        # explicit sequence as the built-in empty-source fixture.
-        self.structured_payload = {"__sequence_provider__": True}
-        self._responses = list(responses)
-        self.calls: list[StructuredGenerationRequest[Any]] = []
-
-    def generate_structured(
-        self, request: StructuredGenerationRequest[BaseModel]
-    ) -> StructuredGenerationResponse[BaseModel]:
-        self.calls.append(request)
-        if not self._responses:
-            raise ProviderError("sequence provider exhausted", category="sequence")
-        item = self._responses.pop(0)
-        if isinstance(item, BaseException):
-            if isinstance(item, ProviderError):
-                raise item
-            raise ProviderError(str(item), category="sequence") from item
-        if callable(item):
-            item = item(request)
-        if isinstance(item, BaseException):
-            if isinstance(item, ProviderError):
-                raise item
-            raise ProviderError(str(item), category="sequence") from item
-        if isinstance(item, BaseModel):
-            value = request.schema.model_validate(item.model_dump(mode="python"))
-            raw_text = value.model_dump_json()
-        else:
-            raw_text = json.dumps(item, ensure_ascii=False, default=str)
-            try:
-                value = request.schema.model_validate(item)
-            except Exception as exc:
-                raise ProviderError(
-                    f"sequence structured payload does not match schema: {exc}",
-                    category="schema",
-                    raw_output=raw_text,
-                ) from exc
-        return StructuredGenerationResponse(
-            value=value,
-            raw_text=raw_text,
-            provider=self.provider,
-            model=self.model,
-            base_url=self.base_url,
-            config_version=self.config_version,
-            duration_ms=0,
-        )

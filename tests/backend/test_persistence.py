@@ -28,7 +28,7 @@ def test_book_hash_dedup_and_document_version_history(tmp_path) -> None:
     assert first["book_id"] == second["book_id"]
     assert len(repository.list_books()) == 1
 
-    run = repository.create_run(first["book_id"], run_id="run-1", provider="mock", model="fixture")
+    run = repository.create_run(first["book_id"], run_id="run-1", provider="offline", model="offline-fixture")
     assert repository.update_run("run-1", status="failed", error="provider timeout")["finished_at"]
     document = repository.create_document(first["book_id"], "Chapter")
     version_one = repository.add_document_version(document["document_id"], run_id=run["run_id"], document_status="published", review_status="passed")

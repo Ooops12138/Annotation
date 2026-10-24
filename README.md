@@ -37,7 +37,7 @@ Annotation 是一个教材驱动的 AI 学习文档生成项目。
 `BLUEPRINT_CACHE_ENABLED=false` 可关闭复用。改变模型行为参数时应同时更新 `MODEL_CONFIG_VERSION`。
 
 结构树、分窗偏移、跳过理由、调用/工具审计及缓存命中保存在 `blueprint-artifact-v3`；API 的
-`blueprint_loop` 返回分层摘要。短教材单窗口沿用 A-001；预加载蓝图不调用模型，内置 Mock 仍使用明确标记的
+`blueprint_loop` 返回分层摘要。短教材单窗口沿用 A-001；预加载蓝图不调用模型，显式 offline profile 使用明确标记的
 六单元离线 fixture。首次扫描仍读取全文，不承诺首次总 token 降低；结构覆盖也不代表语义零遗漏。
 
 后端：
@@ -126,7 +126,7 @@ GET  /api/runs/{run_id}            读取运行状态和 artifact 索引
 默认离线运行：
 
 ```powershell
-$env:MODEL_PROVIDER = "mock"
+$env:MODEL_PROFILE = "offline"
 uv run pytest -q
 ```
 
@@ -145,6 +145,7 @@ DeepSeek 通过 OpenAI-compatible HTTPS API 接入，项目不要求 SOCKS 代�
 工厂会使用 `https://api.deepseek.com/v1`。
 
 ```powershell
+$env:MODEL_PROFILE = "live"
 $env:MODEL_PROVIDER = "deepseek"
 $env:MODEL_NAME = "deepseek-chat"
 $env:MODEL_API_KEY = "<your-deepseek-api-key>"
@@ -176,6 +177,7 @@ SQLite artifact 索引中。题目通过结构、答案和来源检查后才进�
 - [docs/requirements.md](docs/requirements.md)：当前需求与 P0 范围。
 - [docs/architecture.md](docs/architecture.md)：当前数据流和模块边界。
 - [docs/decisions.md](docs/decisions.md)：仍然有效的架构决策。
+- [MOCK_STRATEGY.md](MOCK_STRATEGY.md)：mock、离线 fixture、测试替身与真实 provider 的边界及迁移顺序。
 - [documents/wed_design.md](documents/wed_design.md)：学习者页面的视觉与交互规范。
 - [documents/ai_textbook_project_docs/README.md](documents/ai_textbook_project_docs/README.md)：教材 Agent 设计索引。
 - [docs/archive/2026-09-11/](docs/archive/2026-09-11/)：已完成工作的原始记录、旧计划和详细评估。

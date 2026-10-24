@@ -661,46 +661,6 @@ def build_quiz_prompt(
     )
 
 
-def _mock_quiz_draft(
-    unit: KnowledgeUnit,
-    context_pack: ContextPack,
-    requested_count: int | None = None,
-) -> QuizDraft:
-    """Produce a stable offline approximation of an agent-selected count."""
-
-    refs = _context_refs(context_pack)
-    objectives = list(unit.learning_objectives)
-    # An explicit task value is chosen by the course architect. Normal tasks
-    # leave it unset, so the mock chooses based on available objectives and
-    # evidence instead of enforcing a project-wide minimum.
-    count = max(0, requested_count) if requested_count is not None else (len(objectives) if refs else 0)
-    target_one = objectives[0] if objectives else f"理解{unit.title}"
-    target_two = objectives[1] if len(objectives) > 1 else target_one
-    questions: list[QuizQuestion] = []
-    for index in range(count):
-        target = target_one if index % 2 == 0 else target_two
-        options = [
-            "当前 ContextPack 中的教材片段直接支持该说法",
-            "该说法没有得到当前教材片段支持",
-            "只能依据未提供的外部资料判断",
-        ]
-        questions.append(QuizQuestion(
-            question_id=f"{unit.artifact_id}-quiz-{index + 1:02d}",
-            knowledge_unit_id=unit.artifact_id,
-            target_objectives=[target],
-            question=f"关于“{unit.title}”，下列哪项可由当前教材依据支持？",
-            options=options,
-            answer=options[0],
-            explanation="当前 ContextPack 的教材片段直接支持该表述。",
-            source_refs=refs,
-        ))
-    return QuizDraft(
-        knowledge_unit_id=unit.artifact_id,
-        target_objectives=objectives,
-        questions=questions,
-    )
-
-
 def _response_metadata(response: Any) -> dict[str, Any]:
     return {
         "provider": getattr(response, "provider", "unknown"),
@@ -722,20 +682,24 @@ def _quiz_retrieve_if_needed(
 ) -> ContextPack:
     """Let the exercise agent request additional textbook evidence."""
 
-    if retrieval_service is None or str(getattr(provider, "provider", "")) == "mock":
+    if retrieval_service is None:
         return context_pack
     prompt = load_prompt(
         "quiz_retrieval",
         UNIT=json.dumps(_unit_context(unit), ensure_ascii=False),
         CONTEXT=render_context_pack(context_pack),
     )
-    response = provider.generate_structured(StructuredGenerationRequest(
-        prompt=prompt,
-        schema=QuizRetrievalDecision,
-        max_output_tokens=min(700, model_max_output_tokens()),
-        metadata={"agent": "quiz_retrieval", "task_id": task.task_id},
-    ))
-    decision = QuizRetrievalDecision.model_validate(response.value.model_dump(mode="python"))
+    workflow_capabilities = getattr(provider, "workflow", None)
+    if workflow_capabilities is not None:
+        decision = workflow_capabilities.quiz_retrieval_decision()
+    else:
+        response = provider.generate_structured(StructuredGenerationRequest(
+            prompt=prompt,
+            schema=QuizRetrievalDecision,
+            max_output_tokens=min(700, model_max_output_tokens()),
+            metadata={"agent": "quiz_retrieval", "task_id": task.task_id},
+        ))
+        decision = QuizRetrievalDecision.model_validate(response.value.model_dump(mode="python"))
     if decision.action == "use_context":
         return context_pack
     excerpts = list(context_pack.excerpts)
@@ -828,6 +792,7 @@ def generate_quiz_artifact(
 ) -> QuizArtifact:
     """Generate, hard-check, and revise one quiz set within a bounded loop."""
     provider_name = str(getattr(provider, "provider", "unknown"))
+    workflow_capabilities = getattr(provider, "workflow", None)
     attempts: list[dict[str, Any]] = []
     try:
         context_pack = _quiz_retrieve_if_needed(
@@ -849,9 +814,9 @@ def generate_quiz_artifact(
         }
         raw_response = ""
         try:
-            if provider_name == "mock":
-                draft = _mock_quiz_draft(unit, context_pack, task.quiz_count)
-                metadata.update({"provider": "mock", "model": getattr(provider, "model", "fixture-model"), "config_version": getattr(provider, "config_version", "mock-v1"), "duration_ms": 0, "usage": {}})
+            if workflow_capabilities is not None:
+                draft = workflow_capabilities.quiz_draft(unit, context_pack, task.quiz_count)
+                metadata.update(workflow_capabilities.fixture_metadata("generate_quiz_artifact"))
                 raw_response = draft.model_dump_json()
             else:
                 response = provider.generate_structured(StructuredGenerationRequest(
@@ -888,7 +853,7 @@ def generate_quiz_artifact(
             artifact.generation_metadata["attempts"] = attempts
             artifact.generation_metadata["final_attempt"] = attempt
             last = artifact
-            if artifact.status == "accepted" or provider_name == "mock":
+            if artifact.status == "accepted" or workflow_capabilities is not None:
                 return artifact
             feedback = [issue.message for issue in blocking]
         except ProviderError as exc:

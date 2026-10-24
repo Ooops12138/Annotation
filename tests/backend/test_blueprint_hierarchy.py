@@ -343,9 +343,14 @@ def test_hierarchical_workflow_reaches_document_with_offline_content_and_keeps_a
     from annotation.main import app
 
     class OfflineContentProvider(TeachingProvider):
-        # Only downstream deterministic content fixtures use the mock seam;
-        # local Blueprint and coordination still execute the real interfaces.
-        provider = "mock"
+        from annotation.offline.provider import OfflineWorkflowCapabilities
+
+        provider = "offline"
+        class ContentFixtures(OfflineWorkflowCapabilities):
+            def use_blueprint_fixture(self, provider):
+                return False
+
+        workflow = ContentFixtures()
 
     monkeypatch.setattr(graph_module, "parse_pdf", lambda _path, run_id: source(["第1章 基础", "第2章 进阶"], run_id=run_id))
     state = run_minimal_workflow(provider=OfflineContentProvider(), run_id="hierarchy-document")

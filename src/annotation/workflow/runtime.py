@@ -42,7 +42,7 @@ from annotation.domain.artifacts import (
     ReviewIssue,
 )
 from annotation.prompt_loader import load_prompt
-from annotation.providers import ModelProvider, MockProvider, ProviderError, StructuredGenerationRequest
+from annotation.providers import ModelProvider, ProviderError, StructuredGenerationRequest, create_provider_from_env
 from annotation.workflow.blueprint_checks import validate_blueprint
 from annotation.workflow.content import write_content_run_artifact
 from annotation.ingestion.pdf_parser import extraction_warnings, parse_pdf
@@ -88,7 +88,7 @@ def build_minimal_graph(
     interactive_component_max_attempts: int | None = None,
     interactive_component_sandbox_runner: Callable[..., Any] | None = None,
 ):
-    model_provider = provider or MockProvider()
+    model_provider = provider if provider is not None else create_provider_from_env()
     max_attempts = configured_blueprint_max_attempts(blueprint_max_attempts)
     content_max_attempts = configured_content_reflection_max_attempts(content_reflection_max_attempts)
     fact_check_policy = FactCheckPolicy(
@@ -111,11 +111,8 @@ def build_minimal_graph(
         result: dict[str, Any] = {"textbook_structure": structure}
         if state.get("blueprint_preloaded"):
             return {**result, "blueprint_mode": "single"}
-        # Keep the explicitly labelled six-unit offline fixture; it is not
-        # evidence of semantic coverage on arbitrary books.
-        fixture = (getattr(model_provider, "provider", "") == "mock"
-            and getattr(model_provider, "fixture_adaptation", False)
-            and not getattr(model_provider, "structured_payload", {}))
+        workflow_capabilities = getattr(model_provider, "workflow", None)
+        fixture = bool(workflow_capabilities is not None and workflow_capabilities.use_blueprint_fixture(model_provider))
         if fixture:
             return {**result, "blueprint_mode": "fixture"}
         result["warnings"] = _merge_messages(state.get("warnings"), structure.warnings)
@@ -205,16 +202,12 @@ def build_minimal_graph(
                 metadata={"agent": agent, "run_id": state["run_id"], "attempt": attempt},
             ))
             draft = BlueprintDraft.model_validate(response.value.model_dump(mode="python"))
-            fixture_adaptation = (
-                getattr(model_provider, "provider", "") == "mock"
-                and bool(getattr(model_provider, "fixture_adaptation", False))
-                and not bool(getattr(model_provider, "structured_payload", {}))
-            )
+            workflow_capabilities = getattr(model_provider, "workflow", None)
             blueprint, adapted = _blueprint_from_draft(
                 draft=draft,
                 state=state,
                 provider_name=response.provider,
-                fixture_adaptation=fixture_adaptation,
+                workflow_capabilities=workflow_capabilities,
             )
             result.update({
                 "blueprint": blueprint,
@@ -223,7 +216,7 @@ def build_minimal_graph(
                 "blueprint_generation_parsed_output": draft.model_dump(mode="json"),
                 "provider_metadata": {
                     **_metadata(response),
-                    **({"fixture_adaptation": "empty_mock_source_refs"} if adapted else {}),
+                    **({"fixture_adaptation": "empty_source_refs"} if adapted else {}),
                 },
             })
             return result
@@ -530,7 +523,6 @@ def build_minimal_graph(
                 "context_pack": pack,
                 "valid_source_refs": list(dict.fromkeys([*state.get("source_refs", []), *pack.source_refs])),
                 "max_attempts": content_max_attempts,
-                "fixture_adaptation": getattr(model_provider, "provider", "") == "mock",
                 "attempts": [],
                 "source_blocks": state.get("source_blocks", []),
                 "semantic_blocks": semantic_blocks,
@@ -601,12 +593,12 @@ def build_minimal_graph(
         return "accept" if status == "accepted" else "block" if status == "blocked" else "fail"
 
     def record_content_blocked_run(state: WorkflowState) -> dict[str, Any]:
-        return {"workflow_status": "blocked"}
+        return {"workflow_status": "blocked", "content_loop_status": "blocked"}
 
     def record_content_failed_run(state: WorkflowState) -> dict[str, Any]:
         failed = [trace.task_id for trace in state.get("content_loop_traces", []) if trace.final_status == "failed"]
         message = f"content_reflection_failed: {', '.join(failed) or 'unknown'}"
-        return {"workflow_status": "failed", "errors": _merge_messages(state.get("errors"), [message])}
+        return {"workflow_status": "failed", "content_loop_status": "failed", "errors": _merge_messages(state.get("errors"), [message])}
 
     def generate_quiz_artifacts(state: WorkflowState) -> dict[str, Any]:
         """Retain T-007 as a separate post-content artifact boundary."""
@@ -617,6 +609,10 @@ def build_minimal_graph(
         quiz_artifacts: list[QuizArtifact] = []
         checks = dict(state.get("content_artifact_checks", {}))
         warnings: list[str] = []
+        quiz_retrieval_service = UnifiedRetrievalService(
+            SQLiteFts5TextbookDatabaseSearchSkill(state["content_retrieval_connection"]),
+            web_search_skill_from_env(),
+        )
         for task in state.get("content_tasks", []):
             unit = units.get(task.knowledge_unit_id)
             pack = packs.get(task.task_id)
@@ -734,6 +730,7 @@ def build_minimal_graph(
             root=STORAGE_DIR / "artifacts" / "content",
         )
         result.update({
+            "fact_check_status": result["fact_check_artifact"].status,
             "quiz_coverage_report": quiz_coverage,
             "content_artifact_path": str(artifact_path.resolve()),
             "content_loop_trace_path": str(artifact_path.resolve()),

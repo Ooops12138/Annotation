@@ -4,9 +4,9 @@ from pydantic import BaseModel
 
 from annotation.workflow.models import BlueprintDraft, ContentDraft
 
+from annotation.offline import OfflineFixtureProvider
 from annotation.providers import (
     GenerationRequest,
-    MockProvider,
     ProviderCapabilities,
     StructuredGenerationRequest,
     OpenAICompatibleProvider,
@@ -18,11 +18,11 @@ class EmptyPayload(BaseModel):
     pass
 
 
-def test_mock_provider_contract_and_metadata() -> None:
-    provider = MockProvider()
+def test_offline_provider_contract_and_metadata() -> None:
+    provider = OfflineFixtureProvider()
     response = provider.generate(GenerationRequest(prompt="hello"))
-    assert response.provider == "mock"
-    assert response.model == "fixture-model"
+    assert response.provider == "offline"
+    assert response.model == "offline-fixture"
     assert provider.check_capability("supports_streaming")
     assert [event.type for event in provider.stream(GenerationRequest(prompt="hello"))] == [
         "token",
@@ -30,15 +30,15 @@ def test_mock_provider_contract_and_metadata() -> None:
     ]
 
 
-def test_mock_structured_output_validates_against_requested_schema() -> None:
-    response = MockProvider().generate_structured(
+def test_offline_structured_output_validates_against_requested_schema() -> None:
+    response = OfflineFixtureProvider().generate_structured(
         StructuredGenerationRequest(prompt="{}", schema=EmptyPayload)
     )
     assert isinstance(response.value, EmptyPayload)
 
 
-def test_mock_builtin_fixtures_are_selected_per_schema() -> None:
-    provider = MockProvider()
+def test_offline_builtin_fixtures_are_selected_per_schema() -> None:
+    provider = OfflineFixtureProvider()
     blueprint = provider.generate_structured(
         StructuredGenerationRequest(prompt="{}", schema=BlueprintDraft)
     )

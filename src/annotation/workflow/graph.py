@@ -26,10 +26,9 @@ from annotation.domain.artifacts import (
     SourceBlock,
 )
 from annotation.providers import ModelProvider, ProviderError
-from annotation.workflow.content import select_source_refs
 from annotation.workflow.models import BlueprintDraft, CalloutDraft, WorkflowState
 
-from annotation.workflow.content_support import _formula_format_issues, _lossless_refs, _normalize_refs
+from annotation.workflow.content_support import _formula_format_issues, _lossless_refs
 
 
 def _default_pdf() -> Path:
@@ -352,36 +351,27 @@ def _blueprint_from_draft(
     draft: BlueprintDraft,
     state: WorkflowState,
     provider_name: str,
-    fixture_adaptation: bool,
+    workflow_capabilities: Any | None = None,
 ) -> tuple[LearningBlueprint, bool]:
-    """Convert a validated model draft without repairing real-provider data."""
+    """Convert a validated model draft without provider-profile heuristics."""
 
     # Re-validate here even when a test provider hands us a model instance.
     # This keeps the production boundary strict for enum values such as kind.
     draft = BlueprintDraft.model_validate(draft.model_dump(mode="python"))
-    valid_refs = set(state["source_refs"])
     ordered_refs = list(state["source_refs"])
     units: list[KnowledgeUnit] = []
     adapted = False
     used_unit_ids: set[str] = set()
     for index, unit in enumerate(draft.knowledge_units, start=1):
-        if fixture_adaptation:
-            refs = _normalize_refs(unit.source_refs, valid_refs)
-            if not refs:
-                refs = select_source_refs(
-                    title=unit.title,
-                    learning_objectives=unit.learning_objectives,
-                    blocks=state["source_blocks"],
-                ) or ordered_refs[:3]
-                adapted = True
+        if workflow_capabilities is not None:
+            refs, refs_adapted = workflow_capabilities.blueprint_source_refs(unit, state)
+            adapted = adapted or refs_adapted
         else:
             refs = _lossless_refs(unit.source_refs)
         requested_id = (unit.knowledge_unit_id or "").strip()
         stable_id = requested_id or f"ku-{hashlib.sha256(unit.title.strip().encode('utf-8')).hexdigest()[:12]}"
         if stable_id in used_unit_ids:
-            if not fixture_adaptation:
-                raise ProviderError(f"duplicate knowledge unit id: {stable_id}", category="schema")
-            stable_id = f"{stable_id}-{index:02d}"
+            raise ProviderError(f"duplicate knowledge unit id: {stable_id}", category="schema")
         used_unit_ids.add(stable_id)
         units.append(KnowledgeUnit(
             artifact_id=stable_id,
@@ -399,7 +389,8 @@ def _blueprint_from_draft(
         ))
     if not units:
         raise ProviderError("blueprint contains no knowledge units", category="schema")
-    artifact_id = "bp-fixture-001" if fixture_adaptation else f"bp-{uuid.uuid4().hex[:12]}"
+    artifact_id = (workflow_capabilities.blueprint_artifact_id(f"bp-{uuid.uuid4().hex[:12]}")
+                   if workflow_capabilities is not None else f"bp-{uuid.uuid4().hex[:12]}")
     blueprint = LearningBlueprint(
         artifact_id=artifact_id,
         run_id=state["run_id"],

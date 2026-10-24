@@ -4,7 +4,6 @@ import sqlite3
 
 from annotation.domain.artifacts import SourceBlock
 from annotation.fact_checking import (
-    DeterministicMockWebResourceSearchSkill,
     DisabledVectorTextbookSearchTool,
     DisabledWebResourceSearchSkill,
     EvidenceKind,
@@ -18,6 +17,7 @@ from annotation.fact_checking import (
     WebSearchCandidate,
     normalize_https_url,
 )
+from tests.support.web_search import FixtureWebResourceSearchSkill
 from annotation.retrieval import index_source_blocks
 
 
@@ -139,7 +139,7 @@ def test_disabled_web_skill_exposes_disabled_availability_without_network() -> N
     assert result.evidence == ()
 
 
-def test_mock_web_skill_filters_urls_normalizes_https_and_is_deterministic() -> None:
+def test_fixture_web_skill_filters_urls_normalizes_https_and_is_deterministic() -> None:
     candidates = {
         "external fact": [
             WebSearchCandidate(
@@ -161,7 +161,7 @@ def test_mock_web_skill_filters_urls_normalizes_https_and_is_deterministic() -> 
             ),
         ]
     }
-    skill = DeterministicMockWebResourceSearchSkill(
+    skill = FixtureWebResourceSearchSkill(
         candidates,
         allowed_domains={"example.org"},
     )
@@ -178,23 +178,23 @@ def test_mock_web_skill_filters_urls_normalizes_https_and_is_deterministic() -> 
     assert evidence.source_ref is None
     assert evidence.url == "https://docs.example.org/path"
     assert evidence.locator == evidence.url
-    assert evidence.provider == "deterministic-mock-web"
+    assert evidence.provider == "fixture-web-search"
     assert first.filtered_count == 2
     assert normalize_https_url("https://example.org/a#fragment", {"example.org"}) == "https://example.org/a"
     assert normalize_https_url("https://example.org.evil.test/a", {"example.org"}) is None
 
 
-def test_mock_web_skill_reports_invalid_allowlist_and_bounds_results() -> None:
+def test_fixture_web_skill_reports_invalid_allowlist_and_bounds_results() -> None:
     candidates = {
         "fact": [
             WebSearchCandidate("https://example.org/one", "One", "One"),
             WebSearchCandidate("https://example.org/two", "Two", "Two"),
         ]
     }
-    misconfigured = DeterministicMockWebResourceSearchSkill(candidates, allowed_domains={"https://example.org"})
+    misconfigured = FixtureWebResourceSearchSkill(candidates, allowed_domains={"https://example.org"})
     invalid = misconfigured.search("fact")
 
-    bounded = DeterministicMockWebResourceSearchSkill(
+    bounded = FixtureWebResourceSearchSkill(
         candidates,
         allowed_domains={"example.org"},
         max_results=1,

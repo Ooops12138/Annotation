@@ -9,7 +9,7 @@ import pytest
 from annotation.api.persistence_service import load_run_payload, persist_workflow_result
 from annotation.domain.artifacts import InteractiveComponentSandboxReport
 from annotation.persistence import PersistenceRepository
-from annotation.providers import MockProvider
+from annotation.offline import OfflineFixtureProvider
 from annotation.providers.models import ProviderError
 from annotation.workflow import run_minimal_workflow
 from annotation.workflow import runtime
@@ -27,7 +27,7 @@ def test_all_required_units_are_attempted_and_one_failure_keeps_other_components
         return InteractiveComponentSandboxReport(status="passed")
 
     state = run_minimal_workflow(
-        provider=MockProvider(), run_id=f"test-multiple-components-{uuid.uuid4().hex[:8]}",
+        provider=OfflineFixtureProvider(), run_id=f"test-multiple-components-{uuid.uuid4().hex[:8]}",
         interactive_component_max_attempts=1, interactive_component_sandbox_runner=sandbox,
     )
     required = [task for task in state["content_tasks"] if task.interactive_component_policy == "required"]
@@ -71,7 +71,7 @@ def test_component_outcome_never_blocks_document_publication(monkeypatch, tmp_pa
 
     monkeypatch.setattr(runtime, "run_interactive_component_loop", component_loop)
     state = run_minimal_workflow(
-        provider=MockProvider(), run_id=f"test-component-optional-{uuid.uuid4().hex[:8]}",
+        provider=OfflineFixtureProvider(), run_id=f"test-component-optional-{uuid.uuid4().hex[:8]}",
         interactive_component_max_attempts=1,
     )
     assert state["interactive_component_status"] == expected

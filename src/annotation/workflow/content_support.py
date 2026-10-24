@@ -132,26 +132,6 @@ def _plan_content_tasks(run_id: str, blueprint: LearningBlueprint) -> list[Conte
     return tasks
 
 
-def _mock_content_draft(unit: KnowledgeUnit, pack: ContextPack) -> ContentDraft:
-    refs = pack.source_refs[:3]
-    evidence = " ".join(excerpt.text for excerpt in pack.excerpts[:2])
-    prerequisite_note = (
-        f"本单元建立在“{'、'.join(unit.prerequisites)}”之上。"
-        if unit.prerequisites else ""
-    )
-    return ContentDraft(
-        title=unit.title,
-        content=(
-            "## 讲解\n\n"
-            f"本节围绕“{unit.title}”展开。{prerequisite_note}"
-            f"学习目标是：{'；'.join(unit.learning_objectives) or '掌握本单元的基本含义和用法'}。"
-            f"教材证据摘录：{evidence or '当前没有可用的教材摘录，需要人工审核。'}"
-        ),
-        source_refs=refs,
-        callouts=[],
-    )
-
-
 def _content_artifact_from_draft(
     *,
     draft: ContentDraft,
@@ -160,17 +140,10 @@ def _content_artifact_from_draft(
     pack: ContextPack,
     run_id: str,
     provider_name: str,
-    fixture_adaptation: bool = False,
     attempt: int = 1,
     prompt_version: str = "generate_content_artifact:v1",
 ) -> ContentArtifact:
-    # A real provider's source IDs are evidence.  Preserve unknown IDs so the
-    # hard check can report them instead of silently replacing them with the
-    # complete ContextPack.  Only the built-in deterministic fixture receives
-    # its documented empty-ref adaptation.
     refs = _lossless_refs(draft.source_refs)
-    if fixture_adaptation and not refs:
-        refs = list(pack.source_refs)
     content = draft.content
     callouts = [
         {
@@ -199,7 +172,6 @@ def _content_artifact_from_draft(
             "retrieval_strategy": list(pack.retrieval_strategy),
             "source_snapshot": pack.source_snapshot,
             "callouts": callouts,
-            "fixture_adaptation": fixture_adaptation,
         },
         content=content,
     )
@@ -407,12 +379,6 @@ def _critic_review_issues(
     return issues
 
 
-def _mock_content_critique() -> ContentCritiqueDraft:
-    """Keep the offline fixture deterministic while exercising the Critic stage."""
-
-    return ContentCritiqueDraft(issues=[])
-
-
 def _blocked_content_artifact(
     *,
     task: ContentTask,
@@ -440,7 +406,6 @@ def _blocked_content_artifact(
         metadata={
             "generation_error": error,
             "attempt": attempt,
-            "fixture_adaptation": False,
         },
         content="此知识单元未生成可发布讲解。",
         issues=list(issues or []),

@@ -1,0 +1,24 @@
+{
+  "python.analysis.include": ["src", "tests", "scripts"],
+  "python.analysis.extraPaths": ["./src"],
+  "python.analysis.exclude": [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.venv",
+    "**/.git",
+    "**/*.egg-info",
+    ".bench_omni",
+    ".omni_eval",
+    ".codegraph",
+    ".codex",
+    ".pytest_cache",
+    ".playwright-cli",
+    "books",
+    "documents",
+    "logs",
+    "output",
+    "results",
+    "storage",
+    "web"
+  ]
+}

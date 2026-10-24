@@ -7,7 +7,6 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from .mock import MockProvider
 from .models import ModelProvider
 from .openai import OpenAICompatibleProvider, OpenAIProvider
 
@@ -16,11 +15,27 @@ def create_provider_from_env() -> ModelProvider:
     # `.env` is local runtime configuration; values already present in the
     # process take precedence (useful for tests and deployment environments).
     load_dotenv(Path(".env"), override=False)
-    kind = os.getenv("MODEL_PROVIDER", "mock").strip().lower()
-    model = os.getenv("MODEL_NAME") or ("deepseek-chat" if kind == "deepseek" else "fixture-model")
+    profile = os.getenv("MODEL_PROFILE", "live").strip().lower()
+    if profile not in {"offline", "live"}:
+        raise ValueError("MODEL_PROFILE must be offline or live")
+    configured_kind = (os.getenv("MODEL_PROVIDER") or "").strip().lower()
+    if profile == "offline":
+        from annotation.offline import OfflineFixtureProvider
+
+        return OfflineFixtureProvider(
+            model=os.getenv("MODEL_NAME") or "offline-fixture",
+            config_version=os.getenv("MODEL_CONFIG_VERSION", f"{profile}-v1"),
+        )
+    if not configured_kind:
+        raise ValueError("MODEL_PROVIDER is required when MODEL_PROFILE=live")
+    kind = configured_kind
+    if kind in {"mock", "offline"}:
+        raise ValueError("mock providers were removed; use MODEL_PROFILE=offline")
+    model = os.getenv("MODEL_NAME") or ("deepseek-chat" if kind == "deepseek" else "")
+    if not model:
+        raise ValueError("MODEL_NAME is required when MODEL_PROFILE=live")
     config_version = os.getenv("MODEL_CONFIG_VERSION", "env-v1")
-    # Reasoning-capable models may spend longer than the lightweight mock
-    # path before returning their final JSON payload.
+    # Reasoning-capable models may spend longer before returning structured JSON.
     timeout = float(os.getenv("MODEL_TIMEOUT_SECONDS", "120"))
     max_retries = int(os.getenv("MODEL_MAX_RETRIES", "1"))
     thinking = None
@@ -28,8 +43,6 @@ def create_provider_from_env() -> ModelProvider:
         thinking = (os.getenv("MODEL_THINKING") or "disabled").strip().lower()
     api_key = os.getenv("MODEL_API_KEY") or os.getenv("OPENAI_API_KEY")
     base_url = os.getenv("MODEL_BASE_URL")
-    if kind == "mock":
-        return MockProvider(model=model, config_version=config_version)
     if kind == "openai":
         return OpenAIProvider(
             model=model,

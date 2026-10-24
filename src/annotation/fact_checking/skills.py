@@ -133,7 +133,6 @@ def _invalid_result(
         error_message=message,
     )
 
-
 def _error_result(
     *,
     name: str,
@@ -588,50 +587,3 @@ def web_search_skill_from_env() -> WebResourceSearchSkill:
         timeout_seconds=web_search_timeout_seconds(),
         max_results=web_search_max_results(),
     )
-
-
-class DeterministicMockWebSearchProvider:
-    """In-memory provider for repeatable unit and workflow tests."""
-
-    name = "deterministic-mock-web"
-    version = "v1"
-
-    def __init__(self, candidates_by_query: Mapping[str, Sequence[WebSearchCandidate]] | None = None) -> None:
-        self._candidates_by_query = {
-            " ".join(query.split()): tuple(candidates)
-            for query, candidates in (candidates_by_query or {}).items()
-        }
-
-    def search(
-        self,
-        *,
-        query: str,
-        limit: int,
-        timeout_seconds: float,
-    ) -> Sequence[WebSearchCandidate]:
-        del timeout_seconds
-        return self._candidates_by_query.get(" ".join(query.split()), ())[:limit]
-
-
-class DeterministicMockWebResourceSearchSkill(ProviderBackedWebResourceSearchSkill):
-    """A full web-skill replacement with no network access or hidden state."""
-
-    name = "deterministic-mock-web-resource-search"
-    version = "v1"
-
-    def __init__(
-        self,
-        candidates_by_query: Mapping[str, Sequence[WebSearchCandidate]] | None = None,
-        *,
-        allowed_domains: Iterable[object] = ("example.test",),
-        timeout_seconds: float = 10.0,
-        max_results: int = 3,
-        excerpt_char_limit: int = 1_000,
-    ) -> None:
-        super().__init__(
-            DeterministicMockWebSearchProvider(candidates_by_query),
-            allowed_domains=allowed_domains,
-            timeout_seconds=timeout_seconds,
-            max_results=max_results,
-            excerpt_char_limit=excerpt_char_limit,
-        )

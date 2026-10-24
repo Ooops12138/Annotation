@@ -11,7 +11,8 @@ from annotation.domain.artifacts import (
     QuizArtifact,
     QuizQuestion,
 )
-from annotation.providers import MockProvider, ProviderError
+from annotation.offline import OfflineFixtureProvider
+from annotation.providers import ProviderError
 from annotation.workflow.quiz import (
     build_quiz_coverage_matrix,
     build_quiz_prompt,
@@ -132,26 +133,26 @@ def test_quiz_count_is_an_optional_hint_and_never_a_positive_minimum() -> None:
         QuizDraft(knowledge_unit_id=unit.artifact_id, question_count=1, questions=[])
 
 
-def test_mock_generation_is_deterministic_and_does_not_call_provider() -> None:
-    class NoCallMock(MockProvider):
+def test_offline_generation_is_deterministic_and_does_not_call_provider() -> None:
+    class NoCallOffline(OfflineFixtureProvider):
         def generate_structured(self, request):  # pragma: no cover - failure proves the branch
             raise AssertionError("mock quiz generation must stay local")
 
     unit = _unit()
-    artifact = generate_quiz_artifact(NoCallMock(), task=_task(unit), unit=unit, context_pack=_pack(unit))
+    artifact = generate_quiz_artifact(NoCallOffline(), task=_task(unit), unit=unit, context_pack=_pack(unit))
     assert artifact.status == "accepted"
     assert artifact.artifact_id == "quiz-task-ku-1"
     assert len(artifact.questions) == 2
     assert all(question.source_refs == ["src-1"] for question in artifact.questions)
     assert artifact.questions[0].model_dump() == generate_quiz_artifact(
-        NoCallMock(), task=_task(unit), unit=unit, context_pack=_pack(unit)
+        NoCallOffline(), task=_task(unit), unit=unit, context_pack=_pack(unit)
     ).questions[0].model_dump()
 
 
 def test_agent_selected_zero_questions_is_a_valid_empty_quiz_artifact() -> None:
     unit = _unit()
     artifact = generate_quiz_artifact(
-        MockProvider(),
+        OfflineFixtureProvider(),
         task=_task(unit, quiz_count=0),
         unit=unit,
         context_pack=_pack(unit),

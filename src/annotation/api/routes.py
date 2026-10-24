@@ -208,7 +208,7 @@ def _execute_run(*, book: dict[str, Any], requested_run_id: str | None = None, o
                 book=book,
                 state=state,
                 origin=origin,
-                publish_document=provider.provider != "mock",
+                publish_document=getattr(provider, "profile", "live") == "live",
             )
             finished = repo.get_run(run_id) or {}
             progress = dict(last_progress)

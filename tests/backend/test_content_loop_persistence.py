@@ -39,7 +39,7 @@ def test_content_artifact_v4_keeps_trace_path_and_summary(tmp_path) -> None:
         context_packs=[],
         artifacts=[],
         checks={},
-        provider_metadata={"provider": "mock"},
+        provider_metadata={"provider": "offline"},
         root=tmp_path,
         content_loop_traces=[_trace()],
         content_loop_summary=summary,
@@ -58,7 +58,7 @@ def test_content_artifact_v4_keeps_trace_path_and_summary(tmp_path) -> None:
         context_packs=[],
         artifacts=[],
         checks={},
-        provider_metadata={"provider": "mock"},
+        provider_metadata={"provider": "offline"},
         root=tmp_path,
         content_loop_traces=[_trace()],
     )
