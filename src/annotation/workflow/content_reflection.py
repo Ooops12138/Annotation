@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import uuid
 from typing import Any
 
@@ -93,41 +94,70 @@ def build_content_reflection_subgraph(
         return primary
 
     def plan_and_retrieve(state: ContentReflectionState) -> tuple[ContentReflectionState, dict[str, Any]]:
-        """Let the content agent choose bounded textbook/web queries first."""
+        """Observe evidence and feedback, then choose tool use or writing."""
         task = state["task"]
         unit = state["unit"]
-        plan = RetrievalDecision(textbook_queries=[unit.title, *unit.learning_objectives][:4], web_queries=[])
-        queries: list[tuple[str, str]] = []
+        plan = RetrievalDecision(action="search", textbook_queries=[unit.title])
         pack = state["context_pack"]
         semantic_blocks = state.get("semantic_blocks")
         if semantic_blocks is None:
             semantic_blocks = build_semantic_blocks(state.get("source_blocks", []))
-        for round_number in range(2):
+        for round_number in range(3):
+            if provider_name == "mock" and pack.excerpts:
+                plan = RetrievalDecision(action="write")
             if provider_name != "mock":
                 prompt = load_prompt(
                     "content_agent_retrieval",
                     KNOWLEDGE_UNIT_CONTEXT=_content_prompt_unit(unit),
                     CONTENT_TASK=_content_prompt_task(task),
                     RETRIEVAL_CONTEXT=render_context_pack(pack),
+                    REVISION_CONTEXT=json.dumps({
+                        "candidate": state["candidate_artifact"].model_dump(mode="json") if state.get("candidate_artifact") else None,
+                        "hard_check": state["hard_check"].model_dump(mode="json") if state.get("hard_check") else None,
+                        "critique": state.get("critic_parsed_output"),
+                        "error": state.get("generation_error"), "searches_remaining": 2 - round_number,
+                    }, ensure_ascii=False),
                 )
                 response = provider.generate_structured(StructuredGenerationRequest(
                     prompt=prompt,
                     schema=RetrievalDecision,
                     max_output_tokens=response_limit(900),
-                    metadata={"agent": "content_agent", "phase": "retrieval_decision", "run_id": state["run_id"], "task_id": task.task_id, "round": round_number + 1},
+                    metadata={"agent": "content_agent", "phase": "retrieval_decision", "run_id": state["run_id"], "task_id": task.task_id, "attempt": int(state.get("attempt", 0)) + 1, "round": round_number + 1},
                 ))
                 plan = RetrievalDecision.model_validate(response.value.model_dump(mode="python"))
-            round_queries = [("textbook", query) for query in plan.textbook_queries]
-            round_queries.extend(("web", query) for query in plan.web_queries)
-            queries.extend(item for item in round_queries if item not in queries)
-            pack = build_context_pack(
+            if plan.action == "write":
+                break
+            if round_number == 2:
+                error = ProviderError("content agent retrieval budget exhausted", category="retrieval_budget")
+                error.context_pack = pack
+                raise error
+            round_queries = [("textbook", query.strip()) for query in plan.textbook_queries if query.strip()]
+            round_queries.extend(("web", query.strip()) for query in plan.web_queries if query.strip())
+            if not any(q.strip() for _, q in round_queries):
+                raise ProviderError("search requires a query", category="schema")
+            new_pack = build_context_pack(
                 task, unit, state["blueprint"],
                 semantic_blocks,
-                search_tool=state.get("retrieval_service"), retrieval_queries=queries,
+                search_tool=state.get("retrieval_service"), retrieval_queries=round_queries,
                 fixture_fallback=provider_name == "mock",
             )
-            if plan.stop_after_retrieval:
-                break
+            seen = {e.chunk_ref or e.source_ref for e in pack.excerpts}
+            excerpts = list(pack.excerpts)
+            used = sum(len(e.text) for e in excerpts)
+            for e in new_pack.excerpts:
+                key = e.chunk_ref or e.source_ref
+                if key not in seen and used + len(e.text) <= new_pack.input_budget_tokens * 3:
+                    excerpts.append(e)
+                    seen.add(key)
+                    used += len(e.text)
+            refs = list(dict.fromkeys(r for e in excerpts for r in (e.source_refs or [e.source_ref])))
+            pack = new_pack.model_copy(update={"excerpts": excerpts, "source_refs": refs,
+                "selected_source_refs": refs, "retrieved_source_refs": refs,
+                "retrieval_calls": [*pack.retrieval_calls, *[call.model_copy(update={
+                    "call_id": f"call-{task.task_id}-{len(pack.retrieval_calls) + i + 1:03d}"})
+                    for i, call in enumerate(new_pack.retrieval_calls)]],
+                "estimated_input_tokens": (used + 3) // 4,
+                "source_snapshot": hashlib.sha256(json.dumps([e.model_dump(mode="json") for e in excerpts], sort_keys=True).encode()).hexdigest() if excerpts else None})
         return {
             **state,
             "context_pack": pack,
@@ -140,14 +170,17 @@ def build_content_reflection_subgraph(
         retrieval_result: dict[str, Any] = {}
         # The production graph supplies a retrieval service. Direct subgraph
         # fixture callers retain the prebuilt ContextPack contract.
-        if state.get("retrieval_service") is not None and "scripted" not in provider_name:
+        if state.get("retrieval_service") is not None:
             try:
                 planned_state, retrieval_result = plan_and_retrieve(state)
                 state = planned_state
-            except ProviderError:
-                raise
+            except ProviderError as exc:
+                return {"attempt": int(state.get("attempt", 0)) + 1,
+                    "generation_status": "provider_error", "generation_error": str(exc),
+                    "generation_error_category": exc.category, "generation_retryable": exc.retryable,
+                    "context_pack": getattr(exc, "context_pack", state["context_pack"])}
             except Exception as exc:
-                return {"generation_status": "provider_error", "generation_error": str(exc), "generation_error_category": "retrieval"}
+                return {"attempt": int(state.get("attempt", 0)) + 1, "generation_status": "provider_error", "generation_error": str(exc), "generation_error_category": "retrieval", "generation_retryable": False}
         attempt = int(state.get("attempt", 0)) + 1
         task = state["task"]
         unit = state["unit"]
@@ -409,8 +442,8 @@ def build_content_reflection_subgraph(
             or critic_status != "succeeded"
             or has_critic_block
         )
-        if state.get("generation_error_category") == "no_evidence":
-            route, stop_reason, final_status = "block", "context_pack_empty", "blocked"
+        if state.get("generation_error_category") in {"no_evidence", "retrieval_budget"}:
+            route, stop_reason, final_status = "block", ("retrieval_budget" if state.get("generation_error_category") == "retrieval_budget" else "context_pack_empty"), "blocked"
         elif non_retryable_error:
             route, stop_reason, final_status = "fail", "non_retryable_provider_error", "failed"
         elif requires_revision and attempt < max_attempts:

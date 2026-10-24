@@ -46,7 +46,7 @@ _run_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="annotation
 _RUN_STAGES = {
     "ingest": "读取教材", "prepare_blueprint": "理解教材结构", "hierarchical_blueprint": "整理学习蓝图",
     "generate_blueprint_attempt": "生成学习蓝图", "check_blueprint_attempt": "检查学习蓝图",
-    "plan_content_tasks": "规划知识单元", "build_context_packs": "准备教材依据",
+    "plan_content_tasks": "规划知识单元", "prepare_content_tools": "准备教材检索工具",
     "content_reflection_loops": "生成并检查讲解", "generate_quiz_artifacts": "生成练习",
     "fact_check_artifacts": "核对关键事实", "interactive_component_loop": "准备互动内容",
     "assemble_document_ir": "装配学习文档", "validate_document_ir": "检查文档结构",

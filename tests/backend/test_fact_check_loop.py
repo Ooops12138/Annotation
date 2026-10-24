@@ -68,6 +68,9 @@ class ScriptedFactCheckProvider:
                     "acceptance_criteria": ["基于教材检索结果解释概念。"],
                 } for index, unit_id in enumerate(unit_ids, start=1)],
             }
+        elif schema_name == "RetrievalDecision":
+            payload = ({"action": "search", "textbook_queries": [self.query]}
+                if "estimated_input_tokens=0" in request.prompt else {"action": "write"})
         elif schema_name == "FactCheckClaimsDraft":
             target_section = request.prompt.split("## Checkable targets", maxsplit=1)[-1]
             target_ids = list(dict.fromkeys(re.findall(r'"target_id":\s*"([^"]+)"', target_section)))

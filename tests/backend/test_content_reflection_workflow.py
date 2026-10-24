@@ -47,6 +47,9 @@ class WorkflowContentProvider:
                     for index, unit_id in enumerate(self.quiz_unit_ids, start=1)
                 ]
             }
+        elif schema_name == "RetrievalDecision":
+            payload = ({"action": "search", "textbook_queries": ["测试教材证据"]}
+                if 'estimated_input_tokens=0' in request.prompt else {"action": "write"})
         elif schema_name == "ContentDraft":
             payload: dict[str, Any] = {
                 "title": "测试单元",
@@ -209,12 +212,12 @@ def test_exhausted_content_loop_blocks_run_and_skips_quiz_and_document(monkeypat
     assert all(trace.final_status == "blocked" for trace in state["content_loop_traces"])
     assert all(len(trace.attempts) == 3 for trace in state["content_loop_traces"])
     assert all(attempt.critic_status == "skipped" for trace in state["content_loop_traces"] for attempt in trace.attempts)
-    assert all(call.schema.__name__ in {"ContentTaskPlanDraft", "ContentDraft"} for call in provider.calls)
+    assert all(call.schema.__name__ in {"ContentTaskPlanDraft", "ContentDraft", "RetrievalDecision"} for call in provider.calls)
 
 
-def test_context_pack_over_budget_creates_attempt_zero_without_model_calls(monkeypatch) -> None:
+def test_agent_cannot_write_when_retrieved_evidence_exceeds_budget(monkeypatch) -> None:
     _install_source_fixture(monkeypatch)
-    import annotation.workflow.runtime as runtime
+    import annotation.workflow.content_reflection as runtime
     original_context_pack = runtime.build_context_pack
 
     def tiny_content_budget(*args, **kwargs):
@@ -236,11 +239,11 @@ def test_context_pack_over_budget_creates_attempt_zero_without_model_calls(monke
 
     assert state["workflow_status"] == "blocked"
     assert state["content_loop_status"] == "blocked"
-    assert [call.schema.__name__ for call in provider.calls] == ["ContentTaskPlanDraft"]
+    assert not any(call.schema.__name__ == "ContentDraft" for call in provider.calls)
     assert all(trace.final_status == "blocked" for trace in state["content_loop_traces"])
-    assert all(trace.final_attempt == 0 for trace in state["content_loop_traces"])
-    assert all(trace.stop_reason == "context_pack_empty" for trace in state["content_loop_traces"])
-    assert all(trace.attempts[0].generation_status == "skipped" for trace in state["content_loop_traces"])
+    assert all(trace.final_attempt == 1 for trace in state["content_loop_traces"])
+    assert all(trace.final_status == "blocked" for trace in state["content_loop_traces"])
+    assert all(trace.attempts[0].generation_status == "provider_error" for trace in state["content_loop_traces"])
 
 
 def test_mock_workflow_keeps_six_unit_quiz_regression_and_emits_six_content_traces() -> None:
@@ -354,7 +357,7 @@ def test_content_reuses_chunks_and_fts_across_units_and_runs(monkeypatch):
     assert chunk_calls[0] is not chunk_calls[1]
 
 
-def test_content_index_is_closed_when_context_building_raises(monkeypatch):
+def test_content_index_is_closed_when_tool_preparation_raises(monkeypatch):
     import sqlite3
     import pytest
     import annotation.workflow.runtime as runtime
@@ -371,7 +374,10 @@ def test_content_index_is_closed_when_context_building_raises(monkeypatch):
         raise RuntimeError("context failed")
 
     monkeypatch.setattr(runtime, "index_source_blocks", index)
-    monkeypatch.setattr(runtime, "build_context_pack", fail)
+    def failing_index(connection, blocks):
+        connections.append(connection)
+        fail()
+    monkeypatch.setattr(runtime, "index_source_blocks", failing_index)
     run_id = f"reuse-error-{uuid.uuid4().hex[:8]}"
     with pytest.raises(RuntimeError, match="context failed"):
         run_minimal_workflow(provider=MockProvider(), run_id=run_id, blueprint=_blueprint(run_id))

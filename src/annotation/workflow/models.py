@@ -81,7 +81,18 @@ class RetrievalDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
     textbook_queries: list[str] = Field(default_factory=list, max_length=4)
     web_queries: list[str] = Field(default_factory=list, max_length=2)
-    stop_after_retrieval: bool = True
+    action: Literal["search", "write"]
+    reason: str = ""
+
+    @model_validator(mode="after")
+    def validate_action(self):
+        queries = [q for q in [*self.textbook_queries, *self.web_queries] if q.strip()]
+        if self.action == "search" and not queries:
+            raise ValueError("search requires at least one query")
+        if self.action == "write" and queries:
+            raise ValueError("write cannot execute searches")
+        return self
+
 
 
 class ContentTaskDraft(BaseModel):

@@ -223,13 +223,62 @@ def test_agent_can_retrieve_from_empty_bootstrap_but_cannot_generate_without_evi
     state["source_blocks"] = [_block("src-1", 1, "教材证据")]
     state["retrieval_service"] = InMemoryTextbookSearchTool(state["source_blocks"])
     provider = RetrievalProvider([
-        {"textbook_queries": ["教材证据" if has_hits else "从未出现的查询"], "stop_after_retrieval": True},
+        {"action": "search", "textbook_queries": ["教材证据" if has_hits else "从未出现的查询"]},
+        {"action": "write"},
         *([_draft(refs=["src-1"]), {"issues": []}] if has_hits else []),
     ])
     result = build_content_reflection_subgraph(provider, max_attempts=3).invoke(state)
     trace = result["content_loop_trace"]
     assert trace.final_status == ("accepted" if has_hits else "blocked")
-    assert [r.schema.__name__ for r in provider.calls] == (["RetrievalDecision", "ContentDraft", "ContentCritiqueDraft"] if has_hits else ["RetrievalDecision"])
+    assert [r.schema.__name__ for r in provider.calls] == (["RetrievalDecision", "RetrievalDecision", "ContentDraft", "ContentCritiqueDraft"] if has_hits else ["RetrievalDecision", "RetrievalDecision"])
     if not has_hits:
         assert trace.stop_reason == "context_pack_empty"
         assert not result["context_pack"].source_refs
+
+
+@pytest.mark.parametrize("supplement", [False, True])
+def test_agent_chooses_direct_revision_or_supplement(supplement):
+    from annotation.domain.artifacts import LearningBlueprint
+    from annotation.retrieval import InMemoryTextbookSearchTool
+    from test_content_context import _block
+    state = _state()
+    state["blueprint"] = LearningBlueprint(artifact_id="bp", run_id=state["run_id"], version=1,
+        status="accepted", created_by="test", title="教材", knowledge_units=[state["unit"]])
+    state["source_blocks"] = [_block("src-1", 1, "教材证据")]
+    class CountingTool(InMemoryTextbookSearchTool):
+        def __init__(self, blocks):
+            super().__init__(blocks)
+            self.queries = []
+        def search(self, query, **kwargs):
+            self.queries.append(query)
+            return super().search(query, **kwargs)
+    tool = CountingTool(state["source_blocks"])
+    state["retrieval_service"] = tool
+    provider = ScriptedContentProvider([
+        {"action": "write"}, _draft(refs=["unknown-source"]),
+        *([{ "action": "search", "textbook_queries": ["教材证据"]}] if supplement else []),
+        {"action": "write"}, _draft(refs=["src-1"]), {"issues": []},
+    ])
+    result = build_content_reflection_subgraph(provider, max_attempts=3).invoke(state)
+    assert result["content_loop_trace"].final_status == "accepted"
+    assert tool.queries == (["教材证据"] if supplement else [])
+    decisions = [c for c in provider.calls if c.schema.__name__ == "RetrievalDecision"]
+    assert 'unknown-source' in decisions[1].prompt
+    assert 'hard_check' in decisions[1].prompt
+
+
+def test_agent_search_budget_does_not_force_writing():
+    from annotation.domain.artifacts import LearningBlueprint
+    from annotation.retrieval import InMemoryTextbookSearchTool
+    from test_content_context import _block
+    state = _state()
+    state["blueprint"] = LearningBlueprint(artifact_id="bp", run_id=state["run_id"], version=1,
+        status="accepted", created_by="test", title="教材", knowledge_units=[state["unit"]])
+    state["source_blocks"] = [_block("src-1", 1, "教材证据")]
+    state["retrieval_service"] = InMemoryTextbookSearchTool(state["source_blocks"])
+    provider = ScriptedContentProvider([{"action": "search", "textbook_queries": ["教材证据"]}] * 3)
+    result = build_content_reflection_subgraph(provider, max_attempts=3).invoke(state)
+    assert result["content_loop_trace"].final_status == "blocked"
+    assert all(c.schema.__name__ == "RetrievalDecision" for c in provider.calls)
+    assert len(result["context_pack"].retrieval_calls) == 2
+    assert result["content_loop_trace"].stop_reason == "retrieval_budget"

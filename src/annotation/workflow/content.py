@@ -44,6 +44,11 @@ def render_context_pack(pack: ContextPack) -> str:
         f"[{excerpt.source_ref} p{excerpt.page_number}-b{excerpt.block_index}; chunk={excerpt.chunk_ref or excerpt.source_ref}; constituents={','.join(excerpt.source_refs or [excerpt.source_ref])}] {excerpt.text}"
         for excerpt in pack.excerpts
     )
+    if pack.retrieval_calls:
+        lines.append("工具调用记录：" + json.dumps([
+            {"query": c.query, "status": c.status, "error_code": c.error_code,
+             "returned_count": len(c.returned_excerpts)} for c in pack.retrieval_calls
+        ], ensure_ascii=False))
     if pack.prerequisite_titles:
         lines.append("直接前置知识单元：" + "、".join(pack.prerequisite_titles))
     if pack.omitted_source_refs:
@@ -129,7 +134,7 @@ def build_context_pack(
     char_budget = input_budget * 3
     ordered_blocks = sorted(blocks, key=lambda block: (block.page_number, block.block_index))
     tool = search_tool or InMemoryTextbookSearchTool(ordered_blocks)
-    raw_queries = retrieval_queries or [unit.title, *unit.learning_objectives]
+    raw_queries = retrieval_queries if retrieval_queries is not None else [unit.title, *unit.learning_objectives]
     queries: list[tuple[str, str]] = []
     for item in raw_queries:
         source, query = (item if isinstance(item, tuple) and len(item) == 2 else ("textbook", item))

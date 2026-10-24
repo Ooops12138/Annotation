@@ -44,7 +44,7 @@ from annotation.domain.artifacts import (
 from annotation.prompt_loader import load_prompt
 from annotation.providers import ModelProvider, MockProvider, ProviderError, StructuredGenerationRequest
 from annotation.workflow.blueprint_checks import validate_blueprint
-from annotation.workflow.content import build_context_pack, write_content_run_artifact
+from annotation.workflow.content import write_content_run_artifact
 from annotation.ingestion.pdf_parser import extraction_warnings, parse_pdf
 from annotation.ingestion.semantic_chunker import build_semantic_blocks
 from annotation.ingestion.structure import build_textbook_structure
@@ -354,9 +354,7 @@ def build_minimal_graph(
     def record_content_task_planning_blocked_run(state: WorkflowState) -> dict[str, Any]:
         return {"workflow_status": "blocked"}
 
-    def build_context_packs(state: WorkflowState) -> dict[str, Any]:
-        blueprint = state["blueprint"]
-        units = {unit.artifact_id: unit for unit in blueprint.knowledge_units}
+    def prepare_content_tools(state: WorkflowState) -> dict[str, Any]:
         capabilities = getattr(model_provider, "capabilities", None)
         context_window = getattr(capabilities, "context_window", None)
         packs: list[ContextPack] = []
@@ -366,17 +364,11 @@ def build_minimal_graph(
         semantic_blocks = build_semantic_blocks(state["source_blocks"])
         connection = state["content_retrieval_connection"]
         index_source_blocks(connection, semantic_blocks)
-        textbook_tool = SQLiteFts5TextbookDatabaseSearchSkill(connection)
+        # Prepare tools only; the agent acquires its own evidence.
         for task in state.get("content_tasks", []):
-            unit = units.get(task.knowledge_unit_id)
-            if not unit:
-                warnings.append(f"content_task_missing_unit: {task.task_id}")
-                continue
-            pack = build_context_pack(task, unit, blueprint, semantic_blocks, context_window=context_window,
-                search_tool=textbook_tool, fixture_fallback=getattr(model_provider, "provider", "") == "mock")
-            packs.append(pack)
-            if pack.omitted_source_refs:
-                warnings.append(f"context_pack_omitted_sources:{task.task_id}:{','.join(pack.omitted_source_refs)}")
+            packs.append(ContextPack(context_pack_id=f"ctx-{task.task_id}", run_id=state["run_id"],
+                task_id=task.task_id, knowledge_unit_id=task.knowledge_unit_id,
+                estimated_input_tokens=0, input_budget_tokens=context_window or 12000))
         return {"semantic_blocks": semantic_blocks, "context_packs": packs, "warnings": _merge_messages(state.get("warnings"), warnings)}
 
     def content_reflection_loops(state: WorkflowState) -> dict[str, Any]:
@@ -507,21 +499,6 @@ def build_minimal_graph(
                 task.status = "blocked"
                 checks[task.task_id] = "blocked"
                 warnings.append(f"content_context_pack_missing:{task.task_id}")
-                traces.append(trace)
-                artifacts.extend(final_artifacts)
-                continue
-            if not pack.excerpts and (getattr(model_provider, "provider", "") == "mock" or "scripted" in getattr(model_provider, "provider", "")):
-                trace, final_artifacts = preflight_trace(
-                    task=task,
-                    unit=unit,
-                    pack=pack,
-                    reason="context_pack_empty",
-                    message="教材检索未返回可用证据，未调用模型。",
-                    final_status="blocked",
-                )
-                task.status = "blocked"
-                checks[task.task_id] = "blocked"
-                warnings.append(f"content_context_pack_empty:{task.task_id}")
                 traces.append(trace)
                 artifacts.extend(final_artifacts)
                 continue
@@ -940,7 +917,7 @@ def build_minimal_graph(
         "record_failed_run": record_failed_run,
         "plan_content_tasks": plan_content_tasks,
         "record_content_task_planning_blocked_run": record_content_task_planning_blocked_run,
-        "build_context_packs": build_context_packs,
+        "prepare_content_tools": prepare_content_tools,
         "content_reflection_loops": content_reflection_loops,
         "record_content_blocked_run": record_content_blocked_run,
         "record_content_failed_run": record_content_failed_run,
@@ -954,7 +931,7 @@ def build_minimal_graph(
     }.items():
         def tracked_node(state: WorkflowState, *, _name: str = name, _node: Callable[..., Any] = node) -> dict[str, Any]:
             connection = state.get("content_retrieval_connection")
-            if _name == "build_context_packs":
+            if _name == "prepare_content_tools":
                 # Consecutive LangGraph nodes may run on different worker threads;
                 # the graph accesses this connection sequentially, never concurrently.
                 connection = sqlite3.connect(":memory:", check_same_thread=False)
@@ -965,7 +942,7 @@ def build_minimal_graph(
                 update = _node(state)
                 if progress_callback is not None:
                     progress_callback(_name, {**state, **update}, "completed")
-                if _name == "build_context_packs":
+                if _name == "prepare_content_tools":
                     update["content_retrieval_connection"] = connection
                 elif _name == "content_reflection_loops":
                     update["content_retrieval_connection"] = None
@@ -1002,10 +979,10 @@ def build_minimal_graph(
     graph.add_conditional_edges(
         "plan_content_tasks",
         next_content_task_planning_route,
-        {"accept": "build_context_packs", "block": "record_content_task_planning_blocked_run"},
+        {"accept": "prepare_content_tools", "block": "record_content_task_planning_blocked_run"},
     )
     graph.add_edge("record_content_task_planning_blocked_run", END)
-    graph.add_edge("build_context_packs", "content_reflection_loops")
+    graph.add_edge("prepare_content_tools", "content_reflection_loops")
     graph.add_conditional_edges(
         "content_reflection_loops",
         next_content_reflection_route,
