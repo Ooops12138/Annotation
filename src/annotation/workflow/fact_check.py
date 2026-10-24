@@ -39,7 +39,10 @@ from annotation.providers import ModelProvider, ProviderError, StructuredGenerat
 from annotation.retrieval import index_source_blocks
 from annotation.workflow.content import render_context_pack
 from annotation.workflow.content_support import _content_artifact_from_draft, _content_hard_check
-from annotation.workflow.models import ContentDraft, FactCheckAssessmentDraft, FactCheckAssessmentsDraft, FactCheckClaimsDraft
+from annotation.workflow.models import (
+    ContentDraft, FactCheckAssessmentDraft, FactCheckAssessmentsDraft,
+    FactCheckClaimsDraft, FactCheckRetrievalDecision,
+)
 from annotation.workflow.quiz import validate_quiz_artifact
 
 
@@ -522,6 +525,38 @@ def _context_pack_evidence(context_pack: ContextPack) -> tuple[list[FactCheckEvi
     return evidence, "context_pack:used" if evidence else "context_pack:empty"
 
 
+def _fact_check_retrieval_decision(
+    provider: ModelProvider,
+    *,
+    claim: FactCheckClaim,
+    context_pack: ContextPack,
+    web_enabled: bool,
+) -> FactCheckRetrievalDecision:
+    """Let the fact-check agent choose whether and where to retrieve evidence."""
+
+    if str(getattr(provider, "provider", "")) == "mock":
+        return FactCheckRetrievalDecision(action="use_context")
+    prompt = load_prompt(
+        "fact_check_retrieval",
+        CLAIM=json.dumps(_dump(claim), ensure_ascii=False, indent=2),
+        CONTEXT=json.dumps([_dump(item) for item in _context_pack_evidence(context_pack)[0]], ensure_ascii=False),
+    )
+    response = provider.generate_structured(StructuredGenerationRequest(
+        prompt=prompt,
+        schema=FactCheckRetrievalDecision,
+        max_output_tokens=_output_limit(provider, 700),
+        metadata={"agent": "fact_check_retrieval", "claim_id": claim.claim_id},
+    ))
+    decision = FactCheckRetrievalDecision.model_validate(response.value.model_dump(mode="python"))
+    if not web_enabled and decision.action in {"search_web", "search_both"}:
+        decision = decision.model_copy(update={
+            "action": "search_textbook",
+            "web_queries": [],
+            "textbook_queries": decision.textbook_queries or [claim.query],
+        })
+    return decision
+
+
 def _check_unit(
     provider: ModelProvider,
     *,
@@ -569,10 +604,28 @@ def _check_unit(
                     judgement="该陈述属于观点，不作为教材事实纠正。", route="annotate", stop_reason="stance",
                 ))
                 continue
-            textbook, reason = _context_pack_evidence(context_pack)
-            if not textbook and additional_retrieval_enabled:
-                textbook, reason = _search_textbook(textbook_skill, claim, valid_source_refs, policy.textbook_result_limit)
-            evidence[claim.claim_id] = (textbook, [], [reason])
+            textbook, context_reason = _context_pack_evidence(context_pack)
+            decision = FactCheckRetrievalDecision(action="use_context")
+            if additional_retrieval_enabled:
+                try:
+                    decision = _fact_check_retrieval_decision(
+                        provider, claim=claim, context_pack=context_pack,
+                        web_enabled=policy.web_enabled,
+                    )
+                except Exception:
+                    # A failed planning call must not discard usable context.
+                    decision = FactCheckRetrievalDecision(action="use_context")
+            reasons = [context_reason]
+            if decision.action in {"search_textbook", "search_both"}:
+                query_claim = claim.model_copy(update={"query": decision.textbook_queries[0] or claim.query})
+                textbook, reason = _search_textbook(textbook_skill, query_claim, valid_source_refs, policy.textbook_result_limit)
+                reasons.append(reason)
+            external: list[FactCheckEvidence] = []
+            if decision.action in {"search_web", "search_both"} and policy.web_enabled:
+                query_claim = claim.model_copy(update={"query": decision.web_queries[0] or claim.query})
+                external, reason = _search_web(web_skill, query_claim)
+                reasons.append(reason)
+            evidence[claim.claim_id] = (textbook, external, reasons)
             factual_claims.append(claim)
 
         checked, assessment_error = _assess_claims(
@@ -588,7 +641,10 @@ def _check_unit(
 
         # Existing excerpts can be unrelated headings. Supplement assertions
         # judged insufficient even when the snapshot was nonempty.
-        if additional_retrieval_enabled and not assessment_error:
+        # Retrieval is chosen by the agent before assessment. A second,
+        # program-triggered search in the same round would override that
+        # decision and duplicate tool calls.
+        if False and additional_retrieval_enabled and not assessment_error:
             insufficient_ids = {item.claim_id for item in checked if item.verdict == "insufficient"}
             follow_up = []
             for claim in factual_claims:
@@ -612,7 +668,7 @@ def _check_unit(
                 assessments = [replacement.get(item.claim_id, item) for item in assessments]
                 checked = [replacement.get(item.claim_id, item) for item in checked]
 
-        if policy.web_enabled and additional_retrieval_enabled and not assessment_error:
+        if False and policy.web_enabled and additional_retrieval_enabled and not assessment_error:
             follow_up = [
                 claim for claim in factual_claims
                 if next((item for item in checked if item.claim_id == claim.claim_id), None)

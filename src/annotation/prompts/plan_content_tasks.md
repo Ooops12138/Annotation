@@ -4,57 +4,14 @@ You are the course architect for this run. Your job is to design the
 structured ContentTask list from the accepted Learning Blueprint. Do not write
 learner-facing explanations, quiz questions, frontend code, or component specs.
 
-Return only valid JSON matching this shape:
-
-```json
-{
-  "tasks": [
-    {
-      "knowledge_unit_id": "exact id from the blueprint",
-      "quiz_count": 0,
-      "depth_guidance": "concise|standard|detailed",
-      "interactive_component_policy": "required|skip",
-      "content_agent_strategy": "single|parallel",
-      "execution_group": 1,
-      "acceptance_criteria": ["concrete checks for downstream agents"]
-    }
-  ]
-}
-```
-
-Create exactly one task for each knowledge unit in the blueprint. Preserve the
-blueprint order. Use each knowledge unit's exact `knowledge_unit_id`.
-This may be a bounded slice of a larger Blueprint. Plan only the supplied units;
-prerequisite IDs outside this slice are valid earlier/later course references.
-Execution groups are local to this batch; the program offsets them globally.
-
-Decision rules:
-
-- `quiz_count` is the exact number of single-choice questions the quiz agent
-  should produce for this unit. It may be 0. Choose it from the learning
-  objectives and available textbook evidence; do not pad for symmetry.
-- `interactive_component_policy` is `required` when a visual or interactive
-  representation is clearly useful and supported by the unit's evidence;
-  otherwise use `skip`. `required` requests a generation attempt, not a release
-  requirement. Every requested unit is attempted independently; there is no per-run component count limit. A failed component
-  is omitted without blocking the document. Do not make explanation or quiz
-  acceptance depend on the component being available.
-- `content_agent_strategy` is `parallel` only when independent content agents
-  should produce competing drafts for the same unit. Use `single` for ordinary
-  sequential generation.
-- `depth_guidance` sets the explanation depth for this unit. Use `concise` for
-  a focused explanation of the core objective and only the steps/examples
-  needed to understand it; `standard` for a complete explanation of the
-  objectives with necessary reasoning and examples; `detailed` to unpack
-  important or difficult ideas with fuller derivations, prerequisite bridges,
-  and supporting examples where the Blueprint indicates they matter. Choose
-  across the full Blueprint using each unit's kind, objectives, prerequisites,
-  and role in the course. This is a qualitative teaching-depth decision, not
-  a word-count or textbook-page estimate.
-- `execution_group` groups tasks that can be generated together after their
-  prerequisites are already covered. Use lower numbers for prerequisite units.
-- `acceptance_criteria` must be concrete, source-bound, and useful to content,
-  quiz, and component agents. Do not include vague project-management text.
+Return tasks in the intended teaching order. You may split a difficult source unit into several tasks or combine related units into one task. Each task must contain:
+- title: a teaching section title;
+- covered_objectives: object mapping original knowledge_unit_id to the exact original objective strings covered by this task;
+- quiz_count: exact count or null to let the quiz agent decide, including zero;
+- depth_guidance: concise, standard or detailed;
+- interactive_component_policy: required (attempt, omit on failure) or skip;
+- acceptance_criteria: specific teaching and evidence checks.
+Cover every source unit and every objective across the whole plan. Use an empty objective list only for a source unit that has no objectives. Repeated objectives may support recap; do not silently omit or invent objectives. Explain the distinctive scope of split tasks in their title and criteria. Preserve prerequisite learning progression while choosing organization yourself. Do not output scheduler strategies or execution groups. Do not generate explanations or quiz questions.
 
 ## Learning Blueprint
 

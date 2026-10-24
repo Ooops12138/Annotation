@@ -16,6 +16,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from annotation.domain.artifacts import (
     ContextPack,
+    ContextExcerpt,
+    RetrievalCall,
     ContentTask,
     KnowledgeUnit,
     LearningBlueprint,
@@ -28,6 +30,7 @@ from annotation.prompt_loader import load_prompt
 from annotation.providers.models import ModelProvider, ProviderError, StructuredGenerationRequest
 from annotation.workflow.content import render_context_pack
 from annotation.config import model_max_output_tokens
+from annotation.workflow.models import QuizRetrievalDecision
 
 
 QUIZ_PROMPT_VERSION = "generate_quiz_artifact:v4"
@@ -709,6 +712,72 @@ def _response_metadata(response: Any) -> dict[str, Any]:
     }
 
 
+def _quiz_retrieve_if_needed(
+    provider: ModelProvider,
+    *,
+    task: ContentTask,
+    unit: KnowledgeUnit,
+    context_pack: ContextPack,
+    retrieval_service: Any | None,
+) -> ContextPack:
+    """Let the exercise agent request additional textbook evidence."""
+
+    if retrieval_service is None or str(getattr(provider, "provider", "")) == "mock":
+        return context_pack
+    prompt = load_prompt(
+        "quiz_retrieval",
+        UNIT=json.dumps(_unit_context(unit), ensure_ascii=False),
+        CONTEXT=render_context_pack(context_pack),
+    )
+    response = provider.generate_structured(StructuredGenerationRequest(
+        prompt=prompt,
+        schema=QuizRetrievalDecision,
+        max_output_tokens=min(700, model_max_output_tokens()),
+        metadata={"agent": "quiz_retrieval", "task_id": task.task_id},
+    ))
+    decision = QuizRetrievalDecision.model_validate(response.value.model_dump(mode="python"))
+    if decision.action == "use_context":
+        return context_pack
+    excerpts = list(context_pack.excerpts)
+    seen = {item.chunk_ref or item.source_ref for item in excerpts}
+    calls = list(context_pack.retrieval_calls)
+    refs = list(context_pack.source_refs)
+    for query in decision.textbook_queries:
+        result = retrieval_service.search(query.strip(), source="textbook", limit=5)
+        returned: list[ContextExcerpt] = []
+        for item in getattr(result, "evidence", ()):
+            ref = getattr(item, "source_ref", None)
+            if not ref:
+                continue
+            excerpt = ContextExcerpt(
+                source_ref=ref,
+                page_number=max(1, int(getattr(item, "page_number", 1) or 1)),
+                block_index=max(0, int(getattr(item, "block_index", 0) or 0)),
+                text=str(getattr(item, "text", "") or getattr(item, "excerpt", "")),
+                source_refs=[ref],
+            )
+            returned.append(excerpt)
+            key = excerpt.chunk_ref or excerpt.source_ref
+            if key not in seen and excerpt.text.strip():
+                excerpts.append(excerpt)
+                seen.add(key)
+                if ref not in refs:
+                    refs.append(ref)
+        calls.append(RetrievalCall(
+            call_id=f"quiz-{task.task_id}-{len(calls)+1:03d}",
+            tool_name=str(getattr(result, "skill_name", "textbook-search")),
+            tool_version=str(getattr(result, "skill_version", "unknown")),
+            query=query, limit=5, status=str(getattr(getattr(result, "status", None), "value", getattr(result, "status", "unknown"))),
+            returned_excerpts=returned, selected_source_refs=[e.source_ref for e in returned],
+        ))
+    return context_pack.model_copy(update={
+        "excerpts": excerpts, "source_refs": refs,
+        "selected_source_refs": list(dict.fromkeys([*context_pack.selected_source_refs, *refs])),
+        "retrieved_source_refs": list(dict.fromkeys([*context_pack.retrieved_source_refs, *refs])),
+        "retrieval_calls": calls,
+    })
+
+
 def blocked_quiz_artifact(
     *,
     task: ContentTask,
@@ -755,10 +824,20 @@ def generate_quiz_artifact(
     context_pack: ContextPack,
     run_id: str | None = None,
     max_attempts: int = 2,
+    retrieval_service: Any | None = None,
 ) -> QuizArtifact:
     """Generate, hard-check, and revise one quiz set within a bounded loop."""
     provider_name = str(getattr(provider, "provider", "unknown"))
     attempts: list[dict[str, Any]] = []
+    try:
+        context_pack = _quiz_retrieve_if_needed(
+            provider, task=task, unit=unit, context_pack=context_pack,
+            retrieval_service=retrieval_service,
+        )
+    except Exception:
+        # Keep the original evidence boundary when the optional planning call
+        # fails; deterministic validation will still guard the artifact.
+        pass
     feedback: list[str] = []
     last: QuizArtifact | None = None
     for attempt in range(1, max(1, max_attempts) + 1):

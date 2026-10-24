@@ -52,7 +52,7 @@ from annotation.domain.textbook import HierarchicalBlueprintTrace
 from annotation.workflow.budget import PromptBudget
 from annotation.workflow.blueprint_hierarchy import BlueprintEngine, build_blueprint_windows
 from annotation.workflow.content_reflection import build_content_reflection_subgraph
-from annotation.workflow.course_architect import plan_content_tasks_with_architect
+from annotation.workflow.course_architect import plan_content_tasks_with_architect, teaching_blueprint
 from annotation.workflow.fact_check import run_fact_check_loop
 from annotation.workflow.interactive_components import run_interactive_component_loop
 from annotation.workflow.content_support import (
@@ -341,6 +341,7 @@ def build_minimal_graph(
         if status != "succeeded":
             planning_errors.append(f"course_architect_{status}")
         return {
+            "content_blueprint": teaching_blueprint(state["blueprint"], result["content_tasks"]) if status == "succeeded" else state["blueprint"],
             "content_tasks": result["content_tasks"],
             "content_task_planning_metadata": metadata,
             "warnings": _merge_messages(state.get("warnings"), result.get("warnings", [])),
@@ -374,9 +375,13 @@ def build_minimal_graph(
     def content_reflection_loops(state: WorkflowState) -> dict[str, Any]:
         """Run one isolated reflection subgraph per knowledge unit in order."""
 
-        blueprint = state["blueprint"]
+        blueprint = state.get("content_blueprint", state["blueprint"])
         units = {unit.artifact_id: unit for unit in blueprint.knowledge_units}
         packs = {pack.task_id: pack for pack in state.get("context_packs", [])}
+        quiz_retrieval_service = UnifiedRetrievalService(
+            SQLiteFts5TextbookDatabaseSearchSkill(state["content_retrieval_connection"]),
+            web_search_skill_from_env(),
+        )
         subgraph = build_content_reflection_subgraph(
             model_provider,
             max_attempts=content_max_attempts,
@@ -606,7 +611,7 @@ def build_minimal_graph(
     def generate_quiz_artifacts(state: WorkflowState) -> dict[str, Any]:
         """Retain T-007 as a separate post-content artifact boundary."""
 
-        blueprint = state["blueprint"]
+        blueprint = state.get("content_blueprint", state["blueprint"])
         units = {unit.artifact_id: unit for unit in blueprint.knowledge_units}
         packs = {pack.task_id: pack for pack in state.get("context_packs", [])}
         quiz_artifacts: list[QuizArtifact] = []
@@ -648,6 +653,7 @@ def build_minimal_graph(
                 unit=unit,
                 context_pack=pack,
                 run_id=state["run_id"],
+                retrieval_service=quiz_retrieval_service,
             )
             quiz_artifacts.append(quiz_artifact)
             if quiz_artifact.status != "accepted":
@@ -690,7 +696,7 @@ def build_minimal_graph(
     def fact_check_artifacts(state: WorkflowState) -> dict[str, Any]:
         """Apply A-003 after accepted explanations and quiz structure checks."""
 
-        blueprint = state["blueprint"]
+        blueprint = state.get("content_blueprint", state["blueprint"])
         result = run_fact_check_loop(
             model_provider,
             run_id=state["run_id"],
@@ -748,7 +754,7 @@ def build_minimal_graph(
                 tasks=state.get("content_tasks", []),
                 context_packs=state.get("context_packs", []),
                 content_artifacts=state.get("content_artifacts", []),
-                units=list(state["blueprint"].knowledge_units),
+                units=list(state.get("content_blueprint", state["blueprint"]).knowledge_units),
                 valid_source_refs=state.get("source_refs", []),
                 max_attempts=component_max_attempts,
                 **kwargs,
@@ -778,7 +784,7 @@ def build_minimal_graph(
         # generated quiz items and their unit mapping.
         document = _assemble_document_from_artifacts(
             state["run_id"],
-            state["blueprint"],
+            state.get("content_blueprint", state["blueprint"]),
             artifacts,
             model_provider.provider,
             quiz_artifacts=quiz_artifacts,

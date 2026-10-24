@@ -180,6 +180,8 @@ class ContentTask(BaseModel):
     run_id: str
     blueprint_version: str
     knowledge_unit_id: str
+    title: str = ""
+    covered_objectives: dict[str, list[str]] = Field(default_factory=dict)
     content_types: list[Literal["explanation", "quiz"]] = Field(
         default_factory=lambda: ["explanation", "quiz"]
     )
@@ -190,8 +192,6 @@ class ContentTask(BaseModel):
     depth_guidance: Literal["concise", "standard", "detailed"]
     source_refs: list[str] = Field(default_factory=list)
     interactive_component_policy: Literal["required", "skip"] = "skip"
-    content_agent_strategy: Literal["single", "parallel"] = "single"
-    execution_group: int = Field(default=1, ge=1)
     acceptance_criteria: list[str] = Field(default_factory=list)
     status: Literal["planned", "generating", "accepted", "needs_revision", "blocked"] = "planned"
 

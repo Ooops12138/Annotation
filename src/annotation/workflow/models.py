@@ -100,13 +100,12 @@ class ContentTaskDraft(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    knowledge_unit_id: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    covered_objectives: dict[str, list[str]] = Field(min_length=1)
     quiz_count: int | None = Field(default=None, ge=0)
     depth_guidance: Literal["concise", "standard", "detailed"]
     source_refs: list[str] = Field(default_factory=list)
     interactive_component_policy: Literal["required", "skip"] = "skip"
-    content_agent_strategy: Literal["single", "parallel"] = "single"
-    execution_group: int = Field(default=1, ge=1)
     acceptance_criteria: list[str] = Field(default_factory=list)
 
 
@@ -135,6 +134,43 @@ class FactCheckClaimsDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     claims: list[FactCheckClaimDraft] = Field(default_factory=list)
+
+
+class FactCheckRetrievalDecision(BaseModel):
+    """Tool choice made by the fact-check agent for one assertion."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["use_context", "search_textbook", "search_web", "search_both"]
+    textbook_queries: list[str] = Field(default_factory=list, max_length=3)
+    web_queries: list[str] = Field(default_factory=list, max_length=2)
+    reason: str = ""
+
+    @model_validator(mode="after")
+    def validate_queries(self) -> "FactCheckRetrievalDecision":
+        if self.action in {"search_textbook", "search_both"} and not any(q.strip() for q in self.textbook_queries):
+            raise ValueError("textbook search requires a query")
+        if self.action in {"search_web", "search_both"} and not any(q.strip() for q in self.web_queries):
+            raise ValueError("web search requires a query")
+        return self
+
+
+class QuizRetrievalDecision(BaseModel):
+    """Evidence tool choice made by the exercise agent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["use_context", "search"]
+    textbook_queries: list[str] = Field(default_factory=list, max_length=3)
+    reason: str = ""
+
+    @model_validator(mode="after")
+    def validate_queries(self) -> "QuizRetrievalDecision":
+        if self.action == "search" and not any(q.strip() for q in self.textbook_queries):
+            raise ValueError("search requires a query")
+        if self.action == "use_context" and self.textbook_queries:
+            raise ValueError("use_context cannot include queries")
+        return self
 
 
 class FactCheckAssessmentDraft(BaseModel):
@@ -295,6 +331,7 @@ class WorkflowState(TypedDict, total=False):
     blueprint_trace_id: str
     blueprint_preloaded: bool
     workflow_status: str
+    content_blueprint: LearningBlueprint
     content_tasks: list[ContentTask]
     content_task_planning_metadata: dict[str, Any]
     context_packs: list[ContextPack]
