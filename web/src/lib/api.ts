@@ -193,8 +193,8 @@ export async function startRun(
   if (!isRecord(payload) || typeof payload.status !== 'string') throw new Error('运行响应格式无效')
   let snapshot = payload as WorkflowRunResult
   onSnapshot?.(snapshot)
-  const runId = typeof snapshot.run_id === 'string' ? snapshot.run_id : undefined
-  while (runId && ['queued', 'running'].includes(snapshot.status || '')) {
+  const runId = typeof snapshot.run_id === 'string' ? snapshot.run_id : (snapshot.run as any)?.run_id
+  while (runId && ['queued', 'running', 'stopping'].includes(snapshot.status || '')) {
     await new Promise((resolve) => window.setTimeout(resolve, 900))
     snapshot = await getRun(runId)
     onSnapshot?.(snapshot)
@@ -203,4 +203,11 @@ export async function startRun(
     throw new Error(Array.isArray(snapshot.errors) ? snapshot.errors.join('；') : String(snapshot.error || snapshot.run?.error || '学习文档生成失败'))
   }
   return snapshot
+}
+
+export async function stopRun(runId: string): Promise<WorkflowRunResult> {
+  const response = await fetchApi(`/api/runs/${encodeURIComponent(runId)}/stop`, { method: 'POST' })
+  const payload = await readJson<any>(response, '停止请求失败')
+  if (!isRecord(payload) || typeof payload.status !== 'string') throw new Error('停止响应格式无效')
+  return payload as WorkflowRunResult
 }

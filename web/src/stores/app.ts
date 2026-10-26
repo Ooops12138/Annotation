@@ -4,6 +4,7 @@ import {
   getRun,
   getLibrary,
   startRun,
+  stopRun,
   uploadBook,
   type LibraryBook,
   type LibraryDocumentSummary,
@@ -51,6 +52,8 @@ export const useAppStore = defineStore('app', {
     loading: false,
     uploading: false,
     generating: false,
+    stopPending: false,
+    runNotice: '',
     progress: null as WorkflowRunResult['progress'],
     error: '',
     libraryError: '',
@@ -156,6 +159,8 @@ export const useAppStore = defineStore('app', {
         this.error = error.message
         throw error
       }
+      if (this.generating) return
+      this.runNotice = ''
       this.generating = true
       this.progress = { status: 'queued', label: '等待开始', completed: 0, total: 15 }
       this.error = ''
@@ -171,7 +176,9 @@ export const useAppStore = defineStore('app', {
         this.sourceLocations = result.source_locations ?? {}
         this.run = result
         this.reviewReport = result.review_report ?? null
-        if (result.status === 'blocked') {
+        if (result.status === 'cancelled' || result.status === 'interrupted') {
+          this.runNotice = result.status === 'cancelled' ? '已停止生成，过程记录已保留。' : '上次生成已中断，过程记录已保留。'
+        } else if (result.status === 'blocked') {
           this.document = null
           this.selectedDocumentId = null
           this.error = '本次生成被阻塞，请稍后重试。'
@@ -201,7 +208,7 @@ export const useAppStore = defineStore('app', {
       this.selectedBookId = saved.book_id
       try {
         const initial = await getRun(saved.run_id)
-        if (initial.progress?.status !== 'running' && initial.status !== 'running') {
+        if (!['queued', 'running', 'stopping'].includes(initial.status || '')) {
           clearActiveRun()
           this.run = initial
           this.sourceLocations = initial.source_locations ?? {}
@@ -213,6 +220,8 @@ export const useAppStore = defineStore('app', {
           } else if (initial.status === 'blocked') {
             this.document = null
             this.error = '本次生成被阻塞，请稍后重试。'
+          } else if (initial.status === 'cancelled' || initial.status === 'interrupted') {
+            this.runNotice = initial.status === 'cancelled' ? '已停止生成，过程记录已保留。' : '上次生成已中断，过程记录已保留。'
           } else if (initial.status === 'failed') {
             this.error = String((initial.run as any)?.error || '学习文档生成失败')
           }
@@ -241,6 +250,21 @@ export const useAppStore = defineStore('app', {
         this.error = messageFrom(error, '运行状态恢复失败')
       } finally {
         this.generating = false
+      }
+    },
+
+    async stopGeneration(this: any) {
+      const runId = this.run?.run_id || (this.run?.run as any)?.run_id
+      if (!runId || this.stopPending) return
+      this.stopPending = true
+      try {
+        const result = await stopRun(runId)
+        this.run = result
+        this.progress = { ...(this.progress || {}), ...(result.progress || {}), status: result.status }
+      } catch (error) {
+        this.error = messageFrom(error, '停止请求失败，可重试')
+      } finally {
+        this.stopPending = false
       }
     },
   },

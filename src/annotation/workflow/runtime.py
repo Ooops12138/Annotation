@@ -76,7 +76,7 @@ from annotation.workflow.persistence import persist_workflow_snapshots
 from annotation.workflow.quiz import blocked_quiz_artifact, generate_quiz_artifact, validate_quiz_coverage
 from annotation.fact_checking import SQLiteFts5TextbookDatabaseSearchSkill, web_search_skill_from_env
 from annotation.retrieval import HybridTextbookSearchTool, LlamaIndexChromaTextbookSearchTool, UnifiedRetrievalService, index_source_blocks
-from annotation.workflow.control import RunControl
+from annotation.workflow.control import RunControl, ControlledPort
 
 def build_minimal_graph(
     provider: ModelProvider | None = None,
@@ -92,6 +92,8 @@ def build_minimal_graph(
     interactive_component_sandbox_runner: Callable[..., Any] | None = None,
 ):
     model_provider = provider if provider is not None else create_provider_from_env()
+    if run_control is not None:
+        model_provider = ControlledPort(model_provider, run_control)
     max_attempts = configured_blueprint_max_attempts(blueprint_max_attempts)
     content_max_attempts = configured_content_reflection_max_attempts(content_reflection_max_attempts)
     workers = workflow_max_workers()
@@ -466,9 +468,11 @@ def build_minimal_graph(
             )
             return trace, [candidate_artifact] if candidate_artifact is not None else []
 
-        retrieval_service = LockedSearch(retrieval_service)
+        retrieval_service = LockedSearch(ControlledPort(retrieval_service, run_control) if run_control else retrieval_service)
 
         def generate_task(task):
+            if run_control:
+                run_control.raise_if_stopped()
             artifacts, traces, updated_packs, warnings = [], [], [], []
             checks = {}
             provider_metadata = {}
@@ -972,6 +976,7 @@ def build_minimal_graph(
                     progress_callback(_name, state, "started")
                 update = _node(state)
                 if run_control is not None:
+                    run_control.checkpoint(_name, {key: value for key, value in {**state, **update}.items() if key not in {"content_retrieval_connection", "retrieval_service"}})
                     run_control.raise_if_stopped()
                 if progress_callback is not None:
                     progress_callback(_name, {**state, **update}, "completed")

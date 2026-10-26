@@ -130,7 +130,7 @@ def _run_response_from_state(result: dict[str, Any], state: dict[str, Any]) -> d
         or bool(report and report.status == "blocked")
     )
     return {
-        "status": run.get("status") if run.get("status") in {"blocked", "failed"} else "ok",
+        "status": run.get("status") if run.get("status") in {"blocked", "failed", "cancelled", "interrupted"} else "ok",
         "run": run,
         "document": None if blocked else document.model_dump(mode="json") if document else None,
         "source_locations": {
@@ -171,9 +171,9 @@ def _execute_run(*, book: dict[str, Any], requested_run_id: str | None = None, o
             loaded = load_run_payload(repo, run_id)
             if loaded:
                 return {"stored": True, "payload": loaded}
-        if existing and existing.get("status") == "running" and not allow_existing_running:
+        if existing and existing.get("status") in {"running", "stopping"} and not allow_existing_running:
             raise HTTPException(status_code=409, detail=f"运行正在进行：{run_id}")
-        if existing and existing.get("status") in {"failed", "blocked"}:
+        if existing and existing.get("status") in {"failed", "blocked", "cancelled", "interrupted"}:
             run_id = new_run_id(_safe_run_id(run_id))
 
         repo.create_run(book["book_id"], run_id=run_id, origin=origin)
@@ -207,16 +207,16 @@ def _execute_run(*, book: dict[str, Any], requested_run_id: str | None = None, o
                 progress_callback=lambda stage, snapshot, phase: _publish_run_progress(repo, run_id, stage, snapshot, phase),
                 run_control=run_control,
             )
-            if run_control is not None:
-                run_control.raise_if_stopped()
-            last_progress = ((repo.get_run(run_id) or {}).get("metadata") or {}).get("progress") or {}
-            result = persist_workflow_result(
-                repo,
-                book=book,
-                state=state,
-                origin=origin,
-                publish_document=getattr(provider, "profile", "live") == "live",
-            )
+            from contextlib import nullcontext
+            with run_control.lock if run_control else nullcontext():
+                if run_control:
+                    run_control.raise_if_stopped()
+                    run_control.committing = True
+                last_progress = ((repo.get_run(run_id) or {}).get("metadata") or {}).get("progress") or {}
+                result = persist_workflow_result(
+                    repo, book=book, state=state, origin=origin,
+                    publish_document=getattr(provider, "profile", "live") == "live",
+                )
             finished = repo.get_run(run_id) or {}
             progress = dict(last_progress)
             progress["status"] = result["run"].get("status", "succeeded")
@@ -365,7 +365,7 @@ def create_run(request: RunRequest) -> dict[str, Any]:
         repo = repository()
         try:
             existing = repo.get_run(run_id)
-            if existing and existing.get("status") == "running":
+            if existing and existing.get("status") in {"running", "stopping"}:
                 return {"status": "running", "run_id": run_id, "run": existing, "progress": (existing.get("metadata") or {}).get("progress")}
             if existing and existing.get("status") == "succeeded":
                 loaded = load_run_payload(repo, run_id)
@@ -377,7 +377,7 @@ def create_run(request: RunRequest) -> dict[str, Any]:
         finally:
             repo.close()
         with _run_controls_lock:
-            _run_controls[run_id] = RunControl()
+            _run_controls[run_id] = RunControl(run_id)
         _run_executor.submit(_background_run, book, run_id)
         return {"status": "running", "run_id": run_id, "run": created, "progress": (created or {}).get("metadata", {}).get("progress")}
     execution = _execute_run(book=book, requested_run_id=request.run_id)
@@ -436,18 +436,22 @@ def stop_run(run_id: str) -> dict[str, Any]:
         if not run:
             raise HTTPException(status_code=404, detail=f"未找到运行：{run_id}")
         status = str(run.get("status") or "")
-        if status in {"succeeded", "blocked", "failed", "cancelled"}:
+        if status in {"succeeded", "blocked", "failed", "cancelled", "interrupted"}:
             return {"status": status, "run_id": run_id, "run": run, "stop_requested": False}
         with _run_controls_lock:
             control = _run_controls.get(run_id)
-            if control is None:
-                raise HTTPException(status_code=409, detail="运行执行器不可用")
+        if control is None:
+            raise HTTPException(status_code=409, detail="运行执行器不可用")
+        with control.lock:
+            run = repo.get_run(run_id)
+            if control.committing or run["status"] not in {"running", "stopping"}:
+                return {"status": run["status"], "run_id": run_id, "run": run, "stop_requested": False}
+            metadata = dict(run.get("metadata") or {})
+            progress = dict(metadata.get("progress") or {})
+            progress.update({"status": "stopping", "stop_requested": True})
+            updated = repo.update_run(run_id, status="stopping", metadata={**metadata, "progress": progress})
             control.request_stop()
-        metadata = dict(run.get("metadata") or {})
-        progress = dict(metadata.get("progress") or {})
-        progress.update({"status": "stopping", "stop_requested": True})
-        updated = repo.update_run(run_id, status="stopping", metadata={**metadata, "progress": progress})
-        return {"status": "stopping", "run_id": run_id, "run": updated, "stop_requested": True}
+            return {"status": "stopping", "run_id": run_id, "run": updated, "stop_requested": True}
     finally:
         repo.close()
 

@@ -225,15 +225,19 @@ watch(blocked, (isBlocked) => {
             <Sparkles v-else :size="16" stroke-width="1.7" aria-hidden="true" />
             <span>{{ app.generating ? '正在生成…' : '生成学习文档' }}</span>
           </button>
+          <button v-if="app.generating" type="button" class="generate-button" :disabled="app.stopPending || app.progress?.status === 'stopping'" @click="app.stopGeneration()">
+            {{ app.progress?.status === 'stopping' ? '正在停止…' : '停止生成' }}
+          </button>
         </header>
 
         <div v-if="app.error" class="annotation-error" role="alert">
           <CircleAlert :size="16" stroke-width="1.5" aria-hidden="true" />
           <span>{{ app.error }}</span>
         </div>
+        <p v-if="app.runNotice" class="annotation-loading" role="status">{{ app.runNotice }}</p>
         <div v-else-if="app.loading || app.generating" class="annotation-loading" role="status">
           <LoaderCircle class="spin" :size="16" stroke-width="1.5" aria-hidden="true" />
-          <span v-if="app.generating">{{ app.progress?.label || '正在生成学习文档…' }}（{{ app.progress?.completed || 0 }}/{{ app.progress?.total || 15 }}）</span>
+          <span v-if="app.generating">{{ app.progress?.status === 'stopping' ? '正在停止，等待当前操作结束…' : app.progress?.label || '正在生成学习文档…' }}（{{ app.progress?.completed || 0 }}/{{ app.progress?.total || 15 }}）</span>
           <span v-else>正在打开已保存的学习文档…</span>
         </div>
         <div v-else-if="!selectedBook" class="library-welcome" role="status">

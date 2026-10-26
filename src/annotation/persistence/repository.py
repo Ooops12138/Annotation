@@ -411,7 +411,7 @@ class PersistenceRepository:
                 updates[key] = value
         if metadata is not None:
             updates["metadata_json"] = _json(metadata)
-        if status in {"succeeded", "blocked", "failed", "cancelled"} and finished_at is None:
+        if status in {"succeeded", "blocked", "failed", "cancelled", "interrupted"} and finished_at is None:
             updates["finished_at"] = _utc_now()
         if not updates:
             found = self.get_run(run_id)
