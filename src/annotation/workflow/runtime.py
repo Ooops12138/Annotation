@@ -49,6 +49,7 @@ from annotation.ingestion.pdf_parser import extraction_warnings, parse_pdf
 from annotation.ingestion.semantic_chunker import build_semantic_blocks
 from annotation.ingestion.structure import build_textbook_structure
 from annotation.domain.textbook import HierarchicalBlueprintTrace
+from annotation.workflow.concurrency import LockedSearch, ordered_batches, workflow_max_workers
 from annotation.workflow.budget import PromptBudget
 from annotation.workflow.blueprint_hierarchy import BlueprintEngine, build_blueprint_windows
 from annotation.workflow.content_reflection import build_content_reflection_subgraph
@@ -91,6 +92,7 @@ def build_minimal_graph(
     model_provider = provider if provider is not None else create_provider_from_env()
     max_attempts = configured_blueprint_max_attempts(blueprint_max_attempts)
     content_max_attempts = configured_content_reflection_max_attempts(content_reflection_max_attempts)
+    workers = workflow_max_workers()
     fact_check_policy = FactCheckPolicy(
         max_claims_per_unit=configured_fact_check_max_claims_per_unit(fact_check_max_claims_per_unit),
         max_corrections_per_unit=configured_fact_check_max_corrections(fact_check_max_corrections),
@@ -366,15 +368,11 @@ def build_minimal_graph(
         return {"semantic_blocks": semantic_blocks, "context_packs": packs, "warnings": _merge_messages(state.get("warnings"), warnings)}
 
     def content_reflection_loops(state: WorkflowState) -> dict[str, Any]:
-        """Run one isolated reflection subgraph per knowledge unit in order."""
+        """Run isolated task subgraphs in bounded batches; merge in task order."""
 
         blueprint = state.get("content_blueprint", state["blueprint"])
         units = {unit.artifact_id: unit for unit in blueprint.knowledge_units}
         packs = {pack.task_id: pack for pack in state.get("context_packs", [])}
-        quiz_retrieval_service = UnifiedRetrievalService(
-            SQLiteFts5TextbookDatabaseSearchSkill(state["content_retrieval_connection"]),
-            web_search_skill_from_env(),
-        )
         subgraph = build_content_reflection_subgraph(
             model_provider,
             max_attempts=content_max_attempts,
@@ -385,7 +383,6 @@ def build_minimal_graph(
         checks: dict[str, str] = {}
         warnings: list[str] = []
         provider_metadata: dict[str, Any] = dict(state.get("provider_metadata", {}))
-        upstream_failed = False
         retrieval_connection = state["content_retrieval_connection"]
         semantic_blocks = state["semantic_blocks"]
         textbook_tool = SQLiteFts5TextbookDatabaseSearchSkill(retrieval_connection)
@@ -467,24 +464,15 @@ def build_minimal_graph(
             )
             return trace, [candidate_artifact] if candidate_artifact is not None else []
 
-        for task in state.get("content_tasks", []):
+        retrieval_service = LockedSearch(retrieval_service)
+
+        def generate_task(task):
+            artifacts, traces, updated_packs, warnings = [], [], [], []
+            checks = {}
+            provider_metadata = {}
             unit = units.get(task.knowledge_unit_id)
             pack = packs.get(task.task_id)
             task.status = "generating"
-            if upstream_failed:
-                trace, final_artifacts = preflight_trace(
-                    task=task,
-                    unit=unit,
-                    pack=pack,
-                    reason="upstream_failure",
-                    message="前一知识单元发生不可重试 provider 错误，当前单元未执行。",
-                    final_status="skipped",
-                )
-                task.status = "blocked"
-                checks[task.task_id] = "failed"
-                traces.append(trace)
-                artifacts.extend(final_artifacts)
-                continue
             if unit is None or pack is None:
                 trace, final_artifacts = preflight_trace(
                     task=task,
@@ -499,7 +487,8 @@ def build_minimal_graph(
                 warnings.append(f"content_context_pack_missing:{task.task_id}")
                 traces.append(trace)
                 artifacts.extend(final_artifacts)
-                continue
+                return {"artifacts": artifacts, "traces": traces, "updated_packs": updated_packs,
+                        "checks": checks, "warnings": warnings, "provider_metadata": provider_metadata}
             if pack.omitted_source_refs:
                 trace, final_artifacts = preflight_trace(
                     task=task,
@@ -514,7 +503,8 @@ def build_minimal_graph(
                 warnings.append(f"content_context_pack_source_over_budget:{task.task_id}:{','.join(pack.omitted_source_refs)}")
                 traces.append(trace)
                 artifacts.extend(final_artifacts)
-                continue
+                return {"artifacts": artifacts, "traces": traces, "updated_packs": updated_packs,
+                        "checks": checks, "warnings": warnings, "provider_metadata": provider_metadata}
 
             result = subgraph.invoke({
                 "run_id": state["run_id"],
@@ -544,13 +534,36 @@ def build_minimal_graph(
                 task.status = "blocked"
                 checks[task.task_id] = "failed" if trace.final_status == "failed" else "blocked"
                 warnings.append(f"content_reflection_{trace.final_status}:{task.task_id}:{trace.stop_reason}")
-            if trace.final_status == "failed":
-                upstream_failed = True
             if trace.attempts:
                 last_attempt = trace.attempts[-1]
                 metadata = last_attempt.generation_provider_metadata or last_attempt.critic_provider_metadata
                 if metadata:
                     provider_metadata = dict(metadata)
+
+            return {"artifacts": artifacts, "traces": traces, "updated_packs": updated_packs,
+                        "checks": checks, "warnings": warnings, "provider_metadata": provider_metadata}
+
+        tasks = list(state.get("content_tasks", []))
+        results = ordered_batches(generate_task, tasks, workers=workers,
+            stop=lambda result: any(trace.final_status == "failed" for trace in result["traces"]))
+        for task, result in zip(tasks, results):
+            artifacts.extend(result["artifacts"])
+            traces.extend(result["traces"])
+            checks.update(result["checks"])
+            warnings.extend(result["warnings"])
+            for generated_pack in result["updated_packs"]:
+                packs[generated_pack.task_id] = generated_pack
+            if result["provider_metadata"]:
+                provider_metadata = result["provider_metadata"]
+        for task in tasks[len(results):]:
+            task.status = "blocked"
+            trace, skipped_artifacts = preflight_trace(task=task,
+                unit=units.get(task.knowledge_unit_id), pack=packs.get(task.task_id),
+                reason="upstream_failure", message="先前批次发生技术失败，当前任务未执行。", final_status="skipped")
+            traces.append(trace)
+            artifacts.extend(skipped_artifacts)
+            checks[task.task_id] = "failed"
+        updated_packs = [packs[task.task_id] for task in tasks if task.task_id in packs]
 
         summary = _content_loop_summary(traces)
         status = summary["final_status"]
@@ -613,7 +626,9 @@ def build_minimal_graph(
             SQLiteFts5TextbookDatabaseSearchSkill(state["content_retrieval_connection"]),
             web_search_skill_from_env(),
         )
-        for task in state.get("content_tasks", []):
+        quiz_retrieval_service = LockedSearch(quiz_retrieval_service)
+        def generate_task_quiz(task):
+            quiz_artifacts, checks, warnings = [], {}, []
             unit = units.get(task.knowledge_unit_id)
             pack = packs.get(task.task_id)
             if unit is None or pack is None:
@@ -642,7 +657,7 @@ def build_minimal_graph(
                     ))
                 checks[task.task_id] = "blocked"
                 task.status = "blocked"
-                continue
+                return quiz_artifacts, checks, warnings
             quiz_artifact = generate_quiz_artifact(
                 model_provider,
                 task=task,
@@ -656,6 +671,13 @@ def build_minimal_graph(
                 task.status = "blocked"
                 checks[task.task_id] = "blocked"
                 warnings.append(f"quiz_generation_blocked:{task.task_id}")
+            return quiz_artifacts, checks, warnings
+
+        for task_artifacts, task_checks, task_warnings in ordered_batches(
+            generate_task_quiz, state.get("content_tasks", []), workers=workers):
+            quiz_artifacts.extend(task_artifacts)
+            checks.update(task_checks)
+            warnings.extend(task_warnings)
         quiz_coverage = validate_quiz_coverage(
             quiz_artifacts,
             blueprint,
@@ -706,6 +728,7 @@ def build_minimal_graph(
             policy=fact_check_policy,
             web_search_skill=web_search_skill_from_env(),
             additional_retrieval_enabled=additional_fact_retrieval,
+            max_workers=workers,
         )
         final_quiz_artifacts = result["quiz_artifacts"]
         quiz_coverage = validate_quiz_coverage(
@@ -936,9 +959,10 @@ def build_minimal_graph(
             connection = state.get("content_retrieval_connection")
             if _name == "prepare_content_tools":
                 # Consecutive LangGraph nodes may run on different worker threads;
-                # the graph accesses this connection sequentially, never concurrently.
+                # shared search clients serialize access to this connection.
                 connection = sqlite3.connect(":memory:", check_same_thread=False)
                 state = {**state, "content_retrieval_connection": connection}
+            close_connection = False
             try:
                 if progress_callback is not None:
                     progress_callback(_name, state, "started")
@@ -947,7 +971,8 @@ def build_minimal_graph(
                     progress_callback(_name, {**state, **update}, "completed")
                 if _name == "prepare_content_tools":
                     update["content_retrieval_connection"] = connection
-                elif _name == "content_reflection_loops":
+                elif _name == "generate_quiz_artifacts" or (_name == "content_reflection_loops" and update.get("content_loop_status") != "accepted"):
+                    close_connection = True
                     update["content_retrieval_connection"] = None
                 return update
             except BaseException:
@@ -955,7 +980,7 @@ def build_minimal_graph(
                     connection.close()
                 raise
             finally:
-                if _name == "content_reflection_loops" and connection is not None:
+                if close_connection and connection is not None:
                     connection.close()
 
         graph.add_node(name, tracked_node)

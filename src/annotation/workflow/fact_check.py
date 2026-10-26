@@ -9,6 +9,8 @@ import uuid
 from collections.abc import Iterable
 from typing import Any
 
+from annotation.workflow.concurrency import LockedSearch, ordered_batches
+
 from annotation.domain.artifacts import (
     ContentArtifact,
     ContentTask,
@@ -776,7 +778,7 @@ def _check_unit(
 
 
 def _transient_textbook_skill(source_blocks: list[SourceBlock]) -> tuple[TextbookDatabaseSearchSkill, sqlite3.Connection]:
-    connection = sqlite3.connect(":memory:")
+    connection = sqlite3.connect(":memory:", check_same_thread=False)
     index_source_blocks(connection, source_blocks)
     return SQLiteFts5TextbookDatabaseSearchSkill(connection), connection
 
@@ -799,6 +801,7 @@ def run_fact_check_loop(
     # reads FACT_CHECK_ADDITIONAL_RETRIEVAL_ENABLED and passes the explicit
     # production policy.
     additional_retrieval_enabled: bool = True,
+    max_workers: int = 1,
 ) -> dict[str, Any]:
     """Check accepted artifacts against the current textbook and return replacements."""
 
@@ -828,43 +831,55 @@ def run_fact_check_loop(
     issues: list[ReviewIssue] = [setup_error] if setup_error else []
     web_skill = web_search_skill or DisabledWebResourceSearchSkill()
 
-    try:
-        for task in tasks:
-            position = content_index.get(task.task_id)
-            unit = units.get(task.knowledge_unit_id)
-            pack = packs.get(task.task_id)
-            if position is None or unit is None or pack is None:
-                continue
-            content = final_content[position]
-            if content.status != "accepted":
-                continue
-            quiz_position = quiz_index.get(task.task_id)
-            quiz = final_quiz[quiz_position] if quiz_position is not None and final_quiz[quiz_position].status == "accepted" else None
-            if textbook_search_skill is None and not pack.excerpts:
-                traces.append(FactCheckUnitTrace(
-                    trace_id=f"fact-check-trace-{uuid.uuid4().hex[:12]}", run_id=run_id, task_id=task.task_id,
-                    knowledge_unit_id=unit.artifact_id, max_corrections=policy.max_corrections_per_unit,
-                    rounds=[FactCheckRoundTrace(
-                        round=0, content_artifact_id=content.artifact_id,
-                        quiz_artifact_id=quiz.artifact_id if quiz else None, route="annotate", stop_reason="textbook_index_error",
-                    )],
-                    final_status="at_risk", corrections_used=0, stop_reason="textbook_index_error",
-                    final_content_artifact_id=content.artifact_id, final_quiz_artifact_id=quiz.artifact_id if quiz else None,
-                ))
-                continue
-            checked_content, checked_quiz, trace, unit_issues, quiz_removed = _check_unit(
-                provider,
-                task=task,
-                unit=unit,
-                context_pack=pack,
-                content=content,
-                quiz=quiz,
-                policy=policy,
-                valid_source_refs=valid_refs,
-                textbook_skill=textbook_search_skill,
-                web_skill=web_skill,
-                additional_retrieval_enabled=additional_retrieval_enabled,
+    # Workers own their artifacts; only search access is shared and serialized.
+    if max_workers > 1:
+        textbook_search_skill = LockedSearch(textbook_search_skill) if textbook_search_skill else None
+        web_skill = LockedSearch(web_skill)
+
+    def check_task(task):
+        position = content_index.get(task.task_id)
+        unit = units.get(task.knowledge_unit_id)
+        pack = packs.get(task.task_id)
+        if position is None or unit is None or pack is None:
+            return None
+        content = final_content[position]
+        if content.status != "accepted":
+            return None
+        quiz_position = quiz_index.get(task.task_id)
+        quiz = final_quiz[quiz_position] if quiz_position is not None and final_quiz[quiz_position].status == "accepted" else None
+        if textbook_search_skill is None and not pack.excerpts:
+            trace = FactCheckUnitTrace(
+                trace_id=f"fact-check-trace-{uuid.uuid4().hex[:12]}", run_id=run_id, task_id=task.task_id,
+                knowledge_unit_id=unit.artifact_id, max_corrections=policy.max_corrections_per_unit,
+                rounds=[FactCheckRoundTrace(
+                    round=0, content_artifact_id=content.artifact_id,
+                    quiz_artifact_id=quiz.artifact_id if quiz else None, route="annotate", stop_reason="textbook_index_error",
+                )],
+                final_status="at_risk", corrections_used=0, stop_reason="textbook_index_error",
+                final_content_artifact_id=content.artifact_id, final_quiz_artifact_id=quiz.artifact_id if quiz else None,
             )
+            return position, quiz_position, content, quiz, trace, [], False
+        checked_content, checked_quiz, trace, unit_issues, quiz_removed = _check_unit(
+            provider,
+            task=task,
+            unit=unit,
+            context_pack=pack,
+            content=content,
+            quiz=quiz,
+            policy=policy,
+            valid_source_refs=valid_refs,
+            textbook_skill=textbook_search_skill,
+            web_skill=web_skill,
+            additional_retrieval_enabled=additional_retrieval_enabled,
+        )
+        return position, quiz_position, checked_content, checked_quiz, trace, unit_issues, quiz_removed
+
+    try:
+        results = ordered_batches(check_task, tasks, workers=max_workers)
+        for task, result in zip(tasks, results):
+            if result is None:
+                continue
+            position, quiz_position, checked_content, checked_quiz, trace, unit_issues, quiz_removed = result
             final_content[position] = checked_content
             if quiz_position is not None and checked_quiz is not None:
                 final_quiz[quiz_position] = checked_quiz
