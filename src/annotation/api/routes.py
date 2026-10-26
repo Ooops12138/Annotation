@@ -33,6 +33,7 @@ from annotation.providers import create_provider_from_env
 from annotation.retrieval import index_source_blocks, search_source_blocks
 from annotation.workflow import run_minimal_workflow
 from annotation.workflow.control import RunControl, RunStopped
+from annotation.workflow.checkpoints import resumable_checkpoint
 
 
 router = APIRouter()
@@ -173,20 +174,23 @@ def _execute_run(*, book: dict[str, Any], requested_run_id: str | None = None, o
                 return {"stored": True, "payload": loaded}
         if existing and existing.get("status") in {"running", "stopping"} and not allow_existing_running:
             raise HTTPException(status_code=409, detail=f"运行正在进行：{run_id}")
-        if existing and existing.get("status") in {"failed", "blocked", "cancelled", "interrupted"}:
+        if not resume_from_run_id and existing and existing.get("status") in {"failed", "blocked", "cancelled", "interrupted"}:
             run_id = new_run_id(_safe_run_id(run_id))
 
         resume_checkpoint = None
         if resume_from_run_id:
             source = repo.get_run(resume_from_run_id)
-            if not source or source.get("status") not in {"interrupted", "cancelled", "failed"}:
+            if not source or source.get("status") not in {"interrupted", "cancelled", "failed", "running"}:
                 raise HTTPException(status_code=409, detail="该运行没有可续跑的中断快照")
             if source.get("book_id") != book.get("book_id"):
                 raise HTTPException(status_code=409, detail="续跑教材与原运行不一致")
-            resume_checkpoint = RunControl(resume_from_run_id).load_checkpoint()
+            resume_checkpoint = resumable_checkpoint(resume_from_run_id)
             if not resume_checkpoint:
                 raise HTTPException(status_code=409, detail="未找到可验证的阶段快照")
-        repo.create_run(book["book_id"], run_id=run_id, origin=origin, metadata={"parent_run_id": resume_from_run_id} if resume_from_run_id else None)
+        if resume_from_run_id:
+            repo.update_run(run_id, status="running", error=None)
+        else:
+            repo.create_run(book["book_id"], run_id=run_id, origin=origin)
         try:
             provider = create_provider_from_env()
             repo.update_run(
@@ -301,12 +305,22 @@ def resume_run(run_id: str) -> dict[str, Any]:
         book = repo.get_book(source["book_id"])
         if not book:
             raise HTTPException(status_code=404, detail="教材不存在")
-        new_id = new_run_id(_safe_run_id(run_id))
-        control = RunControl(new_id)
+        if source.get("status") not in {"interrupted", "cancelled", "failed"}:
+            raise HTTPException(status_code=409, detail="该运行当前不能续跑")
+        if resumable_checkpoint(run_id) is None:
+            raise HTTPException(status_code=409, detail="未找到当前格式的 LangGraph 检查点")
+        control = RunControl(run_id)
         with _run_controls_lock:
-            _run_controls[new_id] = control
-        _run_executor.submit(_background_resume_run, book, new_id, run_id)
-        return {"status": "running", "run_id": new_id, "parent_run_id": run_id}
+            if run_id in _run_controls:
+                raise HTTPException(status_code=409, detail="运行正在进行")
+            metadata = dict(source.get("metadata") or {})
+            progress = dict(metadata.get("progress") or {})
+            progress.pop("stop_reason", None)
+            progress.update(status="running", phase="resuming")
+            repo.update_run(run_id, status="running", metadata={**metadata, "progress": progress})
+            _run_controls[run_id] = control
+        _run_executor.submit(_background_resume_run, book, run_id, run_id)
+        return {"status": "running", "run_id": run_id}
     finally:
         repo.close()
 

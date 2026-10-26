@@ -834,7 +834,6 @@ def run_fact_check_loop(
     # Workers own their artifacts; only search access is shared and serialized.
     if max_workers > 1:
         textbook_search_skill = LockedSearch(textbook_search_skill) if textbook_search_skill else None
-        web_skill = LockedSearch(web_skill)
 
     def check_task(task):
         position = content_index.get(task.task_id)

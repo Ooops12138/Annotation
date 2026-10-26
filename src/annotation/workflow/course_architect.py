@@ -8,7 +8,7 @@ from typing import Any, Iterable
 from annotation.domain.artifacts import ContentTask, LearningBlueprint, KnowledgeUnit
 from annotation.prompt_loader import load_prompt
 from annotation.providers import ModelProvider, ProviderError, StructuredGenerationRequest
-from annotation.workflow.graph import _metadata, _provider_metadata
+from annotation.workflow.helpers import response_metadata, provider_metadata
 from annotation.workflow.content_support import _plan_content_tasks
 from annotation.workflow.models import ContentTaskPlanDraft
 from annotation.workflow.budget import PromptBudget
@@ -165,7 +165,7 @@ def _plan_content_task_batch(
             ))
             draft = ContentTaskPlanDraft.model_validate(response.value.model_dump(mode="python"))
             raw_output = response.raw_text
-            metadata.update(_metadata(response))
+            metadata.update(response_metadata(response))
         tasks, planning_warnings = _tasks_from_draft(run_id=run_id, blueprint=blueprint, draft=draft)
         warnings.extend(planning_warnings)
         if any(item.startswith("course_architect_revision_required:") for item in planning_warnings):
@@ -184,7 +184,7 @@ def _plan_content_task_batch(
         status = "schema_error" if getattr(exc, "category", "provider") == "schema" else "provider_error"
         warnings.append(f"course_architect_blocked:{status}:{exc}")
         metadata.update({
-            **_provider_metadata(provider),
+            **provider_metadata(provider),
             "status": status,
             "raw_output": str(getattr(exc, "raw_output", "") or raw_output),
             "error": str(exc),
@@ -194,7 +194,7 @@ def _plan_content_task_batch(
         status = "runtime_error"
         warnings.append(f"course_architect_blocked:{status}:{exc}")
         metadata.update({
-            **_provider_metadata(provider),
+            **provider_metadata(provider),
             "status": status,
             "raw_output": raw_output,
             "error": str(exc),

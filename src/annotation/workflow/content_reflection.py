@@ -23,17 +23,17 @@ from annotation.providers import ModelProvider, ProviderError, StructuredGenerat
 from annotation.ingestion.semantic_chunker import build_semantic_blocks
 from annotation.workflow.content import build_context_pack, render_context_pack
 from annotation.workflow.content_support import (
-    _blocked_content_artifact,
+    blocked_content_artifact,
     _content_prompt_task,
     _content_prompt_unit,
     _content_artifact_from_draft,
     _content_hard_check,
-    _content_issue,
+    content_issue,
     _critic_review_issues,
     _dedupe_review_issues,
     _unit_context,
 )
-from annotation.workflow.graph import _metadata, _provider_metadata
+from annotation.workflow.helpers import response_metadata, provider_metadata
 from annotation.workflow.models import ContentDraft, ContentReflectionState, RetrievalDecision
 from annotation.config import model_max_output_tokens
 
@@ -41,6 +41,7 @@ def build_content_reflection_subgraph(
     provider: ModelProvider,
     *,
     max_attempts: int,
+    retrieval_service: Any | None = None,
 ):
     """Build the bounded per-unit explanation reflection subgraph.
 
@@ -123,7 +124,7 @@ def build_content_reflection_subgraph(
             new_pack = build_context_pack(
                 task, unit, state["blueprint"],
                 semantic_blocks,
-                search_tool=state.get("retrieval_service"), retrieval_queries=round_queries,
+                search_tool=retrieval_service, retrieval_queries=round_queries,
                 fixture_fallback=bool(workflow_capabilities is not None),
             )
             seen = {e.chunk_ref or e.source_ref for e in pack.excerpts}
@@ -155,7 +156,7 @@ def build_content_reflection_subgraph(
         retrieval_result: dict[str, Any] = {}
         # The production graph supplies a retrieval service. Direct subgraph
         # fixture callers retain the prebuilt ContextPack contract.
-        if state.get("retrieval_service") is not None:
+        if retrieval_service is not None:
             try:
                 planned_state, retrieval_result = plan_and_retrieve(state)
                 state = planned_state
@@ -260,7 +261,7 @@ def build_content_reflection_subgraph(
                     },
                 ))
                 draft = ContentDraft.model_validate(response.value.model_dump(mode="python"))
-                metadata = _metadata(response)
+                metadata = response_metadata(response)
                 metadata["agent"] = agent
                 raw_output = response.raw_text
             result.update({
@@ -290,14 +291,14 @@ def build_content_reflection_subgraph(
                 "generation_error": str(exc),
                 "generation_error_category": category,
                 "generation_retryable": bool(getattr(exc, "retryable", False) or category == "schema"),
-                "generation_provider_metadata": {**_provider_metadata(provider), "agent": agent},
+                "generation_provider_metadata": {**provider_metadata(provider), "agent": agent},
             })
         except Exception as exc:
             result.update({
                 "generation_status": "provider_error",
                 "generation_error": str(exc),
                 "generation_error_category": "runtime",
-                "generation_provider_metadata": {**_provider_metadata(provider), "agent": agent},
+                "generation_provider_metadata": {**provider_metadata(provider), "agent": agent},
             })
         return result
 
@@ -364,7 +365,7 @@ def build_content_reflection_subgraph(
                     },
                 ))
                 critique = ContentCritiqueDraft.model_validate(response.value.model_dump(mode="python"))
-                metadata = _metadata(response)
+                metadata = response_metadata(response)
                 metadata["agent"] = "critique_content_artifact"
                 raw_output = response.raw_text
             feedback = _critic_review_issues(
@@ -394,14 +395,14 @@ def build_content_reflection_subgraph(
                 "critic_error": str(exc),
                 "critic_error_category": category,
                 "critic_retryable": bool(getattr(exc, "retryable", False) or category == "schema"),
-                "critic_provider_metadata": {**_provider_metadata(provider), "agent": "critique_content_artifact"},
+                "critic_provider_metadata": {**provider_metadata(provider), "agent": "critique_content_artifact"},
             })
         except Exception as exc:
             result.update({
                 "critic_status": "provider_error",
                 "critic_error": str(exc),
                 "critic_error_category": "runtime",
-                "critic_provider_metadata": {**_provider_metadata(provider), "agent": "critique_content_artifact"},
+                "critic_provider_metadata": {**provider_metadata(provider), "agent": "critique_content_artifact"},
             })
         return result
 
@@ -439,7 +440,7 @@ def build_content_reflection_subgraph(
         if final_status is not None and candidate is None:
             error = state.get("generation_error") or state.get("critic_error") or "内容反思 loop 未生成候选。"
             if not feedback:
-                feedback.append(_content_issue(
+                feedback.append(content_issue(
                     task=state["task"],
                     suffix=f"generation-error-{attempt}",
                     category="coverage",
@@ -447,7 +448,7 @@ def build_content_reflection_subgraph(
                     message=error,
                     suggested_action="检查模型调用或修订当前知识单元。",
                 ))
-            candidate = _blocked_content_artifact(
+            candidate = blocked_content_artifact(
                 task=state["task"],
                 unit=state["unit"],
                 context_pack=state.get("context_pack"),
@@ -537,6 +538,7 @@ def build_content_reflection_subgraph(
         next_route,
         {"accept": END, "revise": "generate_candidate", "block": END, "fail": END},
     )
-    return graph.compile()
+    # The outer node is the durable recovery boundary, including all its workers.
+    return graph.compile(checkpointer=False)
 
 

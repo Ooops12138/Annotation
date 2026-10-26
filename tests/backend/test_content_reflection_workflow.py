@@ -100,7 +100,7 @@ class WorkflowContentProvider:
 
 
 def _install_source_fixture(monkeypatch) -> None:
-    import annotation.workflow.runtime as graph_module
+    import annotation.workflow.blueprint_nodes as graph_module
 
     def parse_fixture(_path, *, run_id: str):
         document = SourceDocument(
@@ -270,11 +270,12 @@ def test_offline_workflow_keeps_six_unit_quiz_regression_and_emits_six_content_t
 
 def test_enabled_vector_initialization_failure_keeps_workflow_fts(monkeypatch):
     _install_source_fixture(monkeypatch)
-    import annotation.workflow.runtime as runtime
+    import annotation.workflow.context as resources
+    import annotation.workflow.content_nodes as runtime
     monkeypatch.setenv("RAG_ENABLED", "true")
     def broken_vector(*args, **kwargs):
         raise RuntimeError("index unavailable")
-    monkeypatch.setattr(runtime, "LlamaIndexChromaTextbookSearchTool", broken_vector)
+    monkeypatch.setattr(resources, "LlamaIndexChromaTextbookSearchTool", broken_vector)
     run_id = f"rag-degraded-{uuid.uuid4().hex[:8]}"
     state = run_minimal_workflow(provider=OfflineFixtureProvider(), run_id=run_id, blueprint=_blueprint(run_id))
     assert "vector_index_initialization_failed:RuntimeError" in state["warnings"]
@@ -286,7 +287,8 @@ def test_enabled_vector_initialization_failure_keeps_workflow_fts(monkeypatch):
 
 def test_enabled_vector_reaches_content_agent_and_context_audit(monkeypatch):
     _install_source_fixture(monkeypatch)
-    import annotation.workflow.runtime as runtime
+    import annotation.workflow.context as resources
+    import annotation.workflow.content_nodes as runtime
     from annotation.fact_checking.contracts import EvidenceRecord, EvidenceKind, SearchResult, SearchStatus
     monkeypatch.setenv("RAG_ENABLED", "true")
     searched = []
@@ -303,7 +305,7 @@ def test_enabled_vector_reaches_content_agent_and_context_audit(monkeypatch):
                 return SearchResult(skill_name=self.name, skill_version=self.version, query=query,
                                     status=SearchStatus.OK, evidence=(evidence,), metadata={"embedding_fingerprint": "test-vector-space"})
         return Vector()
-    monkeypatch.setattr(runtime, "LlamaIndexChromaTextbookSearchTool", make_vector)
+    monkeypatch.setattr(resources, "LlamaIndexChromaTextbookSearchTool", make_vector)
     run_id = f"rag-enabled-{uuid.uuid4().hex[:8]}"
     state = run_minimal_workflow(provider=OfflineFixtureProvider(), run_id=run_id, blueprint=_blueprint(run_id))
     calls = [c for pack in state["context_packs"] for c in pack.retrieval_calls]
@@ -315,13 +317,14 @@ def test_enabled_vector_reaches_content_agent_and_context_audit(monkeypatch):
 def test_content_reuses_chunks_and_fts_across_units_and_runs(monkeypatch):
     import sqlite3
     import pytest
-    import annotation.workflow.runtime as runtime
+    import annotation.workflow.context as resources
+    import annotation.workflow.content_nodes as runtime
     import annotation.workflow.content_reflection as reflection
 
     _install_source_fixture(monkeypatch)
     monkeypatch.setenv("RAG_ENABLED", "false")
     chunk_calls, indexed_connections, used_blocks = [], [], []
-    chunker, indexer = runtime.build_semantic_blocks, runtime.index_source_blocks
+    chunker, indexer = runtime.build_semantic_blocks, resources.index_source_blocks
     context_builder = reflection.build_context_pack
 
     def chunks(blocks):
@@ -341,15 +344,15 @@ def test_content_reuses_chunks_and_fts_across_units_and_runs(monkeypatch):
         raise AssertionError("content subgraph must reuse the run's semantic blocks")
 
     monkeypatch.setattr(runtime, "build_semantic_blocks", chunks)
-    monkeypatch.setattr(runtime, "index_source_blocks", index)
+    monkeypatch.setattr(resources, "index_source_blocks", index)
     monkeypatch.setattr(reflection, "build_context_pack", context)
     monkeypatch.setattr(reflection, "build_semantic_blocks", unexpected_chunking)
     for _ in range(2):
         run_id = f"reuse-content-{uuid.uuid4().hex[:8]}"
         state = run_minimal_workflow(provider=OfflineFixtureProvider(), run_id=run_id, blueprint=_blueprint(run_id))
         assert len(state["content_artifacts"]) == 3
-        assert state["content_retrieval_connection"] is None
-        assert used_blocks and all(blocks is chunk_calls[-1] for blocks in used_blocks)
+        assert "content_retrieval_connection" not in state
+        assert used_blocks and all(blocks == chunk_calls[-1] for blocks in used_blocks)
         used_blocks.clear()
         with pytest.raises(sqlite3.ProgrammingError, match="closed"):
             indexed_connections[-1].execute("SELECT 1")
@@ -360,11 +363,12 @@ def test_content_reuses_chunks_and_fts_across_units_and_runs(monkeypatch):
 def test_content_index_is_closed_when_tool_preparation_raises(monkeypatch):
     import sqlite3
     import pytest
-    import annotation.workflow.runtime as runtime
+    import annotation.workflow.context as resources
+    import annotation.workflow.content_nodes as runtime
 
     _install_source_fixture(monkeypatch)
     connections = []
-    indexer = runtime.index_source_blocks
+    indexer = resources.index_source_blocks
 
     def index(connection, blocks):
         connections.append(connection)
@@ -373,11 +377,11 @@ def test_content_index_is_closed_when_tool_preparation_raises(monkeypatch):
     def fail(*args, **kwargs):
         raise RuntimeError("context failed")
 
-    monkeypatch.setattr(runtime, "index_source_blocks", index)
+    monkeypatch.setattr(resources, "index_source_blocks", index)
     def failing_index(connection, blocks):
         connections.append(connection)
         fail()
-    monkeypatch.setattr(runtime, "index_source_blocks", failing_index)
+    monkeypatch.setattr(resources, "index_source_blocks", failing_index)
     run_id = f"reuse-error-{uuid.uuid4().hex[:8]}"
     with pytest.raises(RuntimeError, match="context failed"):
         run_minimal_workflow(provider=OfflineFixtureProvider(), run_id=run_id, blueprint=_blueprint(run_id))
@@ -388,21 +392,22 @@ def test_content_index_is_closed_when_tool_preparation_raises(monkeypatch):
 def test_content_index_is_closed_when_reflection_raises(monkeypatch):
     import sqlite3
     import pytest
-    import annotation.workflow.runtime as runtime
+    import annotation.workflow.context as resources
+    import annotation.workflow.content_nodes as runtime
 
     _install_source_fixture(monkeypatch)
     connections = []
-    indexer = runtime.index_source_blocks
+    indexer = resources.index_source_blocks
 
     def index(connection, blocks):
         connections.append(connection)
         return indexer(connection, blocks)
 
     class BrokenSubgraph:
-        def invoke(self, state):
+        def invoke(self, state, **kwargs):
             raise RuntimeError("reflection failed")
 
-    monkeypatch.setattr(runtime, "index_source_blocks", index)
+    monkeypatch.setattr(resources, "index_source_blocks", index)
     monkeypatch.setattr(runtime, "build_content_reflection_subgraph", lambda *args, **kwargs: BrokenSubgraph())
     run_id = f"reuse-reflection-error-{uuid.uuid4().hex[:8]}"
     with pytest.raises(RuntimeError, match="reflection failed"):

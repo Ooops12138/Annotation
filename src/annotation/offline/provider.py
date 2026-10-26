@@ -73,7 +73,7 @@ class OfflineWorkflowCapabilities(WorkflowProviderCapabilities):
             action="search", textbook_queries=[unit.title])
 
     def quiz_retrieval_decision(self) -> BaseModel:
-        from annotation.domain.artifacts import QuizRetrievalDecision
+        from annotation.workflow.models import QuizRetrievalDecision
         return QuizRetrievalDecision(action="use_context")
 
     def fact_check_retrieval_decision(self) -> BaseModel:

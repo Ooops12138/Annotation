@@ -411,6 +411,10 @@ class PersistenceRepository:
                 updates[key] = value
         if metadata is not None:
             updates["metadata_json"] = _json(metadata)
+        if status == "running":
+            # A native checkpoint resumes the same run after a terminal state.
+            updates.setdefault("error", None)
+            updates.setdefault("finished_at", None)
         if status in {"succeeded", "blocked", "failed", "cancelled", "interrupted"} and finished_at is None:
             updates["finished_at"] = _utc_now()
         if not updates:

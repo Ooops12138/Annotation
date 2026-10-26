@@ -544,7 +544,7 @@ def test_top_level_workflow_runs_fact_check_before_document_assembly(monkeypatch
         return source, [block.model_copy(update={"run_id": run_id, "document_id": source.artifact_id,
             "text": block.text + " 本节也讨论补充定理和补充例题。"}) for block in blocks]
 
-    import annotation.workflow.runtime as graph_module
+    import annotation.workflow.blueprint_nodes as graph_module
 
     monkeypatch.setattr(graph_module, "parse_pdf", parse_fixture)
     monkeypatch.setattr(graph_module, "extraction_warnings", lambda _blocks: [])

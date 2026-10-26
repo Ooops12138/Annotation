@@ -118,7 +118,8 @@ def test_hard_check_revises_before_calling_critic_and_preserves_source_evidence(
     assert trace.attempts[0].critic_status == "skipped"
     assert trace.attempts[0].candidate_artifact.source_refs == ["unknown-source"]
     assert trace.attempts[1].generation_stage == "revision"
-    assert trace.attempts[1].generation_prompt.startswith("# Agent: revise_content_artifact")
+    assert trace.attempts[1].generation_prompt.startswith("## Role\n")
+    assert "(`revise_content_artifact`)." in trace.attempts[1].generation_prompt.split("## Task", 1)[0]
     assert "invalid-source" in trace.attempts[1].generation_prompt
     assert trace.final_status == "accepted"
     assert len(result["final_artifacts"]) == 1
@@ -145,7 +146,8 @@ def test_critic_blocking_finding_routes_to_revision() -> None:
     trace = result["content_loop_trace"]
     assert [attempt.route for attempt in trace.attempts] == ["revise", "accept"]
     assert trace.attempts[0].feedback[0].severity == "blocking"
-    assert trace.attempts[1].generation_prompt.startswith("# Agent: revise_content_artifact")
+    assert trace.attempts[1].generation_prompt.startswith("## Role\n")
+    assert "(`revise_content_artifact`)." in trace.attempts[1].generation_prompt.split("## Task", 1)[0]
     assert "coverage" in trace.attempts[1].generation_prompt
     assert sum(call.schema.__name__ == "ContentCritiqueDraft" for call in provider.calls) == 2
 
@@ -226,7 +228,7 @@ def test_agent_can_retrieve_from_empty_bootstrap_but_cannot_generate_without_evi
         {"action": "write"},
         *([_draft(refs=["src-1"]), {"issues": []}] if has_hits else []),
     ])
-    result = build_content_reflection_subgraph(provider, max_attempts=3).invoke(state)
+    result = build_content_reflection_subgraph(provider, max_attempts=3, retrieval_service=state.pop("retrieval_service", None)).invoke(state)
     trace = result["content_loop_trace"]
     assert trace.final_status == ("accepted" if has_hits else "blocked")
     assert [r.schema.__name__ for r in provider.calls] == (["RetrievalDecision", "RetrievalDecision", "ContentDraft", "ContentCritiqueDraft"] if has_hits else ["RetrievalDecision", "RetrievalDecision"])
@@ -258,7 +260,7 @@ def test_agent_chooses_direct_revision_or_supplement(supplement):
         *([{ "action": "search", "textbook_queries": ["教材证据"]}] if supplement else []),
         {"action": "write"}, _draft(refs=["src-1"]), {"issues": []},
     ])
-    result = build_content_reflection_subgraph(provider, max_attempts=3).invoke(state)
+    result = build_content_reflection_subgraph(provider, max_attempts=3, retrieval_service=state.pop("retrieval_service", None)).invoke(state)
     assert result["content_loop_trace"].final_status == "accepted"
     assert tool.queries == (["教材证据"] if supplement else [])
     decisions = [c for c in provider.calls if c.schema.__name__ == "RetrievalDecision"]
@@ -276,7 +278,7 @@ def test_agent_search_budget_does_not_force_writing():
     state["source_blocks"] = [_block("src-1", 1, "教材证据")]
     state["retrieval_service"] = InMemoryTextbookSearchTool(state["source_blocks"])
     provider = ScriptedContentProvider([{"action": "search", "textbook_queries": ["教材证据"]}] * 3)
-    result = build_content_reflection_subgraph(provider, max_attempts=3).invoke(state)
+    result = build_content_reflection_subgraph(provider, max_attempts=3, retrieval_service=state.pop("retrieval_service", None)).invoke(state)
     assert result["content_loop_trace"].final_status == "blocked"
     assert all(c.schema.__name__ == "RetrievalDecision" for c in provider.calls)
     assert len(result["context_pack"].retrieval_calls) == 2

@@ -209,6 +209,10 @@ def rag_enabled() -> bool:
     return str(os.getenv("RAG_ENABLED", "false")).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def rag_chroma_path() -> str:
+    return os.getenv("RAG_CHROMA_PATH", "storage/chroma")
+
+
 def embedding_provider_name() -> str:
     return (os.getenv("RAG_EMBEDDING_PROVIDER") or "auto").strip().lower()
 

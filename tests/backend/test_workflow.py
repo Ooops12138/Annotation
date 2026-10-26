@@ -1,7 +1,7 @@
 from annotation.offline import OfflineFixtureProvider
 from annotation.workflow import run_minimal_workflow
 from annotation.workflow.content_support import _formula_format_issues
-from annotation.workflow.graph import _review_report_for, _source_context
+from annotation.workflow.helpers import review_report_for, source_context
 from annotation.domain.artifacts import (
     CalloutNode,
     DocumentSection,
@@ -63,12 +63,12 @@ def test_source_context_uses_all_non_empty_blocks_by_default() -> None:
         ),
     ]
 
-    context = _source_context(blocks)
+    context = source_context(blocks)
 
     assert "[source-first]" in context
     assert "[source-last]" in context
     assert "[source-empty]" not in context
-    assert _source_context(blocks, limit=1).count("[") == 1
+    assert source_context(blocks, limit=1).count("[") == 1
 
 
 def test_minimal_langgraph_workflow_produces_traceable_document() -> None:
@@ -185,7 +185,7 @@ def test_review_marks_draft_source_as_unapproved_warning() -> None:
         )],
     )
 
-    report = _review_report_for(document, {
+    report = review_report_for(document, {
         "source_document": source,
         "source_refs": ["source-1"],
     })

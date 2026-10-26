@@ -38,11 +38,14 @@ def ordered_batches(function: Callable[[T], R], items: Iterable[T], *, workers: 
 
 
 class LockedSearch:
-    """Serialize shared SQLite/vector/search clients, not model generation."""
+    """Serialize one shared client; do not wrap a whole retrieval router."""
 
     def __init__(self, tool):
         self.tool = tool
         self.lock = RLock()
+
+    def __getattr__(self, name):
+        return getattr(self.tool, name)
 
     def search(self, *args, **kwargs):
         with self.lock:

@@ -10,7 +10,7 @@ from annotation.workflow import run_minimal_workflow
 
 
 def _install_source_fixture(monkeypatch) -> None:
-    import annotation.workflow.runtime as graph_module
+    import annotation.workflow.blueprint_nodes as graph_module
 
     def parse_fixture(_path, *, run_id: str):
         document = SourceDocument(
@@ -248,11 +248,11 @@ def test_trace_artifact_contains_loop_and_run_summary(monkeypatch) -> None:
 
 def test_real_blueprint_duplicate_ids_are_rejected_without_renaming():
     import pytest
-    from annotation.workflow.graph import _blueprint_from_draft
+    from annotation.workflow.helpers import blueprint_from_draft
     from annotation.workflow.models import BlueprintDraft
     draft = BlueprintDraft.model_validate({"title": "chapter", "knowledge_units": [
         {"knowledge_unit_id": "duplicate", "title": title, "source_refs": ["src-1"]}
         for title in ["one", "two"]
     ]})
     with pytest.raises(ProviderError, match="duplicate knowledge unit id"):
-        _blueprint_from_draft(draft=draft, state={"run_id": "r", "source_refs": ["src-1"]}, provider_name="test")
+        blueprint_from_draft(draft=draft, state={"run_id": "r", "source_refs": ["src-1"]}, provider_name="test")

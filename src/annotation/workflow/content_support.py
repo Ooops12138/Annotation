@@ -83,7 +83,7 @@ def _unescaped_token_count(value: str, token: str) -> int:
     return count
 
 
-def _merge_messages(existing: list[str] | None, new: list[str]) -> list[str]:
+def merge_messages(existing: list[str] | None, new: list[str]) -> list[str]:
     return list(dict.fromkeys([*(existing or []), *new]))
 
 
@@ -177,7 +177,7 @@ def _content_artifact_from_draft(
     )
 
 
-def _content_issue(
+def content_issue(
     *,
     task: ContentTask,
     suffix: str,
@@ -217,7 +217,7 @@ def _content_hard_check(
     issues: list[ReviewIssue] = []
     primary = candidate_artifact
     if primary is None:
-        issues.append(_content_issue(
+        issues.append(content_issue(
             task=task,
             suffix="missing-explanation",
             category="coverage",
@@ -227,7 +227,7 @@ def _content_hard_check(
         ))
     else:
         if not primary.content.strip():
-            issues.append(_content_issue(
+            issues.append(content_issue(
                 task=task,
                 suffix="empty-explanation",
                 category="coverage",
@@ -240,7 +240,7 @@ def _content_hard_check(
     pack_refs = set(context_pack.source_refs)
     for artifact in [primary] if primary is not None else []:
         if artifact.run_id != task.run_id:
-            issues.append(_content_issue(
+            issues.append(content_issue(
                 task=task,
                 suffix=f"run-binding-{artifact.artifact_id}",
                 category="coverage",
@@ -249,7 +249,7 @@ def _content_hard_check(
                 target_id=artifact.artifact_id,
             ))
         if artifact.task_id != task.task_id:
-            issues.append(_content_issue(
+            issues.append(content_issue(
                 task=task,
                 suffix=f"task-binding-{artifact.artifact_id}",
                 category="coverage",
@@ -258,7 +258,7 @@ def _content_hard_check(
                 target_id=artifact.artifact_id,
             ))
         if artifact.context_pack_id != context_pack.context_pack_id:
-            issues.append(_content_issue(
+            issues.append(content_issue(
                 task=task,
                 suffix=f"context-binding-{artifact.artifact_id}",
                 category="source",
@@ -267,7 +267,7 @@ def _content_hard_check(
                 target_id=artifact.artifact_id,
             ))
         if artifact.knowledge_unit_ids != [unit.artifact_id]:
-            issues.append(_content_issue(
+            issues.append(content_issue(
                 task=task,
                 suffix=f"unit-binding-{artifact.artifact_id}",
                 category="coverage",
@@ -276,7 +276,7 @@ def _content_hard_check(
                 target_id=artifact.artifact_id,
             ))
         if not artifact.source_refs:
-            issues.append(_content_issue(
+            issues.append(content_issue(
                 task=task,
                 suffix=f"missing-source-{artifact.artifact_id}",
                 category="source",
@@ -289,7 +289,7 @@ def _content_hard_check(
         invalid_source_refs = [ref for ref in artifact.source_refs if ref not in valid_source_refs]
         if invalid_pack_refs or invalid_source_refs:
             invalid = list(dict.fromkeys([*invalid_pack_refs, *invalid_source_refs]))
-            issues.append(_content_issue(
+            issues.append(content_issue(
                 task=task,
                 suffix=f"invalid-source-{artifact.artifact_id}",
                 category="source",
@@ -302,7 +302,7 @@ def _content_hard_check(
         formula_messages = _markdown_formula_format_issues(artifact.artifact_id, artifact.content)
         raw_callouts = artifact.metadata.get("callouts", [])
         if not isinstance(raw_callouts, list):
-            issues.append(_content_issue(
+            issues.append(content_issue(
                 task=task,
                 suffix=f"invalid-callouts-{artifact.artifact_id}",
                 category="coverage",
@@ -316,7 +316,7 @@ def _content_hard_check(
             try:
                 callout = CalloutDraft.model_validate(raw_callout)
             except Exception:
-                issues.append(_content_issue(
+                issues.append(content_issue(
                     task=task,
                     suffix=f"invalid-callout-{artifact.artifact_id}-{callout_index}",
                     category="coverage",
@@ -330,7 +330,7 @@ def _content_hard_check(
                 f"{artifact.artifact_id}-callout-{callout_index}", callout.content,
             ))
         for index, message in enumerate(formula_messages, start=1):
-            issues.append(_content_issue(
+            issues.append(content_issue(
                 task=task,
                 suffix=f"formula-{artifact.artifact_id}-{index}",
                 category="formula",
@@ -367,7 +367,7 @@ def _critic_review_issues(
     issues: list[ReviewIssue] = []
     for index, finding in enumerate(critique.issues, start=1):
         severity: Literal["warning", "blocking"] = "blocking" if finding.code in _CRITIC_BLOCKING_CODES else "warning"
-        issues.append(_content_issue(
+        issues.append(content_issue(
             task=task,
             suffix=f"critic-{attempt}-{index}-{finding.code}",
             category=category_by_code[finding.code],
@@ -379,7 +379,7 @@ def _critic_review_issues(
     return issues
 
 
-def _blocked_content_artifact(
+def blocked_content_artifact(
     *,
     task: ContentTask,
     unit: KnowledgeUnit,
@@ -412,7 +412,7 @@ def _blocked_content_artifact(
     )
 
 
-def _content_loop_summary(traces: list[ContentUnitLoopTrace]) -> dict[str, Any]:
+def content_loop_summary(traces: list[ContentUnitLoopTrace]) -> dict[str, Any]:
     """Return a compact, API-safe aggregate; prompts and raw output stay in traces."""
 
     statuses = [trace.final_status for trace in traces]

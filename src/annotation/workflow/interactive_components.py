@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import logging
+from annotation.workflow.concurrency import ordered_batches
+
 import json
 import uuid
 from collections.abc import Callable, Iterable
@@ -33,7 +36,7 @@ from annotation.prompt_loader import load_prompt
 from annotation.providers import ModelProvider, ProviderError, StructuredGenerationRequest
 from annotation.workflow.content import render_context_pack
 from annotation.workflow.content_support import _interactive_prompt_content, _interactive_prompt_unit
-from annotation.workflow.graph import _metadata, _provider_metadata
+from annotation.workflow.helpers import response_metadata, provider_metadata
 from annotation.workflow.interactive_expression import function_domain_probe_errors
 from annotation.workflow.interactive_sandbox import run_interactive_component_sandbox
 from annotation.config import model_max_output_tokens
@@ -413,7 +416,7 @@ def build_interactive_component_subgraph(
                     },
                 ))
                 draft = InteractiveComponentDraft.model_validate(response.value.model_dump(mode="python"))
-                metadata = _metadata(response)
+                metadata = response_metadata(response)
                 metadata["agent"] = agent
                 raw_output = response.raw_text
             result.update({
@@ -444,14 +447,14 @@ def build_interactive_component_subgraph(
                 "generation_error": str(exc),
                 "generation_error_category": category,
                 "generation_retryable": bool(getattr(exc, "retryable", False) or category == "schema"),
-                "generation_provider_metadata": {**_provider_metadata(provider), "agent": agent},
+                "generation_provider_metadata": {**provider_metadata(provider), "agent": agent},
             })
         except Exception as exc:
             result.update({
                 "generation_status": "provider_error",
                 "generation_error": str(exc),
                 "generation_error_category": "runtime",
-                "generation_provider_metadata": {**_provider_metadata(provider), "agent": agent},
+                "generation_provider_metadata": {**provider_metadata(provider), "agent": agent},
             })
         return result
 
@@ -535,7 +538,7 @@ def build_interactive_component_subgraph(
                     },
                 ))
                 critique = InteractiveComponentCritiqueDraft.model_validate(response.value.model_dump(mode="python"))
-                metadata = _metadata(response)
+                metadata = response_metadata(response)
                 metadata["agent"] = "critique_interactive_component"
                 raw_output = response.raw_text
             result.update({
@@ -559,14 +562,14 @@ def build_interactive_component_subgraph(
                 "critic_error": str(exc),
                 "critic_error_category": category,
                 "critic_retryable": bool(getattr(exc, "retryable", False) or category == "schema"),
-                "critic_provider_metadata": {**_provider_metadata(provider), "agent": "critique_interactive_component"},
+                "critic_provider_metadata": {**provider_metadata(provider), "agent": "critique_interactive_component"},
             })
         except Exception as exc:
             result.update({
                 "critic_status": "provider_error",
                 "critic_error": str(exc),
                 "critic_error_category": "runtime",
-                "critic_provider_metadata": {**_provider_metadata(provider), "agent": "critique_interactive_component"},
+                "critic_provider_metadata": {**provider_metadata(provider), "agent": "critique_interactive_component"},
             })
         return result
 
@@ -703,7 +706,7 @@ def build_interactive_component_subgraph(
         next_route,
         {"accept": END, "revise": "generate_candidate", "block": END, "fail": END, "not_needed": END},
     )
-    return graph.compile()
+    return graph.compile(checkpointer=False)
 
 
 def _not_needed_result(plan: InteractiveComponentPlan, *, max_attempts: int) -> dict[str, Any]:
@@ -775,7 +778,7 @@ def _run_single_component_loop(
         "valid_source_refs": valid_source_refs,
         "max_attempts": max_attempts,
         "attempts": [],
-    })
+    }, durability="async")
     trace: InteractiveComponentLoopTrace = state["interactive_component_loop_trace"]
     final_artifact = state.get("final_artifact")
     if trace.final_status in {"accepted", "at_risk"}:
@@ -805,12 +808,10 @@ def run_interactive_component_loop(
     context_packs: list[ContextPack], content_artifacts: list[ContentArtifact],
     units: list[KnowledgeUnit], valid_source_refs: list[str], max_attempts: int,
     sandbox_runner: SandboxRunner = run_interactive_component_sandbox,
+    max_workers: int = 1,
 ) -> dict[str, Any]:
     """Attempt every requested unit independently, retaining successful components."""
-    results: list[dict[str, Any]] = []
-    for content_task in tasks:
-        if content_task.interactive_component_policy != "required":
-            continue
+    def generate_component(content_task: ContentTask) -> dict[str, Any]:
         try:
             result = _run_single_component_loop(
                 provider, run_id=run_id, tasks=[content_task], context_packs=context_packs,
@@ -818,6 +819,7 @@ def run_interactive_component_loop(
                 max_attempts=max_attempts, sandbox_runner=sandbox_runner,
             )
         except Exception as exc:
+            logging.getLogger(__name__).exception("Unexpected component failure for %s", content_task.task_id)
             result = {
                 "interactive_component_artifacts": [],
                 "interactive_component_status": "failed",
@@ -828,7 +830,10 @@ def run_interactive_component_loop(
             }
         result["content_task_id"] = content_task.task_id
         result["knowledge_unit_id"] = content_task.knowledge_unit_id
-        results.append(result)
+        return result
+
+    results = ordered_batches(generate_component,
+        [task for task in tasks if task.interactive_component_policy == "required"], workers=max_workers)
     if not results:
         plan, *_ = plan_interactive_component(
             run_id=run_id, tasks=[], context_packs=context_packs,

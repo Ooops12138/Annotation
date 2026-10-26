@@ -8,6 +8,9 @@ objective and source references needed by the review and rendering layers.
 from __future__ import annotations
 
 import json
+import hashlib
+import logging
+import math
 import re
 from collections.abc import Iterable, Mapping
 from typing import Any, Literal
@@ -25,6 +28,7 @@ from annotation.domain.artifacts import (
     QuizDraft,
     QuizQuestion,
     ReviewIssue,
+    SourceBlock,
 )
 from annotation.prompt_loader import load_prompt
 from annotation.providers.models import ModelProvider, ProviderError, StructuredGenerationRequest
@@ -34,6 +38,7 @@ from annotation.workflow.models import QuizRetrievalDecision
 
 
 QUIZ_PROMPT_VERSION = "generate_quiz_artifact:v4"
+logger = logging.getLogger(__name__)
 # There is intentionally no default or minimum quiz size.  The agent decides
 # how many evidence-supported items are useful for a unit, including zero.
 
@@ -672,13 +677,14 @@ def _response_metadata(response: Any) -> dict[str, Any]:
     }
 
 
-def _quiz_retrieve_if_needed(
+def retrieve_quiz_context(
     provider: ModelProvider,
     *,
     task: ContentTask,
     unit: KnowledgeUnit,
     context_pack: ContextPack,
     retrieval_service: Any | None,
+    semantic_blocks: Iterable[SourceBlock] = (),
 ) -> ContextPack:
     """Let the exercise agent request additional textbook evidence."""
 
@@ -706,6 +712,7 @@ def _quiz_retrieve_if_needed(
     seen = {item.chunk_ref or item.source_ref for item in excerpts}
     calls = list(context_pack.retrieval_calls)
     refs = list(context_pack.source_refs)
+    blocks = {block.source_ref: block for block in semantic_blocks}
     for query in decision.textbook_queries:
         result = retrieval_service.search(query.strip(), source="textbook", limit=5)
         returned: list[ContextExcerpt] = []
@@ -713,32 +720,42 @@ def _quiz_retrieve_if_needed(
             ref = getattr(item, "source_ref", None)
             if not ref:
                 continue
+            block = blocks.get(ref)
+            raw_refs = list(block.source_refs or [ref]) if block else [ref]
             excerpt = ContextExcerpt(
-                source_ref=ref,
+                source_ref=raw_refs[0],
                 page_number=max(1, int(getattr(item, "page_number", 1) or 1)),
                 block_index=max(0, int(getattr(item, "block_index", 0) or 0)),
                 text=str(getattr(item, "text", "") or getattr(item, "excerpt", "")),
-                source_refs=[ref],
+                source_refs=raw_refs,
+                chunk_ref=ref if block and block.run_metadata.get("chunk_type") == "semantic" else None,
             )
             returned.append(excerpt)
             key = excerpt.chunk_ref or excerpt.source_ref
             if key not in seen and excerpt.text.strip():
                 excerpts.append(excerpt)
                 seen.add(key)
-                if ref not in refs:
-                    refs.append(ref)
+                refs.extend(source_ref for source_ref in raw_refs if source_ref not in refs)
         calls.append(RetrievalCall(
             call_id=f"quiz-{task.task_id}-{len(calls)+1:03d}",
             tool_name=str(getattr(result, "skill_name", "textbook-search")),
             tool_version=str(getattr(result, "skill_version", "unknown")),
             query=query, limit=5, status=str(getattr(getattr(result, "status", None), "value", getattr(result, "status", "unknown"))),
-            returned_excerpts=returned, selected_source_refs=[e.source_ref for e in returned],
+            metadata=dict(getattr(result, "metadata", {}) or {}),
+            error_code=getattr(getattr(result, "error_code", None), "value", getattr(result, "error_code", None)),
+            returned_excerpts=returned,
+            selected_source_refs=_dedupe(ref for excerpt in returned for ref in excerpt.source_refs),
         ))
     return context_pack.model_copy(update={
         "excerpts": excerpts, "source_refs": refs,
         "selected_source_refs": list(dict.fromkeys([*context_pack.selected_source_refs, *refs])),
         "retrieved_source_refs": list(dict.fromkeys([*context_pack.retrieved_source_refs, *refs])),
         "retrieval_calls": calls,
+        "estimated_input_tokens": math.ceil(sum(len(excerpt.text) for excerpt in excerpts) / 4),
+        "source_snapshot": hashlib.sha256("|".join(
+            f"{excerpt.chunk_ref or excerpt.source_ref}:{excerpt.text}:{','.join(excerpt.source_refs)}"
+            for excerpt in excerpts
+        ).encode("utf-8")).hexdigest(),
     })
 
 
@@ -792,17 +809,25 @@ def generate_quiz_artifact(
 ) -> QuizArtifact:
     """Generate, hard-check, and revise one quiz set within a bounded loop."""
     provider_name = str(getattr(provider, "provider", "unknown"))
+    if task.quiz_count == 0:
+        return QuizArtifact(
+            artifact_id=f"quiz-{task.task_id}", run_id=run_id or task.run_id, version=1, status="accepted",
+            source_refs=[], created_by=f"provider:{provider_name}", knowledge_unit_ids=[unit.artifact_id],
+            target_objectives=list(unit.learning_objectives), questions=[], task_id=task.task_id,
+            context_pack_id=context_pack.context_pack_id, prompt_version=QUIZ_PROMPT_VERSION,
+            generation_metadata={"question_count": 0, "stop_reason": "not_requested"},
+        )
     workflow_capabilities = getattr(provider, "workflow", None)
     attempts: list[dict[str, Any]] = []
     try:
-        context_pack = _quiz_retrieve_if_needed(
+        context_pack = retrieve_quiz_context(
             provider, task=task, unit=unit, context_pack=context_pack,
             retrieval_service=retrieval_service,
         )
     except Exception:
         # Keep the original evidence boundary when the optional planning call
         # fails; deterministic validation will still guard the artifact.
-        pass
+        logger.exception("Quiz retrieval planning failed for %s", task.task_id)
     feedback: list[str] = []
     last: QuizArtifact | None = None
     for attempt in range(1, max(1, max_attempts) + 1):

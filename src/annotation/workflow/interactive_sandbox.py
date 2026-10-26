@@ -58,9 +58,10 @@ def run_interactive_component_sandbox(
     safe_run = "".join(character if character.isalnum() or character in "._-" else "-" for character in run_id).strip(".-") or "run"
     safe_task = "".join(character if character.isalnum() or character in "._-" else "-" for character in task_id).strip(".-") or "task"
     # The child runs from web/, so file arguments must not depend on its cwd.
-    output_root = (Path(root or (STORAGE_DIR / "artifacts" / "interactive_components")) / safe_run).resolve()
-    output_root.mkdir(parents=True, exist_ok=True)
     nonce = uuid.uuid4().hex[:10]
+    output_root = (Path(root or (STORAGE_DIR / "artifacts" / "interactive_components"))
+                   / safe_run / safe_task / f"a{attempt}-{nonce}").resolve()
+    output_root.mkdir(parents=True, exist_ok=True)
     input_path = output_root / f"sandbox-input-{safe_task}-a{attempt}-{nonce}.json"
     report_path = output_root / f"sandbox-report-{safe_task}-a{attempt}-{nonce}.json"
     input_path.write_text(

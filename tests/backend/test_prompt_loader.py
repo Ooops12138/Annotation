@@ -6,7 +6,8 @@ from annotation.prompt_loader import load_prompt
 def test_load_prompt_renders_markdown_agent_prompt() -> None:
     prompt = load_prompt("load_or_create_blueprint", TEXTBOOK_CONTEXT="[src-1] 定义")
 
-    assert prompt.startswith("# Agent: load_or_create_blueprint")
+    assert prompt.startswith("## Role\n")
+    assert "(`load_or_create_blueprint`)." in prompt.split("## Task", 1)[0]
     assert "[src-1] 定义" in prompt
     assert "{{TEXTBOOK_CONTEXT}}" not in prompt
 
@@ -24,7 +25,8 @@ def test_load_content_artifact_prompt_renders_bounded_context() -> None:
         CONTEXT_PACK="[src-1] 上界",
         ACCEPTANCE_CRITERIA='["覆盖目标"]',
     )
-    assert prompt.startswith("# Agent: generate_content_artifact")
+    assert prompt.startswith("## Role\n")
+    assert "(`generate_content_artifact`)." in prompt.split("## Task", 1)[0]
     assert "[src-1] 上界" in prompt
     assert "{{CONTEXT_PACK}}" not in prompt
     assert "learner-facing Markdown" in prompt

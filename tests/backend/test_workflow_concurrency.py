@@ -7,7 +7,7 @@ import pytest
 
 from annotation.offline import OfflineFixtureProvider
 from annotation.workflow import run_minimal_workflow
-from annotation.workflow import runtime, fact_check
+from annotation.workflow import content_nodes as runtime, fact_check
 from annotation.workflow.concurrency import ordered_batches, workflow_max_workers
 
 
@@ -52,7 +52,7 @@ def test_three_stages_overlap_tasks_and_keep_output_order(monkeypatch, workers):
     assert [item.task_id for item in result["quiz_artifacts"]] == task_ids
     assert [item.task_id for item in result["fact_check_artifact"].unit_traces] == task_ids
     assert result["document"].sections
-    assert result["content_retrieval_connection"] is None
+    assert "content_retrieval_connection" not in result
 
 
 def test_failed_batch_preserves_started_tasks_and_skips_later_tasks(monkeypatch):
@@ -65,10 +65,10 @@ def test_failed_batch_preserves_started_tasks_and_skips_later_tasks(monkeypatch)
     def tracked_build(*args, **kwargs):
         graph = build(*args, **kwargs)
 
-        def invoke(state):
+        def invoke(state, **kwargs):
             invoked.append(state["task"].task_id)
             barrier.wait(timeout=15)
-            result = graph.invoke(state)
+            result = graph.invoke(state, **kwargs)
             if state["task"].task_id.endswith("001"):
                 result["content_loop_trace"].final_status = "failed"
                 result["content_loop_trace"].stop_reason = "non_retryable_provider_error"
@@ -82,7 +82,7 @@ def test_failed_batch_preserves_started_tasks_and_skips_later_tasks(monkeypatch)
     assert [item.final_status for item in result["content_loop_traces"]] == ["failed", "accepted", *["skipped"] * 4]
     assert result["workflow_status"] == "failed"
     assert not result.get("document")
-    assert result["content_retrieval_connection"] is None
+    assert "content_retrieval_connection" not in result
 
 
 def test_serial_mode_stops_without_dispatching_the_next_item():

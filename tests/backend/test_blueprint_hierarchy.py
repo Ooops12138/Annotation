@@ -124,9 +124,9 @@ def test_large_source_blocks_are_lossless_and_each_request_reserves_schema_outpu
 
 
 def test_legacy_source_context_no_longer_discards_characters_after_500():
-    from annotation.workflow.graph import _source_context
+    from annotation.workflow.helpers import source_context
     _, blocks = source(["x" * 800 + "important theorem condition"])
-    assert "important theorem condition" in _source_context(blocks)
+    assert "important theorem condition" in source_context(blocks)
 
 
 def test_actual_chapter_tree_and_multiple_reduction_levels_preserve_every_unit():
@@ -312,7 +312,7 @@ def test_source_coverage_defects_stop_before_any_model_call(defect):
 
 
 def test_hierarchical_workflow_persists_failed_and_successful_scan_diagnostics(monkeypatch):
-    import annotation.workflow.runtime as graph_module
+    import annotation.workflow.blueprint_nodes as graph_module
     from annotation.workflow import run_minimal_workflow
     from annotation.workflow.persistence import _blueprint_loop_summary
     monkeypatch.setattr(graph_module, "parse_pdf", lambda _path, run_id: source(["第1章 基础", "第2章 进阶"], run_id=run_id))
@@ -334,7 +334,7 @@ def test_hierarchical_workflow_persists_failed_and_successful_scan_diagnostics(m
 
 
 def test_hierarchical_workflow_reaches_document_with_offline_content_and_keeps_api_summary(monkeypatch, tmp_path):
-    import annotation.workflow.runtime as graph_module
+    import annotation.workflow.blueprint_nodes as graph_module
     import annotation.api.routes as routes
     from annotation.workflow import run_minimal_workflow
     from annotation.api.persistence_service import persist_workflow_result, load_run_payload
@@ -378,7 +378,7 @@ def test_hierarchical_workflow_reaches_document_with_offline_content_and_keeps_a
 
 
 def test_failed_hierarchical_workflow_is_persisted_without_a_blueprint(monkeypatch):
-    import annotation.workflow.runtime as graph_module
+    import annotation.workflow.blueprint_nodes as graph_module
     from annotation.workflow import run_minimal_workflow
     monkeypatch.setattr(graph_module, "parse_pdf", lambda _path, run_id: source(["第1章 基础", "第2章 进阶"], run_id=run_id))
     provider = TeachingProvider(lambda _request: ProviderError("authentication failed", category="authentication"))

@@ -1,82 +1,205 @@
-"""Outer LangGraph orchestration for the workflow POC."""
+"""Compile the workflow and execute it with native LangGraph checkpoints."""
 
 from __future__ import annotations
 
-import json
-import sqlite3
-import os
-import uuid
-from pathlib import Path
 from collections.abc import Callable
-from typing import Any, Literal
+from dataclasses import replace
+from functools import partial
+from pathlib import Path
+from typing import Any
+import uuid
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.runtime import Runtime
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.types import Command, interrupt
 
 from annotation.config import (
-    STORAGE_DIR,
     blueprint_max_attempts as configured_blueprint_max_attempts,
     content_reflection_max_attempts as configured_content_reflection_max_attempts,
     fact_check_max_claims_per_unit as configured_fact_check_max_claims_per_unit,
     fact_check_max_corrections as configured_fact_check_max_corrections,
-    fact_check_additional_retrieval_enabled as configured_fact_check_additional_retrieval_enabled,
+    fact_check_additional_retrieval_enabled as configured_additional_retrieval,
     fact_check_web_enabled as configured_fact_check_web_enabled,
-    fact_check_web_query_limit as configured_fact_check_web_query_limit,
-    interactive_component_max_attempts as configured_interactive_component_max_attempts,
-    rag_enabled,
+    fact_check_web_query_limit,
+    interactive_component_max_attempts as configured_component_max_attempts,
 )
-from annotation.domain.artifacts import (
-    BlueprintAttemptTrace,
-    BlueprintLoopTrace,
-    ContentArtifact,
-    ContentAttemptTrace,
-    ContentHardCheckResult,
-    ContentTask,
-    ContentUnitLoopTrace,
-    ContextPack,
-    FactCheckPolicy,
-    InteractiveComponentArtifact,
-    KnowledgeUnit,
-    LearningBlueprint,
-    LearningDocument,
-    QuizArtifact,
-    ReviewIssue,
+from annotation.domain.artifacts import FactCheckPolicy, LearningBlueprint
+from annotation.providers import ModelProvider, create_provider_from_env
+from annotation.workflow import (
+    blueprint_nodes,
+    content_nodes,
+    enrichment_nodes,
+    review_nodes,
 )
-from annotation.prompt_loader import load_prompt
-from annotation.providers import ModelProvider, ProviderError, StructuredGenerationRequest, create_provider_from_env
-from annotation.workflow.blueprint_checks import validate_blueprint
-from annotation.workflow.content import write_content_run_artifact
-from annotation.ingestion.pdf_parser import extraction_warnings, parse_pdf
-from annotation.ingestion.semantic_chunker import build_semantic_blocks
-from annotation.ingestion.structure import build_textbook_structure
-from annotation.domain.textbook import HierarchicalBlueprintTrace
-from annotation.workflow.concurrency import LockedSearch, ordered_batches, workflow_max_workers
-from annotation.workflow.budget import PromptBudget
-from annotation.workflow.blueprint_hierarchy import BlueprintEngine, build_blueprint_windows
-from annotation.workflow.content_reflection import build_content_reflection_subgraph
-from annotation.workflow.course_architect import plan_content_tasks_with_architect, teaching_blueprint
-from annotation.workflow.fact_check import run_fact_check_loop
-from annotation.workflow.interactive_components import run_interactive_component_loop
-from annotation.workflow.content_support import (
-    _blocked_content_artifact,
-    _content_issue,
-    _content_loop_summary,
-    _merge_messages,
-)
-from annotation.workflow.graph import (
-    _assemble_document_from_artifacts,
-    _blueprint_from_draft,
-    _default_pdf,
-    _metadata,
-    _provider_metadata,
-    _review_report_for,
-    _source_context,
-)
-from annotation.workflow.models import BlueprintDraft, WorkflowState
+from annotation.workflow.checkpoints import workflow_checkpointer
+from annotation.workflow.concurrency import workflow_max_workers
+from annotation.workflow.context import RunResources, WorkflowContext
+from annotation.workflow.control import ControlledPort, RunControl, RunStopped
+from annotation.workflow.models import WorkflowState
 from annotation.workflow.persistence import persist_workflow_snapshots
-from annotation.workflow.quiz import blocked_quiz_artifact, generate_quiz_artifact, validate_quiz_coverage
-from annotation.fact_checking import SQLiteFts5TextbookDatabaseSearchSkill, web_search_skill_from_env
-from annotation.retrieval import HybridTextbookSearchTool, LlamaIndexChromaTextbookSearchTool, UnifiedRetrievalService, index_source_blocks
-from annotation.workflow.control import RunControl, ControlledPort
+
+
+NODES = {
+    name: module
+    for module, names in (
+        (
+            blueprint_nodes,
+            (
+                "ingest",
+                "prepare_blueprint",
+                "hierarchical_blueprint",
+                "generate_blueprint_attempt",
+                "check_blueprint_attempt",
+                "route_blueprint",
+                "record_blocked_run",
+                "record_failed_run",
+            ),
+        ),
+        (
+            content_nodes,
+            (
+                "plan_content_tasks",
+                "record_content_task_planning_blocked_run",
+                "prepare_content_tools",
+                "content_reflection_loops",
+                "record_content_blocked_run",
+                "record_content_failed_run",
+                "generate_quiz_artifacts",
+            ),
+        ),
+        (enrichment_nodes, ("fact_check_artifacts", "interactive_component_loop")),
+        (
+            review_nodes,
+            ("assemble_document_ir", "validate_document_ir", "review", "assemble"),
+        ),
+    )
+    for name in names
+}
+
+
+def next_blueprint_route(state: WorkflowState) -> str:
+    return state.get("blueprint_route", "fail")
+
+
+def next_content_route(state: WorkflowState) -> str:
+    return {"accepted": "accept", "blocked": "block"}.get(
+        state.get("content_loop_status"), "fail"
+    )
+
+
+def next_planning_route(state: WorkflowState) -> str:
+    return (
+        "accept"
+        if state.get("content_task_planning_metadata", {}).get("status") == "succeeded"
+        else "block"
+    )
+
+
+def blueprint_mode(state: WorkflowState) -> str:
+    return state.get("blueprint_mode", "single")
+
+
+def document_route(state: WorkflowState) -> str:
+    return "block" if state.get("workflow_status") == "blocked" else "accept"
+
+
+# Scheduling lives here only. Checkpoints persist LangGraph's own next tasks.
+EDGES = {
+    "ingest": "prepare_blueprint",
+    "generate_blueprint_attempt": "check_blueprint_attempt",
+    "check_blueprint_attempt": "route_blueprint",
+    "record_blocked_run": END,
+    "record_failed_run": END,
+    "record_content_task_planning_blocked_run": END,
+    "prepare_content_tools": "content_reflection_loops",
+    "record_content_blocked_run": END,
+    "record_content_failed_run": END,
+    "generate_quiz_artifacts": "fact_check_artifacts",
+    "fact_check_artifacts": "interactive_component_loop",
+    "interactive_component_loop": "assemble_document_ir",
+    "review": "assemble",
+    "assemble": END,
+}
+CONDITIONAL_EDGES = {
+    "prepare_blueprint": (
+        blueprint_mode,
+        {
+            "single": "generate_blueprint_attempt",
+            "fixture": "generate_blueprint_attempt",
+            "hierarchical": "hierarchical_blueprint",
+        },
+    ),
+    "hierarchical_blueprint": (
+        next_blueprint_route,
+        {
+            "accept": "plan_content_tasks",
+            "block": "record_blocked_run",
+            "fail": "record_failed_run",
+        },
+    ),
+    "route_blueprint": (
+        next_blueprint_route,
+        {
+            "accept": "plan_content_tasks",
+            "revise": "generate_blueprint_attempt",
+            "block": "record_blocked_run",
+            "fail": "record_failed_run",
+        },
+    ),
+    "plan_content_tasks": (
+        next_planning_route,
+        {
+            "accept": "prepare_content_tools",
+            "block": "record_content_task_planning_blocked_run",
+        },
+    ),
+    "content_reflection_loops": (
+        next_content_route,
+        {
+            "accept": "generate_quiz_artifacts",
+            "block": "record_content_blocked_run",
+            "fail": "record_content_failed_run",
+        },
+    ),
+    "assemble_document_ir": (
+        document_route,
+        {"accept": "validate_document_ir", "block": "record_blocked_run"},
+    ),
+    "validate_document_ir": (
+        document_route,
+        {"accept": "review", "block": "record_blocked_run"},
+    ),
+}
+
+
+def tracked_node(
+    ctx: WorkflowContext,
+    name: str,
+    node: Callable[..., Any],
+    progress_callback: Callable[..., Any] | None,
+    state: WorkflowState,
+    runtime: Runtime[RunResources],
+) -> dict[str, Any]:
+    if ctx.run_control and ctx.run_control.stop_requested:
+        interrupt({"reason": "user_requested_stop", "stage": name})
+        ctx.run_control.raise_if_stopped()
+    if progress_callback:
+        progress_callback(name, state, "started")
+    try:
+        if runtime.context is None:
+            # Direct compiled-graph callers may opt out of cross-node client reuse.
+            with RunResources() as resources:
+                update = node(replace(ctx, resources=resources), state)
+        else:
+            update = node(replace(ctx, resources=runtime.context), state)
+    except RunStopped:
+        interrupt({"reason": "user_requested_stop", "stage": name})
+        raise
+    if progress_callback:
+        progress_callback(name, {**state, **update}, "completed")
+    return update
+
 
 def build_minimal_graph(
     provider: ModelProvider | None = None,
@@ -90,982 +213,49 @@ def build_minimal_graph(
     fact_check_web_enabled: bool | None = None,
     interactive_component_max_attempts: int | None = None,
     interactive_component_sandbox_runner: Callable[..., Any] | None = None,
+    checkpointer: BaseCheckpointSaver | None = None,
 ):
     model_provider = provider if provider is not None else create_provider_from_env()
-    if run_control is not None:
-        model_provider = ControlledPort(model_provider, run_control)
-    max_attempts = configured_blueprint_max_attempts(blueprint_max_attempts)
-    content_max_attempts = configured_content_reflection_max_attempts(content_reflection_max_attempts)
-    workers = workflow_max_workers()
-    fact_check_policy = FactCheckPolicy(
-        max_claims_per_unit=configured_fact_check_max_claims_per_unit(fact_check_max_claims_per_unit),
-        max_corrections_per_unit=configured_fact_check_max_corrections(fact_check_max_corrections),
-        web_enabled=configured_fact_check_web_enabled(fact_check_web_enabled),
-        web_query_limit=configured_fact_check_web_query_limit(),
+    ctx = WorkflowContext(
+        provider=ControlledPort(model_provider, run_control)
+        if run_control
+        else model_provider,
+        blueprint_max_attempts=configured_blueprint_max_attempts(
+            blueprint_max_attempts
+        ),
+        content_max_attempts=configured_content_reflection_max_attempts(
+            content_reflection_max_attempts
+        ),
+        workers=workflow_max_workers(),
+        fact_check_policy=FactCheckPolicy(
+            max_claims_per_unit=configured_fact_check_max_claims_per_unit(
+                fact_check_max_claims_per_unit
+            ),
+            max_corrections_per_unit=configured_fact_check_max_corrections(
+                fact_check_max_corrections
+            ),
+            web_enabled=configured_fact_check_web_enabled(fact_check_web_enabled),
+            web_query_limit=fact_check_web_query_limit(),
+        ),
+        additional_fact_retrieval=configured_additional_retrieval(),
+        component_max_attempts=configured_component_max_attempts(
+            interactive_component_max_attempts
+        ),
+        sandbox_runner=interactive_component_sandbox_runner,
+        run_control=run_control,
     )
-    additional_fact_retrieval = configured_fact_check_additional_retrieval_enabled()
-
-    def ingest(state: WorkflowState) -> dict[str, Any]:
-        run_id = state.get("run_id", f"run-{uuid.uuid4().hex[:10]}")
-        pdf_path = Path(state.get("pdf_path") or _default_pdf())
-        source_document, blocks = parse_pdf(pdf_path, run_id=run_id)
-        warnings = extraction_warnings(blocks)
-        return {"run_id": run_id, "pdf_path": str(pdf_path), "source_document": source_document, "source_blocks": blocks, "source_refs": [block.source_ref for block in blocks], "warnings": warnings}
-
-    def prepare_blueprint(state: WorkflowState) -> dict[str, Any]:
-        structure = build_textbook_structure(state["source_document"], state["source_blocks"])
-        result: dict[str, Any] = {"textbook_structure": structure}
-        if state.get("blueprint_preloaded"):
-            return {**result, "blueprint_mode": "single"}
-        workflow_capabilities = getattr(model_provider, "workflow", None)
-        fixture = bool(workflow_capabilities is not None and workflow_capabilities.use_blueprint_fixture(model_provider))
-        if fixture:
-            return {**result, "blueprint_mode": "fixture"}
-        result["warnings"] = _merge_messages(state.get("warnings"), structure.warnings)
-        budget = PromptBudget.for_provider(model_provider)
-        try:
-            windows = build_blueprint_windows(structure, state["source_blocks"], budget)
-        except ProviderError as exc:
-            return {**result, "blueprint_mode": "hierarchical", "blueprint_windows": [],
-                "blueprint_hierarchy_trace": HierarchicalBlueprintTrace(stop_reason=str(exc))}
-        prompt = load_prompt("load_or_create_blueprint", TEXTBOOK_CONTEXT=_source_context(state["source_blocks"])) if len(windows) == 1 else ""
-        single = len(windows) == 1 and len(structure.nodes) == 1 and budget.fits(prompt, BlueprintDraft)
-        return {**result, "blueprint_windows": windows, "blueprint_mode": "single" if single else "hierarchical"}
-
-    def hierarchical_blueprint(state: WorkflowState) -> dict[str, Any]:
-        engine = BlueprintEngine(model_provider, state["source_document"], state["source_blocks"],
-            state["textbook_structure"], max_attempts=max_attempts)
-        existing = state.get("blueprint_hierarchy_trace")
-        if existing and existing.stop_reason != "not_started":
-            trace, blueprint = existing, None
-        else:
-            blueprint = engine.run(state.get("blueprint_windows", []))
-            trace = engine.trace
-        status = trace.final_status
-        result: dict[str, Any] = {"blueprint_hierarchy_trace": trace, "workflow_status": status,
-            "blueprint_route": "accept" if status == "accepted" else "fail" if status == "failed" else "block"}
-        if blueprint is not None:
-            result["blueprint"] = blueprint
-            result["blueprint_check"] = validate_blueprint(blueprint, valid_source_refs=set(state["source_refs"]))
-        else:
-            result["errors"] = _merge_messages(state.get("errors"), [trace.stop_reason])
-        return result
-
-    def generate_blueprint_attempt(state: WorkflowState) -> dict[str, Any]:
-        """Make exactly one Blueprint model call for this graph visit."""
-
-        if state.get("blueprint_preloaded"):
-            return {
-                "blueprint_attempt": 0,
-                "blueprint_generation_status": "succeeded",
-                "blueprint_generation_prompt": "",
-                "blueprint_generation_raw_output": "",
-                "blueprint_generation_parsed_output": None,
-                "blueprint_generation_error": "",
-                "blueprint_generation_error_category": "",
-                "blueprint_generation_retryable": False,
-            }
-        attempt = int(state.get("blueprint_attempt", 0)) + 1
-        previous = state.get("blueprint")
-        if attempt == 1:
-            prompt = load_prompt(
-                "load_or_create_blueprint",
-                TEXTBOOK_CONTEXT=_source_context(state["source_blocks"]),
-            )
-            agent = "load_or_create_blueprint"
-        else:
-            check = state.get("blueprint_check")
-            prompt = load_prompt(
-                "revise_blueprint",
-                TEXTBOOK_CONTEXT=_source_context(state["source_blocks"]),
-                PREVIOUS_BLUEPRINT=json.dumps(previous.model_dump(mode="json") if previous is not None else {}, ensure_ascii=False, indent=2),
-                CHECK_RESULT=json.dumps(check.model_dump(mode="json") if check is not None else {}, ensure_ascii=False, indent=2),
-                REVIEW_ISSUES=json.dumps({
-                    "issues": [issue.model_dump(mode="json") for issue in state.get("blueprint_feedback", [])],
-                    "generation_error": state.get("blueprint_generation_error") or None,
-                }, ensure_ascii=False, indent=2),
-            )
-            agent = "revise_blueprint"
-        result: dict[str, Any] = {
-            "blueprint_attempt": attempt,
-            "blueprint_generation_prompt": prompt,
-            "blueprint_generation_raw_output": "",
-            "blueprint_generation_parsed_output": None,
-            "blueprint_generation_error": "",
-            "blueprint_generation_error_category": "",
-            "blueprint_generation_retryable": False,
-        }
-        try:
-            budget = PromptBudget.for_provider(model_provider)
-            if state.get("blueprint_mode") != "fixture":
-                budget.check(prompt, BlueprintDraft)
-            response = model_provider.generate_structured(StructuredGenerationRequest(
-                prompt=prompt,
-                schema=BlueprintDraft,
-                # Blueprint JSON can be large for a full chapter. Keep this
-                # configurable and high enough to avoid truncating arrays.
-                max_output_tokens=budget.output_tokens,
-                metadata={"agent": agent, "run_id": state["run_id"], "attempt": attempt},
-            ))
-            draft = BlueprintDraft.model_validate(response.value.model_dump(mode="python"))
-            workflow_capabilities = getattr(model_provider, "workflow", None)
-            blueprint, adapted = _blueprint_from_draft(
-                draft=draft,
-                state=state,
-                provider_name=response.provider,
-                workflow_capabilities=workflow_capabilities,
-            )
-            result.update({
-                "blueprint": blueprint,
-                "blueprint_generation_status": "succeeded",
-                "blueprint_generation_raw_output": response.raw_text,
-                "blueprint_generation_parsed_output": draft.model_dump(mode="json"),
-                "provider_metadata": {
-                    **_metadata(response),
-                    **({"fixture_adaptation": "empty_source_refs"} if adapted else {}),
-                },
-            })
-            return result
-        except ProviderError as exc:
-            category = getattr(exc, "category", "provider")
-            parsed_output = getattr(exc, "parsed_output", None)
-            if hasattr(parsed_output, "model_dump"):
-                parsed_output = parsed_output.model_dump(mode="json")
-            elif parsed_output is not None and not isinstance(parsed_output, dict):
-                parsed_output = None
-            result.update({
-                "blueprint_generation_status": "schema_error" if category == "schema" else "provider_error",
-                "blueprint_generation_raw_output": str(getattr(exc, "raw_output", "") or ""),
-                "blueprint_generation_parsed_output": parsed_output,
-                "blueprint_generation_error": str(exc),
-                "blueprint_generation_error_category": category,
-                "blueprint_generation_retryable": bool(getattr(exc, "retryable", False) or category == "schema"),
-                "provider_metadata": _provider_metadata(model_provider),
-            })
-            return result
-        except Exception as exc:
-            result.update({
-                "blueprint_generation_status": "provider_error",
-                "blueprint_generation_error": str(exc),
-                "blueprint_generation_error_category": "runtime",
-                "provider_metadata": _provider_metadata(model_provider),
-            })
-            return result
-
-    def check_blueprint_attempt(state: WorkflowState) -> dict[str, Any]:
-        if state.get("blueprint_preloaded"):
-            blueprint = state.get("blueprint")
-            if blueprint is None:
-                return {"blueprint_check": None, "blueprint_feedback": []}
-            check = validate_blueprint(blueprint, valid_source_refs=set(state["source_refs"]))
-        elif state.get("blueprint_generation_status") != "succeeded" or state.get("blueprint") is None:
-            return {"blueprint_check": None, "blueprint_feedback": []}
-        else:
-            blueprint = state["blueprint"]
-            check = validate_blueprint(blueprint, valid_source_refs=set(state["source_refs"]))
-        blueprint.issues = list(check.issues)
-        blueprint.status = "needs_revision" if check.status == "needs_revision" else "accepted"
-        return {"blueprint_check": check, "blueprint_feedback": list(check.issues)}
-
-    def route_blueprint(state: WorkflowState) -> dict[str, Any]:
-        attempt = int(state.get("blueprint_attempt", 0))
-        preloaded = bool(state.get("blueprint_preloaded"))
-        status = state.get("blueprint_generation_status", "provider_error")
-        check = state.get("blueprint_check")
-        if preloaded:
-            route = "accept" if check is not None and check.status == "accepted" else "block"
-            stop_reason = "preloaded"
-            final_status = "accepted" if route == "accept" else "blocked"
-        elif status == "provider_error" and not state.get("blueprint_generation_retryable"):
-            route, stop_reason, final_status = "fail", "non_retryable_provider_error", "failed"
-        elif status != "succeeded" or check is None or check.status == "needs_revision":
-            if attempt < max_attempts:
-                route, stop_reason, final_status = "revise", None, None
-            else:
-                route, stop_reason, final_status = "block", "max_attempts", "blocked"
-        else:
-            route, stop_reason, final_status = "accept", "accepted", "accepted"
-
-        attempts = list(state.get("blueprint_attempts", []))
-        if not preloaded:
-            attempts.append(BlueprintAttemptTrace(
-                attempt=attempt,
-                prompt=str(state.get("blueprint_generation_prompt", "")),
-                raw_output=str(state.get("blueprint_generation_raw_output", "")),
-                parsed_output=state.get("blueprint_generation_parsed_output"),
-                generation_status=status if status in {"succeeded", "schema_error", "provider_error"} else "provider_error",
-                error=state.get("blueprint_generation_error") or None,
-                error_category=state.get("blueprint_generation_error_category") or None,
-                provider_metadata=dict(state.get("provider_metadata", {})),
-                check=check,
-                feedback=list(state.get("blueprint_feedback", [])),
-                route=route,
-                stop_reason=stop_reason,
-            ))
-        result: dict[str, Any] = {"blueprint_attempts": attempts, "blueprint_route": route}
-        if final_status is not None:
-            trace = BlueprintLoopTrace(
-                trace_id=str(state.get("blueprint_trace_id") or f"trace-{uuid.uuid4().hex[:12]}"),
-                run_id=state["run_id"],
-                max_attempts=max_attempts,
-                attempts=attempts,
-                final_status=final_status,
-                final_attempt=attempt,
-                stop_reason=stop_reason or "max_attempts",
-                final_blueprint_artifact_id=state.get("blueprint").artifact_id if state.get("blueprint") else None,
-            )
-            result["blueprint_loop_trace"] = trace
-            result["workflow_status"] = final_status
-        return result
-
-    def record_blocked_run(state: WorkflowState) -> dict[str, Any]:
-        return {"workflow_status": "blocked"}
-
-    def record_failed_run(state: WorkflowState) -> dict[str, Any]:
-        error = state.get("blueprint_generation_error") or "Blueprint loop failed"
-        return {"workflow_status": "failed", "errors": _merge_messages(state.get("errors"), [f"blueprint_loop_failed: {error}"])}
-
-    def next_blueprint_route(state: WorkflowState) -> str:
-        return state.get("blueprint_route", "fail")
-
-    def plan_content_tasks(state: WorkflowState) -> dict[str, Any]:
-        result = plan_content_tasks_with_architect(
-            model_provider,
-            run_id=state["run_id"],
-            blueprint=state["blueprint"],
+    graph = StateGraph(WorkflowState, context_schema=RunResources)
+    for name, module in NODES.items():
+        function = getattr(module, name)
+        graph.add_node(
+            name, partial(tracked_node, ctx, name, function, progress_callback)
         )
-        metadata = result.get("content_task_planning_metadata", {})
-        status = str(metadata.get("status", "unknown"))
-        planning_errors = []
-        if status != "succeeded":
-            planning_errors.append(f"course_architect_{status}")
-        return {
-            "content_blueprint": teaching_blueprint(state["blueprint"], result["content_tasks"]) if status == "succeeded" else state["blueprint"],
-            "content_tasks": result["content_tasks"],
-            "content_task_planning_metadata": metadata,
-            "warnings": _merge_messages(state.get("warnings"), result.get("warnings", [])),
-            "errors": _merge_messages(state.get("errors"), planning_errors),
-            "workflow_status": "blocked" if status != "succeeded" else state.get("workflow_status", ""),
-        }
-
-    def next_content_task_planning_route(state: WorkflowState) -> str:
-        return "accept" if state.get("content_task_planning_metadata", {}).get("status") == "succeeded" else "block"
-
-    def record_content_task_planning_blocked_run(state: WorkflowState) -> dict[str, Any]:
-        return {"workflow_status": "blocked"}
-
-    def prepare_content_tools(state: WorkflowState) -> dict[str, Any]:
-        capabilities = getattr(model_provider, "capabilities", None)
-        context_window = getattr(capabilities, "context_window", None)
-        packs: list[ContextPack] = []
-        warnings: list[str] = []
-        # Content uses semantic chunks; fact checking continues to use original
-        # source blocks in its own stage so its citation granularity is unchanged.
-        semantic_blocks = build_semantic_blocks(state["source_blocks"])
-        connection = state["content_retrieval_connection"]
-        index_source_blocks(connection, semantic_blocks)
-        # Prepare tools only; the agent acquires its own evidence.
-        for task in state.get("content_tasks", []):
-            packs.append(ContextPack(context_pack_id=f"ctx-{task.task_id}", run_id=state["run_id"],
-                task_id=task.task_id, knowledge_unit_id=task.knowledge_unit_id,
-                estimated_input_tokens=0, input_budget_tokens=context_window or 12000))
-        return {"semantic_blocks": semantic_blocks, "context_packs": packs, "warnings": _merge_messages(state.get("warnings"), warnings)}
-
-    def content_reflection_loops(state: WorkflowState) -> dict[str, Any]:
-        """Run isolated task subgraphs in bounded batches; merge in task order."""
-
-        blueprint = state.get("content_blueprint", state["blueprint"])
-        units = {unit.artifact_id: unit for unit in blueprint.knowledge_units}
-        packs = {pack.task_id: pack for pack in state.get("context_packs", [])}
-        subgraph = build_content_reflection_subgraph(
-            model_provider,
-            max_attempts=content_max_attempts,
-        )
-        artifacts: list[ContentArtifact] = []
-        traces: list[ContentUnitLoopTrace] = []
-        updated_packs = list(state.get("context_packs", []))
-        checks: dict[str, str] = {}
-        warnings: list[str] = []
-        provider_metadata: dict[str, Any] = dict(state.get("provider_metadata", {}))
-        retrieval_connection = state["content_retrieval_connection"]
-        semantic_blocks = state["semantic_blocks"]
-        textbook_tool = SQLiteFts5TextbookDatabaseSearchSkill(retrieval_connection)
-        if rag_enabled():
-            try:
-                vector_tool = LlamaIndexChromaTextbookSearchTool(
-                    semantic_blocks,
-                    persist_directory=os.getenv("RAG_CHROMA_PATH", "storage/chroma"),
-                )
-            except Exception as exc:
-                from annotation.retrieval.llamaindex_chroma import UnavailableVectorTextbookSearchTool
-                vector_tool = UnavailableVectorTextbookSearchTool(type(exc).__name__)
-                warnings.append(f"vector_index_initialization_failed:{type(exc).__name__}")
-            textbook_tool = HybridTextbookSearchTool(textbook_tool, vector_tool)
-        retrieval_service = UnifiedRetrievalService(
-            textbook_tool,
-            web_search_skill_from_env(),
-        )
-
-        def preflight_trace(
-            *,
-            task: ContentTask,
-            unit: KnowledgeUnit | None,
-            pack: ContextPack | None,
-            reason: Literal["context_pack_missing", "context_pack_empty", "context_pack_source_over_budget", "upstream_failure"],
-            message: str,
-            final_status: Literal["blocked", "skipped"],
-        ) -> tuple[ContentUnitLoopTrace, list[ContentArtifact]]:
-            category: Literal["coverage", "source"] = "source" if reason == "context_pack_source_over_budget" else "coverage"
-            issue = _content_issue(
-                task=task,
-                suffix=reason,
-                category=category,
-                severity="blocking",
-                message=message,
-                target_id=unit.artifact_id if unit is not None else task.knowledge_unit_id,
-                source_refs=list(pack.omitted_source_refs) if pack is not None and reason == "context_pack_source_over_budget" else [],
-            )
-            candidate_artifact: ContentArtifact | None = None
-            if unit is not None:
-                candidate_artifact = _blocked_content_artifact(
-                    task=task,
-                    unit=unit,
-                    context_pack=pack,
-                    run_id=state["run_id"],
-                    provider_name=getattr(model_provider, "provider", "unknown"),
-                    attempt=0,
-                    error=message,
-                    issues=[issue],
-                )
-            check = ContentHardCheckResult(
-                status="blocked",
-                issues=[issue],
-                checked_artifact_id=candidate_artifact.artifact_id if candidate_artifact is not None else None,
-            )
-            trace_attempt = ContentAttemptTrace(
-                attempt=0,
-                generation_stage="skipped",
-                generation_status="skipped",
-                candidate_artifact=candidate_artifact,
-                hard_check=check,
-                critic_status="skipped",
-                feedback=[issue],
-                route="block" if final_status == "blocked" else "fail",
-                stop_reason=reason,
-            )
-            trace = ContentUnitLoopTrace(
-                trace_id=f"content-trace-{uuid.uuid4().hex[:12]}",
-                run_id=state["run_id"],
-                task_id=task.task_id,
-                knowledge_unit_id=unit.artifact_id if unit is not None else task.knowledge_unit_id,
-                context_pack_id=pack.context_pack_id if pack is not None else None,
-                max_attempts=content_max_attempts,
-                attempts=[trace_attempt],
-                final_status=final_status,
-                final_attempt=0,
-                stop_reason=reason,
-                final_content_artifact_id=candidate_artifact.artifact_id if candidate_artifact is not None else None,
-            )
-            return trace, [candidate_artifact] if candidate_artifact is not None else []
-
-        retrieval_service = LockedSearch(ControlledPort(retrieval_service, run_control) if run_control else retrieval_service)
-
-        def generate_task(task):
-            if run_control:
-                run_control.raise_if_stopped()
-            artifacts, traces, updated_packs, warnings = [], [], [], []
-            checks = {}
-            provider_metadata = {}
-            unit = units.get(task.knowledge_unit_id)
-            pack = packs.get(task.task_id)
-            task.status = "generating"
-            if unit is None or pack is None:
-                trace, final_artifacts = preflight_trace(
-                    task=task,
-                    unit=unit,
-                    pack=pack,
-                    reason="context_pack_missing",
-                    message="当前知识单元缺少 ContextPack，未调用模型。",
-                    final_status="blocked",
-                )
-                task.status = "blocked"
-                checks[task.task_id] = "blocked"
-                warnings.append(f"content_context_pack_missing:{task.task_id}")
-                traces.append(trace)
-                artifacts.extend(final_artifacts)
-                return {"artifacts": artifacts, "traces": traces, "updated_packs": updated_packs,
-                        "checks": checks, "warnings": warnings, "provider_metadata": provider_metadata}
-            if pack.omitted_source_refs:
-                trace, final_artifacts = preflight_trace(
-                    task=task,
-                    unit=unit,
-                    pack=pack,
-                    reason="context_pack_source_over_budget",
-                    message=f"ContextPack 缺少必需来源：{', '.join(pack.omitted_source_refs)}，未调用模型。",
-                    final_status="blocked",
-                )
-                task.status = "blocked"
-                checks[task.task_id] = "blocked"
-                warnings.append(f"content_context_pack_source_over_budget:{task.task_id}:{','.join(pack.omitted_source_refs)}")
-                traces.append(trace)
-                artifacts.extend(final_artifacts)
-                return {"artifacts": artifacts, "traces": traces, "updated_packs": updated_packs,
-                        "checks": checks, "warnings": warnings, "provider_metadata": provider_metadata}
-
-            result = subgraph.invoke({
-                "run_id": state["run_id"],
-                "task": task,
-                "unit": unit,
-                "context_pack": pack,
-                "valid_source_refs": list(dict.fromkeys([*state.get("source_refs", []), *pack.source_refs])),
-                "max_attempts": content_max_attempts,
-                "attempts": [],
-                "source_blocks": state.get("source_blocks", []),
-                "semantic_blocks": semantic_blocks,
-                "blueprint": blueprint,
-                "retrieval_service": retrieval_service,
-            })
-            trace = result["content_loop_trace"]
-            generated_pack = result.get("context_pack")
-            if generated_pack is not None:
-                updated_packs = [pack for pack in updated_packs if pack.task_id != task.task_id]
-                updated_packs.append(generated_pack)
-            final_artifacts = list(result.get("final_artifacts", []))
-            traces.append(trace)
-            artifacts.extend(final_artifacts)
-            if trace.final_status == "accepted":
-                task.status = "accepted"
-                checks[task.task_id] = "accepted"
-            else:
-                task.status = "blocked"
-                checks[task.task_id] = "failed" if trace.final_status == "failed" else "blocked"
-                warnings.append(f"content_reflection_{trace.final_status}:{task.task_id}:{trace.stop_reason}")
-            if trace.attempts:
-                last_attempt = trace.attempts[-1]
-                metadata = last_attempt.generation_provider_metadata or last_attempt.critic_provider_metadata
-                if metadata:
-                    provider_metadata = dict(metadata)
-
-            return {"artifacts": artifacts, "traces": traces, "updated_packs": updated_packs,
-                        "checks": checks, "warnings": warnings, "provider_metadata": provider_metadata}
-
-        tasks = list(state.get("content_tasks", []))
-        results = ordered_batches(generate_task, tasks, workers=workers,
-            stop=lambda result: any(trace.final_status == "failed" for trace in result["traces"]))
-        for task, result in zip(tasks, results):
-            artifacts.extend(result["artifacts"])
-            traces.extend(result["traces"])
-            checks.update(result["checks"])
-            warnings.extend(result["warnings"])
-            for generated_pack in result["updated_packs"]:
-                packs[generated_pack.task_id] = generated_pack
-            if result["provider_metadata"]:
-                provider_metadata = result["provider_metadata"]
-        for task in tasks[len(results):]:
-            task.status = "blocked"
-            trace, skipped_artifacts = preflight_trace(task=task,
-                unit=units.get(task.knowledge_unit_id), pack=packs.get(task.task_id),
-                reason="upstream_failure", message="先前批次发生技术失败，当前任务未执行。", final_status="skipped")
-            traces.append(trace)
-            artifacts.extend(skipped_artifacts)
-            checks[task.task_id] = "failed"
-        updated_packs = [packs[task.task_id] for task in tasks if task.task_id in packs]
-
-        summary = _content_loop_summary(traces)
-        status = summary["final_status"]
-        result: dict[str, Any] = {
-            "content_tasks": state.get("content_tasks", []),
-            "context_packs": updated_packs,
-            "content_artifacts": artifacts,
-            "content_loop_traces": traces,
-            "content_loop_summary": summary,
-            "content_loop_status": status,
-            "content_artifact_checks": checks,
-            "provider_metadata": provider_metadata,
-            "warnings": _merge_messages(state.get("warnings"), warnings),
-        }
-        # A blocked/failed content loop must be independently reconstructible;
-        # successful runs write the same v2 content snapshot after quiz output
-        # is available below.
-        if status != "accepted":
-            artifact_path = write_content_run_artifact(
-                run_id=state["run_id"],
-                blueprint_version=f"{blueprint.artifact_id}:v{blueprint.version}",
-                tasks=state.get("content_tasks", []),
-                context_packs=updated_packs,
-                artifacts=artifacts,
-                quiz_artifacts=[],
-                quiz_coverage=None,
-                checks=checks,
-                provider_metadata=provider_metadata,
-                content_task_planning_metadata=state.get("content_task_planning_metadata"),
-                content_loop_traces=traces,
-                content_loop_summary=summary,
-                root=STORAGE_DIR / "artifacts" / "content",
-            )
-            result["content_artifact_path"] = str(artifact_path.resolve())
-            result["content_loop_trace_path"] = str(artifact_path.resolve())
-        return result
-
-    def next_content_reflection_route(state: WorkflowState) -> str:
-        status = state.get("content_loop_status", "failed")
-        return "accept" if status == "accepted" else "block" if status == "blocked" else "fail"
-
-    def record_content_blocked_run(state: WorkflowState) -> dict[str, Any]:
-        return {"workflow_status": "blocked", "content_loop_status": "blocked"}
-
-    def record_content_failed_run(state: WorkflowState) -> dict[str, Any]:
-        failed = [trace.task_id for trace in state.get("content_loop_traces", []) if trace.final_status == "failed"]
-        message = f"content_reflection_failed: {', '.join(failed) or 'unknown'}"
-        return {"workflow_status": "failed", "content_loop_status": "failed", "errors": _merge_messages(state.get("errors"), [message])}
-
-    def generate_quiz_artifacts(state: WorkflowState) -> dict[str, Any]:
-        """Retain T-007 as a separate post-content artifact boundary."""
-
-        blueprint = state.get("content_blueprint", state["blueprint"])
-        units = {unit.artifact_id: unit for unit in blueprint.knowledge_units}
-        packs = {pack.task_id: pack for pack in state.get("context_packs", [])}
-        quiz_artifacts: list[QuizArtifact] = []
-        checks = dict(state.get("content_artifact_checks", {}))
-        warnings: list[str] = []
-        quiz_retrieval_service = UnifiedRetrievalService(
-            SQLiteFts5TextbookDatabaseSearchSkill(state["content_retrieval_connection"]),
-            web_search_skill_from_env(),
-        )
-        quiz_retrieval_service = LockedSearch(quiz_retrieval_service)
-        def generate_task_quiz(task):
-            quiz_artifacts, checks, warnings = [], {}, []
-            unit = units.get(task.knowledge_unit_id)
-            pack = packs.get(task.task_id)
-            if unit is None or pack is None:
-                # This is unreachable after an accepted content-loop route,
-                # but preserving a blocked quiz artifact keeps the independent
-                # quiz contract auditable under malformed injected state.
-                if unit is not None:
-                    missing_pack = pack or ContextPack(
-                        context_pack_id=f"ctx-{task.task_id}",
-                        run_id=task.run_id,
-                        task_id=task.task_id,
-                        knowledge_unit_id=unit.artifact_id,
-                        source_refs=[],
-                        selected_source_refs=[],
-                        excerpts=[],
-                        estimated_input_tokens=0,
-                        input_budget_tokens=0,
-                    )
-                    quiz_artifacts.append(blocked_quiz_artifact(
-                        task=task,
-                        unit=unit,
-                        context_pack=missing_pack,
-                        run_id=state["run_id"],
-                        provider_name=getattr(model_provider, "provider", "unknown"),
-                        error="ContextPack missing for quiz generation",
-                    ))
-                checks[task.task_id] = "blocked"
-                task.status = "blocked"
-                return quiz_artifacts, checks, warnings
-            quiz_artifact = generate_quiz_artifact(
-                model_provider,
-                task=task,
-                unit=unit,
-                context_pack=pack,
-                run_id=state["run_id"],
-                retrieval_service=quiz_retrieval_service,
-            )
-            quiz_artifacts.append(quiz_artifact)
-            if quiz_artifact.status != "accepted":
-                task.status = "blocked"
-                checks[task.task_id] = "blocked"
-                warnings.append(f"quiz_generation_blocked:{task.task_id}")
-            return quiz_artifacts, checks, warnings
-
-        for task_artifacts, task_checks, task_warnings in ordered_batches(
-            generate_task_quiz, state.get("content_tasks", []), workers=workers):
-            quiz_artifacts.extend(task_artifacts)
-            checks.update(task_checks)
-            warnings.extend(task_warnings)
-        quiz_coverage = validate_quiz_coverage(
-            quiz_artifacts,
-            blueprint,
-            context_packs={pack.context_pack_id: pack for pack in state.get("context_packs", [])},
-            valid_source_refs=state.get("source_refs", []),
-        )
-        summary = dict(state.get("content_loop_summary", {}))
-        artifact_path = write_content_run_artifact(
-            run_id=state["run_id"],
-            blueprint_version=f"{blueprint.artifact_id}:v{blueprint.version}",
-            tasks=state.get("content_tasks", []),
-            context_packs=state.get("context_packs", []),
-            artifacts=state.get("content_artifacts", []),
-            quiz_artifacts=quiz_artifacts,
-            quiz_coverage=quiz_coverage,
-            checks=checks,
-            provider_metadata=state.get("provider_metadata", {}),
-            content_task_planning_metadata=state.get("content_task_planning_metadata"),
-            content_loop_traces=state.get("content_loop_traces", []),
-            content_loop_summary=summary,
-            root=STORAGE_DIR / "artifacts" / "content",
-        )
-        return {
-            "content_tasks": state.get("content_tasks", []),
-            "quiz_artifacts": quiz_artifacts,
-            "quiz_coverage_report": quiz_coverage,
-            "content_artifact_checks": checks,
-            "content_loop_summary": summary,
-            "content_artifact_path": str(artifact_path.resolve()),
-            "content_loop_trace_path": str(artifact_path.resolve()),
-            "warnings": _merge_messages(state.get("warnings"), warnings),
-        }
-
-    def fact_check_artifacts(state: WorkflowState) -> dict[str, Any]:
-        """Apply A-003 after accepted explanations and quiz structure checks."""
-
-        blueprint = state.get("content_blueprint", state["blueprint"])
-        result = run_fact_check_loop(
-            model_provider,
-            run_id=state["run_id"],
-            blueprint=blueprint,
-            tasks=state.get("content_tasks", []),
-            context_packs=state.get("context_packs", []),
-            content_artifacts=state.get("content_artifacts", []),
-            quiz_artifacts=state.get("quiz_artifacts", []),
-            source_blocks=state.get("source_blocks", []),
-            valid_source_refs=state.get("source_refs", []),
-            policy=fact_check_policy,
-            web_search_skill=web_search_skill_from_env(),
-            additional_retrieval_enabled=additional_fact_retrieval,
-            max_workers=workers,
-        )
-        final_quiz_artifacts = result["quiz_artifacts"]
-        quiz_coverage = validate_quiz_coverage(
-            final_quiz_artifacts,
-            blueprint,
-            context_packs={pack.context_pack_id: pack for pack in state.get("context_packs", [])},
-            valid_source_refs=state.get("source_refs", []),
-        )
-        artifact_path = write_content_run_artifact(
-            run_id=state["run_id"],
-            blueprint_version=f"{blueprint.artifact_id}:v{blueprint.version}",
-            tasks=state.get("content_tasks", []),
-            context_packs=state.get("context_packs", []),
-            artifacts=result["content_artifacts"],
-            quiz_artifacts=final_quiz_artifacts,
-            quiz_coverage=quiz_coverage,
-            checks=state.get("content_artifact_checks", {}),
-            provider_metadata=state.get("provider_metadata", {}),
-            content_task_planning_metadata=state.get("content_task_planning_metadata"),
-            content_loop_traces=state.get("content_loop_traces", []),
-            content_loop_summary=dict(state.get("content_loop_summary", {})),
-            root=STORAGE_DIR / "artifacts" / "content",
-        )
-        result.update({
-            "fact_check_status": result["fact_check_artifact"].status,
-            "quiz_coverage_report": quiz_coverage,
-            "content_artifact_path": str(artifact_path.resolve()),
-            "content_loop_trace_path": str(artifact_path.resolve()),
-        })
-        return result
-
-    def interactive_component_loop(state: WorkflowState) -> dict[str, Any]:
-        """Run A-004 only after A-003 has finalized content and quiz artifacts."""
-
-        kwargs: dict[str, Any] = {}
-        if interactive_component_sandbox_runner is not None:
-            kwargs["sandbox_runner"] = interactive_component_sandbox_runner
-        try:
-            component_max_attempts = configured_interactive_component_max_attempts(interactive_component_max_attempts)
-            return run_interactive_component_loop(
-                model_provider,
-                run_id=state["run_id"],
-                tasks=state.get("content_tasks", []),
-                context_packs=state.get("context_packs", []),
-                content_artifacts=state.get("content_artifacts", []),
-                units=list(state.get("content_blueprint", state["blueprint"]).knowledge_units),
-                valid_source_refs=state.get("source_refs", []),
-                max_attempts=component_max_attempts,
-                **kwargs,
-            )
-        except Exception as exc:
-            # Components are optional output. Preserve diagnostics without
-            # putting failed candidates or their errors in the learner document.
-            return {
-                "interactive_component_artifacts": [],
-                "interactive_component_status": "failed",
-                "interactive_component_summary": {
-                    "component_count": 0,
-                    "final_status": "failed",
-                    "stop_reason": "unexpected_error",
-                    "error": f"{type(exc).__name__}: {exc}",
-                },
-            }
-
-    def assemble_document_ir(state: WorkflowState) -> dict[str, Any]:
-        artifacts = [artifact for artifact in state.get("content_artifacts", []) if artifact.status == "accepted"]
-        quiz_artifacts = [artifact for artifact in state.get("quiz_artifacts", []) if artifact.status == "accepted"]
-        if not artifacts and not quiz_artifacts:
-            raise ValueError("assemble_document_requires_accepted_artifacts")
-        # Assemble from the accepted per-unit artifacts for both real and
-        # deterministic providers.  The rich fixture remains available through
-        # the dedicated demo endpoint, while workflow output now includes all
-        # generated quiz items and their unit mapping.
-        document = _assemble_document_from_artifacts(
-            state["run_id"],
-            state.get("content_blueprint", state["blueprint"]),
-            artifacts,
-            model_provider.provider,
-            quiz_artifacts=quiz_artifacts,
-            interactive_component_artifacts=[
-                artifact
-                for artifact in state.get("interactive_component_artifacts", [])
-                if artifact.status == "accepted"
-            ],
-        )
-        if state.get("document_id"):
-            document.document_id = state["document_id"]
-        return {"document": document}
-
-    def validate_document_ir(state: WorkflowState) -> dict[str, Any]:
-        try:
-            LearningDocument.model_validate(state["document"].model_dump())
-            return {}
-        except Exception as exc:
-            return {"errors": [f"document_validation: {exc}"]}
-
-    def review(state: WorkflowState) -> dict[str, Any]:
-        document = state["document"]
-        issues = list(document.issues)
-        issues.extend(state.get("fact_check_issues", []))
-        valid_refs = set(state["source_refs"])
-        tasks = state.get("content_tasks", [])
-        artifacts = state.get("content_artifacts", [])
-        quiz_artifacts = state.get("quiz_artifacts", [])
-        interactive_component_artifacts = state.get("interactive_component_artifacts", [])
-        accepted_task_ids = {artifact.task_id for artifact in artifacts if artifact.status == "accepted" and artifact.task_id}
-        if tasks and len(accepted_task_ids) != len(tasks):
-            missing = [task.task_id for task in tasks if task.task_id not in accepted_task_ids]
-            issues.append(ReviewIssue(issue_id="review-content-task-coverage", category="coverage", severity="blocking", message=f"有内容任务未产出可接受 artifact：{', '.join(missing)}", target_id=document.document_id))
-        for artifact in artifacts:
-            # Pedagogical Critic warnings are preserved on the accepted
-            # artifact.  Bring them into the versioned review report instead
-            # of treating a successful hard check as a clean release verdict.
-            issues.extend(list(artifact.issues))
-            if artifact.status == "blocked":
-                issues.append(ReviewIssue(issue_id=f"review-blocked-content-{artifact.artifact_id}", category="coverage", severity="blocking", message="内容 artifact 被阻塞，不能进入发布文档。", target_id=artifact.artifact_id))
-            if not set(artifact.source_refs).issubset(valid_refs):
-                issues.append(ReviewIssue(issue_id=f"review-invalid-content-sources-{artifact.artifact_id}", category="source", severity="blocking", message="内容 artifact 包含无法回溯到本次教材导入的来源引用。", target_id=artifact.artifact_id))
-        for artifact in quiz_artifacts:
-            if artifact.status == "blocked":
-                issues.append(ReviewIssue(
-                    issue_id=f"review-blocked-quiz-{artifact.artifact_id}",
-                    category="coverage",
-                    severity="blocking",
-                    message="题目 artifact 被阻塞，不能进入发布文档。",
-                    target_id=artifact.artifact_id,
-                    suggested_action="修订题目后重新生成并审核该知识单元。",
-                ))
-            if not set(artifact.source_refs).issubset(valid_refs):
-                issues.append(ReviewIssue(
-                    issue_id=f"review-invalid-quiz-sources-{artifact.artifact_id}",
-                    category="source",
-                    severity="blocking",
-                    message="题目 artifact 包含无法回溯到本次教材导入的来源引用。",
-                    target_id=artifact.artifact_id,
-                    source_refs=[ref for ref in artifact.source_refs if ref not in valid_refs],
-                ))
-        for artifact in interactive_component_artifacts:
-            issues.extend(list(artifact.issues))
-            if artifact.status == "blocked":
-                issues.append(ReviewIssue(
-                    issue_id=f"review-blocked-interactive-component-{artifact.artifact_id}",
-                    category="coverage",
-                    severity="blocking",
-                    message="交互组件 artifact 被阻塞，不能进入发布文档。",
-                    target_id=artifact.artifact_id,
-                ))
-            if not set(artifact.source_refs).issubset(valid_refs):
-                issues.append(ReviewIssue(
-                    issue_id=f"review-invalid-interactive-component-sources-{artifact.artifact_id}",
-                    category="source",
-                    severity="blocking",
-                    message="交互组件 artifact 包含无法回溯到本次教材导入的来源引用。",
-                    target_id=artifact.artifact_id,
-                    source_refs=[ref for ref in artifact.source_refs if ref not in valid_refs],
-                ))
-        quiz_coverage = state.get("quiz_coverage_report")
-        if quiz_coverage is not None:
-            issues.extend(list(getattr(quiz_coverage, "issues", []) or []))
-        if not document.source_refs:
-            issues.append(ReviewIssue(issue_id="review-missing-sources", category="source", severity="blocking", message="文档缺少教材来源引用。", target_id=document.document_id))
-        elif not set(document.source_refs).issubset(valid_refs):
-            issues.append(ReviewIssue(issue_id="review-invalid-sources", category="source", severity="blocking", message="文档包含无法回溯到本次教材导入的来源引用。", target_id=document.document_id))
-        if not document.sections or not any(section.children for section in document.sections):
-            issues.append(ReviewIssue(issue_id="review-empty-document", category="coverage", severity="blocking", message="文档没有可呈现内容。", target_id=document.document_id))
-        if state.get("warnings"):
-            issues.append(ReviewIssue(
-                issue_id="review-generation-warning",
-                category="uncertainty",
-                severity="warning",
-                layer="fact",
-                message="；".join(state["warnings"]),
-                target_id=document.document_id,
-                suggested_action="对涉及的教材片段、公式候选和生成内容进行人工抽样复核。",
-            ))
-        # Keep one issue record per stable id when a quiz artifact and its
-        # coverage report identify the same failure independently.
-        deduped_issues: list[ReviewIssue] = []
-        seen_issue_ids: set[str] = set()
-        for issue in issues:
-            if issue.issue_id in seen_issue_ids:
-                continue
-            seen_issue_ids.add(issue.issue_id)
-            deduped_issues.append(issue)
-        document.issues = deduped_issues
-        document.status = "blocked" if any(issue.severity == "blocking" for issue in issues) else "accepted"
-        report = _review_report_for(document, {**state, "source_refs": list(valid_refs)})
-        document.review_report_id = report.report_id
-        return {"document": document, "review_report": report, "review_report_path": report.artifact_path or ""}
-
-    def assemble(state: WorkflowState) -> dict[str, Any]:
-        document = state["document"]
-        report = state.get("review_report")
-        # Publication is authorized only by a passed review.  Warning-only
-        # reports remain readable previews with the accepted document status;
-        # blocked reports keep the document hidden by the API projection.
-        if report is not None and report.status == "blocked":
-            document.status = "blocked"
-        elif not state.get("errors") and document.status == "accepted" and report is not None and report.status == "passed":
-            document.status = "published"
-        return {"document": document}
-
-    graph = StateGraph(WorkflowState)
-    for name, node in {
-        "ingest": ingest,
-        "prepare_blueprint": prepare_blueprint,
-        "hierarchical_blueprint": hierarchical_blueprint,
-        "generate_blueprint_attempt": generate_blueprint_attempt,
-        "check_blueprint_attempt": check_blueprint_attempt,
-        "route_blueprint": route_blueprint,
-        "record_blocked_run": record_blocked_run,
-        "record_failed_run": record_failed_run,
-        "plan_content_tasks": plan_content_tasks,
-        "record_content_task_planning_blocked_run": record_content_task_planning_blocked_run,
-        "prepare_content_tools": prepare_content_tools,
-        "content_reflection_loops": content_reflection_loops,
-        "record_content_blocked_run": record_content_blocked_run,
-        "record_content_failed_run": record_content_failed_run,
-        "generate_quiz_artifacts": generate_quiz_artifacts,
-        "fact_check_artifacts": fact_check_artifacts,
-        "interactive_component_loop": interactive_component_loop,
-        "assemble_document_ir": assemble_document_ir,
-        "validate_document_ir": validate_document_ir,
-        "review": review,
-        "assemble": assemble,
-    }.items():
-        def tracked_node(state: WorkflowState, *, _name: str = name, _node: Callable[..., Any] = node) -> dict[str, Any]:
-            connection = state.get("content_retrieval_connection")
-            if _name == "prepare_content_tools":
-                # Consecutive LangGraph nodes may run on different worker threads;
-                # shared search clients serialize access to this connection.
-                connection = sqlite3.connect(":memory:", check_same_thread=False)
-                state = {**state, "content_retrieval_connection": connection}
-            close_connection = False
-            try:
-                if run_control is not None:
-                    run_control.raise_if_stopped()
-                if progress_callback is not None:
-                    progress_callback(_name, state, "started")
-                update = _node(state)
-                if run_control is not None:
-                    merged = {key: value for key, value in {**state, **update}.items() if key not in {"content_retrieval_connection", "retrieval_service"}}
-                    next_nodes = {
-                        "ingest": "prepare_blueprint", "prepare_blueprint": "hierarchical_blueprint" if merged.get("blueprint_mode") == "hierarchical" else "generate_blueprint_attempt",
-                        "hierarchical_blueprint": "plan_content_tasks" if merged.get("blueprint_route") == "accept" else "record_blocked_run" if merged.get("blueprint_route") == "block" else "record_failed_run",
-                        "generate_blueprint_attempt": "check_blueprint_attempt", "check_blueprint_attempt": "route_blueprint",
-                        "route_blueprint": "plan_content_tasks" if merged.get("blueprint_route") == "accept" else "generate_blueprint_attempt" if merged.get("blueprint_route") == "revise" else "record_blocked_run" if merged.get("blueprint_route") == "block" else "record_failed_run",
-                        "plan_content_tasks": "prepare_content_tools" if merged.get("content_task_planning_status") == "accepted" else "record_content_task_planning_blocked_run",
-                        "prepare_content_tools": "content_reflection_loops",
-                        "content_reflection_loops": "generate_quiz_artifacts" if merged.get("content_loop_status") == "accepted" else "record_content_blocked_run" if merged.get("content_loop_status") == "blocked" else "record_content_failed_run",
-                        "generate_quiz_artifacts": "fact_check_artifacts", "fact_check_artifacts": "interactive_component_loop",
-                        "interactive_component_loop": "assemble_document_ir", "assemble_document_ir": "validate_document_ir",
-                        "validate_document_ir": "review", "review": "assemble", "assemble": "__done__",
-                    }
-                    resume_node = next_nodes.get(_name, "ingest")
-                    if resume_node != "__done__":
-                        merged["_resume_node"] = resume_node
-                        run_control.checkpoint_state(_name, merged, resume_node)
-                    run_control.checkpoint(_name, merged)
-                    run_control.raise_if_stopped()
-                if progress_callback is not None:
-                    progress_callback(_name, {**state, **update}, "completed")
-                if _name == "prepare_content_tools":
-                    update["content_retrieval_connection"] = connection
-                elif _name == "generate_quiz_artifacts" or (_name == "content_reflection_loops" and update.get("content_loop_status") != "accepted"):
-                    close_connection = True
-                    update["content_retrieval_connection"] = None
-                return update
-            except BaseException:
-                if connection is not None:
-                    connection.close()
-                raise
-            finally:
-                if close_connection and connection is not None:
-                    connection.close()
-
-        graph.add_node(name, tracked_node)
-    graph.add_conditional_edges(START, lambda state: state.get("_resume_node", "ingest"), {
-        name: name for name in {
-            "ingest", "prepare_blueprint", "hierarchical_blueprint", "generate_blueprint_attempt", "check_blueprint_attempt",
-            "route_blueprint", "record_blocked_run", "record_failed_run", "plan_content_tasks", "record_content_task_planning_blocked_run",
-            "prepare_content_tools", "content_reflection_loops", "record_content_blocked_run", "record_content_failed_run",
-            "generate_quiz_artifacts", "fact_check_artifacts", "interactive_component_loop", "assemble_document_ir",
-            "validate_document_ir", "review", "assemble"
-        }
-    })
-    graph.add_edge("ingest", "prepare_blueprint")
-    graph.add_conditional_edges("prepare_blueprint", lambda state: state.get("blueprint_mode", "single"),
-        {"single": "generate_blueprint_attempt", "fixture": "generate_blueprint_attempt", "hierarchical": "hierarchical_blueprint"})
-    graph.add_conditional_edges("hierarchical_blueprint", next_blueprint_route,
-        {"accept": "plan_content_tasks", "block": "record_blocked_run", "fail": "record_failed_run"})
-    graph.add_edge("generate_blueprint_attempt", "check_blueprint_attempt")
-    graph.add_edge("check_blueprint_attempt", "route_blueprint")
-    graph.add_conditional_edges(
-        "route_blueprint",
-        next_blueprint_route,
-        {
-            "accept": "plan_content_tasks",
-            "revise": "generate_blueprint_attempt",
-            "block": "record_blocked_run",
-            "fail": "record_failed_run",
-        },
-    )
-    graph.add_edge("record_blocked_run", END)
-    graph.add_edge("record_failed_run", END)
-    graph.add_conditional_edges(
-        "plan_content_tasks",
-        next_content_task_planning_route,
-        {"accept": "prepare_content_tools", "block": "record_content_task_planning_blocked_run"},
-    )
-    graph.add_edge("record_content_task_planning_blocked_run", END)
-    graph.add_edge("prepare_content_tools", "content_reflection_loops")
-    graph.add_conditional_edges(
-        "content_reflection_loops",
-        next_content_reflection_route,
-        {
-            "accept": "generate_quiz_artifacts",
-            "block": "record_content_blocked_run",
-            "fail": "record_content_failed_run",
-        },
-    )
-    graph.add_edge("record_content_blocked_run", END)
-    graph.add_edge("record_content_failed_run", END)
-    graph.add_edge("generate_quiz_artifacts", "fact_check_artifacts")
-    graph.add_edge("fact_check_artifacts", "interactive_component_loop")
-    graph.add_edge("interactive_component_loop", "assemble_document_ir")
-    graph.add_edge("assemble_document_ir", "validate_document_ir")
-    graph.add_edge("validate_document_ir", "review")
-    graph.add_edge("review", "assemble")
-    graph.add_edge("assemble", END)
-    return graph.compile()
+    graph.add_edge(START, "ingest")
+    for source, target in EDGES.items():
+        graph.add_edge(source, target)
+    for source, (route, targets) in CONDITIONAL_EDGES.items():
+        graph.add_conditional_edges(source, route, targets)
+    return graph.compile(checkpointer=checkpointer)
 
 
 def run_minimal_workflow(
@@ -1086,36 +276,52 @@ def run_minimal_workflow(
     run_control: RunControl | None = None,
     resume_checkpoint: dict[str, Any] | None = None,
 ) -> WorkflowState:
-    initial: WorkflowState = dict((resume_checkpoint or {}).get("state") or {})
-    initial["run_id"] = run_id
-    initial.pop("content_retrieval_connection", None)
-    initial.pop("retrieval_service", None)
-    if not initial:
-        initial = {"run_id": run_id}
+    if resume_checkpoint and resume_checkpoint.get("run_id") != run_id:
+        raise ValueError("native resume must keep the original run_id")
+    initial: WorkflowState = {
+        "run_id": run_id,
+        "blueprint_attempts": [],
+        "blueprint_trace_id": f"trace-{uuid.uuid4().hex[:12]}",
+    }
     if blueprint:
-        initial["blueprint"] = blueprint
-        initial["blueprint_preloaded"] = True
-    if not resume_checkpoint:
-        initial["blueprint_attempts"] = []
-        initial["blueprint_trace_id"] = f"trace-{uuid.uuid4().hex[:12]}"
+        initial.update(blueprint=blueprint, blueprint_preloaded=True)
     if pdf_path:
         initial["pdf_path"] = str(pdf_path)
     if document_id:
         initial["document_id"] = document_id
-    graph = build_minimal_graph(
-        provider,
-        progress_callback=progress_callback,
-        run_control=run_control,
-        blueprint_max_attempts=blueprint_max_attempts,
-        content_reflection_max_attempts=content_reflection_max_attempts,
-        fact_check_max_corrections=fact_check_max_corrections,
-        fact_check_max_claims_per_unit=fact_check_max_claims_per_unit,
-        fact_check_web_enabled=fact_check_web_enabled,
-        interactive_component_max_attempts=interactive_component_max_attempts,
-        interactive_component_sandbox_runner=interactive_component_sandbox_runner,
-    )
-    state = graph.invoke(initial)
-    # Keep the graph independently testable while ensuring API/CLI callers
-    # can reconstruct the result without relying on process memory.
-    persist_workflow_snapshots(state)
-    return state
+    config = {"configurable": {"thread_id": f"{run_id}:{uuid.uuid4().hex}"}}
+    root = run_control.root if run_control else None
+    with (
+        workflow_checkpointer(run_id, root) as checkpointer,
+        RunResources() as resources,
+    ):
+        graph = build_minimal_graph(
+            provider,
+            progress_callback=progress_callback,
+            run_control=run_control,
+            blueprint_max_attempts=blueprint_max_attempts,
+            content_reflection_max_attempts=content_reflection_max_attempts,
+            fact_check_max_corrections=fact_check_max_corrections,
+            fact_check_max_claims_per_unit=fact_check_max_claims_per_unit,
+            fact_check_web_enabled=fact_check_web_enabled,
+            interactive_component_max_attempts=interactive_component_max_attempts,
+            interactive_component_sandbox_runner=interactive_component_sandbox_runner,
+            checkpointer=checkpointer,
+        )
+        if resume_checkpoint:
+            config = resume_checkpoint["config"]
+            snapshot = graph.get_state(config)
+            value = (
+                Command(resume=True)
+                if any(task.interrupts for task in snapshot.tasks)
+                else None
+            )
+        else:
+            value = initial
+        state = graph.invoke(value, config, context=resources, durability="sync")
+        if state.get("__interrupt__"):
+            raise RunStopped("user_requested_stop")
+        if run_control:
+            run_control.raise_if_stopped()
+        persist_workflow_snapshots(state)
+        return state

@@ -415,7 +415,8 @@ def test_architect_question_count_mismatch_blocks_artifact() -> None:
 def test_quiz_prompt_allows_agent_to_select_count() -> None:
     unit = _unit()
     prompt = build_quiz_prompt(_task(unit), unit, _pack(unit))
-    assert prompt.startswith("# Agent: generate_quiz_artifact")
+    assert prompt.startswith("## Role\n")
+    assert "(`generate_quiz_artifact`)." in prompt.split("## Task", 1)[0]
     assert "src-1" in prompt
     assert "number may be zero" in prompt.lower()
     assert '"question_count"' not in prompt

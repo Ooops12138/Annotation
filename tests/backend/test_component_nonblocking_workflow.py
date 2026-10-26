@@ -12,7 +12,7 @@ from annotation.persistence import PersistenceRepository
 from annotation.offline import OfflineFixtureProvider
 from annotation.providers.models import ProviderError
 from annotation.workflow import run_minimal_workflow
-from annotation.workflow import runtime
+from annotation.workflow import enrichment_nodes as runtime
 from annotation.workflow.interactive_components import run_interactive_component_loop
 from test_interactive_component_loop import ScriptedComponentProvider, _interval_draft
 

@@ -31,11 +31,11 @@ from annotation.workflow.models import BlueprintDraft, CalloutDraft, WorkflowSta
 from annotation.workflow.content_support import _formula_format_issues, _lossless_refs
 
 
-def _default_pdf() -> Path:
+def default_pdf() -> Path:
     return first_book_pdf()
 
 
-def _source_context(blocks: list[SourceBlock], limit: int | None = None) -> str:
+def source_context(blocks: list[SourceBlock], limit: int | None = None) -> str:
     """Render non-empty textbook blocks for the blueprint model input.
 
     The single-window path is budget checked before a model request. Long books
@@ -50,11 +50,11 @@ def _source_context(blocks: list[SourceBlock], limit: int | None = None) -> str:
     )
 
 
-def _metadata(response: Any) -> dict[str, Any]:
+def response_metadata(response: Any) -> dict[str, Any]:
     return {"provider": response.provider, "model": response.model, "base_url": response.base_url, "config_version": response.config_version, "duration_ms": response.duration_ms, "usage": dict(response.usage)}
 
 
-def _write_review_report(report: ReviewReport) -> Path:
+def write_review_report(report: ReviewReport) -> Path:
     """Persist each review result as a separate immutable-by-convention artifact."""
 
     root = STORAGE_DIR / "artifacts" / "review" / report.run_id
@@ -82,7 +82,7 @@ def _write_review_report(report: ReviewReport) -> Path:
     return path
 
 
-def _review_report_for(document: LearningDocument, state: WorkflowState) -> ReviewReport:
+def review_report_for(document: LearningDocument, state: WorkflowState) -> ReviewReport:
     """Create the small, deterministic T-008 review report.
 
     The report deliberately annotates risk instead of claiming that an
@@ -123,27 +123,11 @@ def _review_report_for(document: LearningDocument, state: WorkflowState) -> Revi
     quiz_coverage = state.get("quiz_coverage_report")
     coverage_status = str(getattr(quiz_coverage, "status", "")) if quiz_coverage is not None else ""
     # An empty quiz set is a valid agent decision under the adaptive policy.
-    # A missing coverage report still indicates a legacy/fallback document
-    # whose learning activity has not been checked.
-    checks["learning_activity"] = "passed" if quiz_nodes or coverage_status == "passed" else "warning"
+    # Coverage failures remain diagnostics for optional quizzes.
+    checks["learning_activity"] = "passed" if quiz_nodes else "optional"
     if quiz_coverage is not None:
-        checks["quiz_coverage"] = coverage_status
-        checks["quiz_question_count"] = "passed" if coverage_status == "passed" else "blocking"
-        existing_issue_ids = {issue.issue_id for issue in issues}
-        for coverage_issue in list(getattr(quiz_coverage, "issues", []) or []):
-            if coverage_issue.issue_id not in existing_issue_ids:
-                issues.append(coverage_issue)
-                existing_issue_ids.add(coverage_issue.issue_id)
-    if quiz_coverage is None and not quiz_nodes:
-        issues.append(ReviewIssue(
-            issue_id="review-missing-learning-activity",
-            category="coverage",
-            severity="warning",
-            layer="structure",
-            message="文档当前没有可交互练习，且没有题目覆盖报告。",
-            target_id=document.document_id,
-            suggested_action="如学习目标需要练习，再由 Agent 根据教材证据生成题目并重新审核。",
-        ))
+        checks["quiz_coverage"] = "passed" if coverage_status == "passed" else "warning"
+        checks["quiz_question_count"] = "passed" if coverage_status == "passed" else "warning"
     malformed_quizzes = [
         getattr(node, "id", "unknown")
         for node in quiz_nodes
@@ -156,20 +140,19 @@ def _review_report_for(document: LearningDocument, state: WorkflowState) -> Revi
             or not str(getattr(node, "explanation", "") or "").strip()
         )
     ]
-    if malformed_quizzes or (quiz_coverage is not None and getattr(quiz_coverage, "status", "blocked") == "blocked"):
+    if malformed_quizzes:
         checks["quiz_integrity"] = "blocking"
-        if malformed_quizzes:
-            issues.append(ReviewIssue(
-                issue_id="review-invalid-quiz",
-                category="logic",
-                severity="blocking",
-                layer="structure",
-                message=f"测验节点的题干、选项、答案或解析不完整：{', '.join(malformed_quizzes)}。",
-                target_id=document.document_id,
-                suggested_action="确认答案属于选项，并补齐至少两个可选项。",
-            ))
+        issues.append(ReviewIssue(
+            issue_id="review-invalid-quiz",
+            category="logic",
+            severity="blocking",
+            layer="structure",
+            message=f"测验节点的题干、选项、答案或解析不完整：{', '.join(malformed_quizzes)}。",
+            target_id=document.document_id,
+            suggested_action="确认答案属于选项，并补齐至少两个可选项。",
+        ))
     else:
-        checks["quiz_integrity"] = "passed" if quiz_nodes or coverage_status == "passed" else "warning"
+        checks["quiz_integrity"] = "passed"
     formula_format_issues = _formula_format_issues(nodes)
     checks["formula_format"] = "blocking" if formula_format_issues else "passed"
     if formula_format_issues:
@@ -243,14 +226,14 @@ def _review_report_for(document: LearningDocument, state: WorkflowState) -> Revi
         recommendations=(
             ["逐条核对事实风险和教材公式；审核结论仅表示值得进一步核查。"]
             if fact_risk else []
-        ) + (["如学习目标需要练习，再由 Agent 根据教材证据生成题目并重新审核。"] if quiz_coverage is None and not quiz_nodes else []),
+        ),
     )
-    path = _write_review_report(report)
+    path = write_review_report(report)
     report.artifact_path = str(path.resolve())
     return report
 
 
-def _assemble_document_from_artifacts(
+def assemble_document_from_artifacts(
     run_id: str,
     blueprint: LearningBlueprint,
     artifacts: list[ContentArtifact],
@@ -346,7 +329,7 @@ def _assemble_document_from_artifacts(
     )
 
 
-def _blueprint_from_draft(
+def blueprint_from_draft(
     *,
     draft: BlueprintDraft,
     state: WorkflowState,
@@ -404,7 +387,7 @@ def _blueprint_from_draft(
     return blueprint, adapted
 
 
-def _provider_metadata(provider: ModelProvider) -> dict[str, Any]:
+def provider_metadata(provider: ModelProvider) -> dict[str, Any]:
     return {
         "provider": getattr(provider, "provider", "unknown"),
         "model": getattr(provider, "model", "unknown"),
