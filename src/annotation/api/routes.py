@@ -162,7 +162,7 @@ def _run_response_from_state(result: dict[str, Any], state: dict[str, Any]) -> d
     }
 
 
-def _execute_run(*, book: dict[str, Any], requested_run_id: str | None = None, origin: str = "workflow", allow_existing_running: bool = False, run_control: RunControl | None = None) -> dict[str, Any]:
+def _execute_run(*, book: dict[str, Any], requested_run_id: str | None = None, origin: str = "workflow", allow_existing_running: bool = False, run_control: RunControl | None = None, resume_from_run_id: str | None = None) -> dict[str, Any]:
     repo = repository()
     try:
         run_id = requested_run_id or new_run_id()
@@ -176,7 +176,17 @@ def _execute_run(*, book: dict[str, Any], requested_run_id: str | None = None, o
         if existing and existing.get("status") in {"failed", "blocked", "cancelled", "interrupted"}:
             run_id = new_run_id(_safe_run_id(run_id))
 
-        repo.create_run(book["book_id"], run_id=run_id, origin=origin)
+        resume_checkpoint = None
+        if resume_from_run_id:
+            source = repo.get_run(resume_from_run_id)
+            if not source or source.get("status") not in {"interrupted", "cancelled", "failed"}:
+                raise HTTPException(status_code=409, detail="该运行没有可续跑的中断快照")
+            if source.get("book_id") != book.get("book_id"):
+                raise HTTPException(status_code=409, detail="续跑教材与原运行不一致")
+            resume_checkpoint = RunControl(resume_from_run_id).load_checkpoint()
+            if not resume_checkpoint:
+                raise HTTPException(status_code=409, detail="未找到可验证的阶段快照")
+        repo.create_run(book["book_id"], run_id=run_id, origin=origin, metadata={"parent_run_id": resume_from_run_id} if resume_from_run_id else None)
         try:
             provider = create_provider_from_env()
             repo.update_run(
@@ -206,6 +216,7 @@ def _execute_run(*, book: dict[str, Any], requested_run_id: str | None = None, o
                 document_id=logical_document_id,
                 progress_callback=lambda stage, snapshot, phase: _publish_run_progress(repo, run_id, stage, snapshot, phase),
                 run_control=run_control,
+                resume_checkpoint=resume_checkpoint,
             )
             from contextlib import nullcontext
             with run_control.lock if run_control else nullcontext():
@@ -274,6 +285,38 @@ def _background_run(book: dict[str, Any], run_id: str) -> None:
     except Exception:
         # _execute_run records terminal failure; the worker must not surface
         # an unhandled exception to the server process.
+        return
+    finally:
+        with _run_controls_lock:
+            _run_controls.pop(run_id, None)
+
+
+@router.post("/api/runs/{run_id}/resume")
+def resume_run(run_id: str) -> dict[str, Any]:
+    repo = repository()
+    try:
+        source = repo.get_run(run_id)
+        if not source:
+            raise HTTPException(status_code=404, detail="运行不存在")
+        book = repo.get_book(source["book_id"])
+        if not book:
+            raise HTTPException(status_code=404, detail="教材不存在")
+        new_id = new_run_id(_safe_run_id(run_id))
+        control = RunControl(new_id)
+        with _run_controls_lock:
+            _run_controls[new_id] = control
+        _run_executor.submit(_background_resume_run, book, new_id, run_id)
+        return {"status": "running", "run_id": new_id, "parent_run_id": run_id}
+    finally:
+        repo.close()
+
+
+def _background_resume_run(book: dict[str, Any], run_id: str, source_run_id: str) -> None:
+    with _run_controls_lock:
+        control = _run_controls.get(run_id)
+    try:
+        _execute_run(book=book, requested_run_id=run_id, origin="resume", allow_existing_running=True, run_control=control, resume_from_run_id=source_run_id)
+    except Exception:
         return
     finally:
         with _run_controls_lock:

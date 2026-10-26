@@ -976,7 +976,24 @@ def build_minimal_graph(
                     progress_callback(_name, state, "started")
                 update = _node(state)
                 if run_control is not None:
-                    run_control.checkpoint(_name, {key: value for key, value in {**state, **update}.items() if key not in {"content_retrieval_connection", "retrieval_service"}})
+                    merged = {key: value for key, value in {**state, **update}.items() if key not in {"content_retrieval_connection", "retrieval_service"}}
+                    next_nodes = {
+                        "ingest": "prepare_blueprint", "prepare_blueprint": "hierarchical_blueprint" if merged.get("blueprint_mode") == "hierarchical" else "generate_blueprint_attempt",
+                        "hierarchical_blueprint": "plan_content_tasks" if merged.get("blueprint_route") == "accept" else "record_blocked_run" if merged.get("blueprint_route") == "block" else "record_failed_run",
+                        "generate_blueprint_attempt": "check_blueprint_attempt", "check_blueprint_attempt": "route_blueprint",
+                        "route_blueprint": "plan_content_tasks" if merged.get("blueprint_route") == "accept" else "generate_blueprint_attempt" if merged.get("blueprint_route") == "revise" else "record_blocked_run" if merged.get("blueprint_route") == "block" else "record_failed_run",
+                        "plan_content_tasks": "prepare_content_tools" if merged.get("content_task_planning_status") == "accepted" else "record_content_task_planning_blocked_run",
+                        "prepare_content_tools": "content_reflection_loops",
+                        "content_reflection_loops": "generate_quiz_artifacts" if merged.get("content_loop_status") == "accepted" else "record_content_blocked_run" if merged.get("content_loop_status") == "blocked" else "record_content_failed_run",
+                        "generate_quiz_artifacts": "fact_check_artifacts", "fact_check_artifacts": "interactive_component_loop",
+                        "interactive_component_loop": "assemble_document_ir", "assemble_document_ir": "validate_document_ir",
+                        "validate_document_ir": "review", "review": "assemble", "assemble": "__done__",
+                    }
+                    resume_node = next_nodes.get(_name, "ingest")
+                    if resume_node != "__done__":
+                        merged["_resume_node"] = resume_node
+                        run_control.checkpoint_state(_name, merged, resume_node)
+                    run_control.checkpoint(_name, merged)
                     run_control.raise_if_stopped()
                 if progress_callback is not None:
                     progress_callback(_name, {**state, **update}, "completed")
@@ -995,7 +1012,15 @@ def build_minimal_graph(
                     connection.close()
 
         graph.add_node(name, tracked_node)
-    graph.add_edge(START, "ingest")
+    graph.add_conditional_edges(START, lambda state: state.get("_resume_node", "ingest"), {
+        name: name for name in {
+            "ingest", "prepare_blueprint", "hierarchical_blueprint", "generate_blueprint_attempt", "check_blueprint_attempt",
+            "route_blueprint", "record_blocked_run", "record_failed_run", "plan_content_tasks", "record_content_task_planning_blocked_run",
+            "prepare_content_tools", "content_reflection_loops", "record_content_blocked_run", "record_content_failed_run",
+            "generate_quiz_artifacts", "fact_check_artifacts", "interactive_component_loop", "assemble_document_ir",
+            "validate_document_ir", "review", "assemble"
+        }
+    })
     graph.add_edge("ingest", "prepare_blueprint")
     graph.add_conditional_edges("prepare_blueprint", lambda state: state.get("blueprint_mode", "single"),
         {"single": "generate_blueprint_attempt", "fixture": "generate_blueprint_attempt", "hierarchical": "hierarchical_blueprint"})
@@ -1059,13 +1084,20 @@ def run_minimal_workflow(
     interactive_component_sandbox_runner: Callable[..., Any] | None = None,
     progress_callback: Callable[[str, WorkflowState, str], None] | None = None,
     run_control: RunControl | None = None,
+    resume_checkpoint: dict[str, Any] | None = None,
 ) -> WorkflowState:
-    initial: WorkflowState = {"run_id": run_id}
+    initial: WorkflowState = dict((resume_checkpoint or {}).get("state") or {})
+    initial["run_id"] = run_id
+    initial.pop("content_retrieval_connection", None)
+    initial.pop("retrieval_service", None)
+    if not initial:
+        initial = {"run_id": run_id}
     if blueprint:
         initial["blueprint"] = blueprint
         initial["blueprint_preloaded"] = True
-    initial["blueprint_attempts"] = []
-    initial["blueprint_trace_id"] = f"trace-{uuid.uuid4().hex[:12]}"
+    if not resume_checkpoint:
+        initial["blueprint_attempts"] = []
+        initial["blueprint_trace_id"] = f"trace-{uuid.uuid4().hex[:12]}"
     if pdf_path:
         initial["pdf_path"] = str(pdf_path)
     if document_id:

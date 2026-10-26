@@ -211,3 +211,10 @@ export async function stopRun(runId: string): Promise<WorkflowRunResult> {
   if (!isRecord(payload) || typeof payload.status !== 'string') throw new Error('停止响应格式无效')
   return payload as WorkflowRunResult
 }
+
+export async function resumeRun(runId: string): Promise<{ status: string; run_id: string }> {
+  const response = await fetchApi(`/api/runs/${encodeURIComponent(runId)}/resume`, { method: 'POST' })
+  const payload = await readJson<any>(response, '续跑请求失败')
+  if (!isRecord(payload) || typeof payload.run_id !== 'string') throw new Error('续跑响应格式无效')
+  return payload as { status: string; run_id: string }
+}

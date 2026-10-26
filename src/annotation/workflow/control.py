@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 import uuid
+import pickle
 from pathlib import Path
 from annotation.config import STORAGE_DIR
 
@@ -47,6 +48,32 @@ class RunControl:
             payload = {"run_id": self.run_id, "kind": kind, "value": _model_dump(value)}
             temporary.write_text(json.dumps(payload, ensure_ascii=False, default=str), encoding="utf-8")
             temporary.replace(path)
+
+    def load_checkpoint(self, run_id: str | None = None):
+        """Load the latest trusted local checkpoint for a run."""
+        target = self.root / (run_id or self.run_id) / "latest.pkl"
+        if not target.is_file():
+            return None
+        with self.lock:
+            with target.open("rb") as handle:
+                payload = pickle.load(handle)
+            if payload.get("run_id") != (run_id or self.run_id):
+                return None
+            return payload
+
+    def checkpoint_state(self, kind, state, resume_node: str):
+        """Atomically persist a process-independent, stage-boundary snapshot."""
+        if not self.run_id:
+            return
+        with self.lock:
+            directory = self.root / self.run_id
+            directory.mkdir(parents=True, exist_ok=True)
+            payload = {"schema_version": 1, "run_id": self.run_id, "kind": kind,
+                       "resume_node": resume_node, "state": dict(state)}
+            temporary = directory / f".latest-{uuid.uuid4().hex}.tmp"
+            with temporary.open("wb") as handle:
+                pickle.dump(payload, handle, protocol=pickle.HIGHEST_PROTOCOL)
+            temporary.replace(directory / "latest.pkl")
 
 class ControlledPort:
     """Guard every model/tool operation, preserving completed responses first."""

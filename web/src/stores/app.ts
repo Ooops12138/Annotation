@@ -3,7 +3,7 @@ import {
   getDocument,
   getRun,
   getLibrary,
-  startRun,
+  startRun, resumeRun as resumeRunApi,
   stopRun,
   uploadBook,
   type LibraryBook,
@@ -208,7 +208,7 @@ export const useAppStore = defineStore('app', {
       this.selectedBookId = saved.book_id
       try {
         const initial = await getRun(saved.run_id)
-        if (!['queued', 'running', 'stopping'].includes(initial.status || '')) {
+        if (!['queued', 'running', 'stopping', 'interrupted', 'cancelled', 'failed'].includes(initial.status || '')) {
           clearActiveRun()
           this.run = initial
           this.sourceLocations = initial.source_locations ?? {}
@@ -220,19 +220,18 @@ export const useAppStore = defineStore('app', {
           } else if (initial.status === 'blocked') {
             this.document = null
             this.error = '本次生成被阻塞，请稍后重试。'
-          } else if (initial.status === 'cancelled' || initial.status === 'interrupted') {
-            this.runNotice = initial.status === 'cancelled' ? '已停止生成，过程记录已保留。' : '上次生成已中断，过程记录已保留。'
-          } else if (initial.status === 'failed') {
-            this.error = String((initial.run as any)?.error || '学习文档生成失败')
           }
           await this.loadLibrary().catch(() => undefined)
           return
         }
         this.progress = initial.progress || null
+        const resumed = ['interrupted', 'cancelled', 'failed'].includes(initial.status || '')
+          ? await resumeRunApi(saved.run_id)
+          : { run_id: saved.run_id }
         const result = await startRun(saved.book_id, (snapshot) => {
           this.run = snapshot
           this.progress = snapshot.progress || this.progress
-        }, saved.run_id)
+        }, resumed.run_id)
         clearActiveRun()
         this.progress = result.progress || null
         this.run = result
