@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,7 @@ from annotation.api.persistence_service import (
 from annotation.providers import create_provider_from_env
 from annotation.retrieval import index_source_blocks, search_source_blocks
 from annotation.workflow import run_minimal_workflow
+from annotation.workflow.control import RunControl, RunStopped
 
 
 router = APIRouter()
@@ -43,6 +45,8 @@ class RunRequest(BaseModel):
 
 
 _run_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="annotation-run")
+_run_controls: dict[str, RunControl] = {}
+_run_controls_lock = threading.RLock()
 _RUN_STAGES = {
     "ingest": "读取教材", "prepare_blueprint": "理解教材结构", "hierarchical_blueprint": "整理学习蓝图",
     "generate_blueprint_attempt": "生成学习蓝图", "check_blueprint_attempt": "检查学习蓝图",
@@ -158,7 +162,7 @@ def _run_response_from_state(result: dict[str, Any], state: dict[str, Any]) -> d
     }
 
 
-def _execute_run(*, book: dict[str, Any], requested_run_id: str | None = None, origin: str = "workflow", allow_existing_running: bool = False) -> dict[str, Any]:
+def _execute_run(*, book: dict[str, Any], requested_run_id: str | None = None, origin: str = "workflow", allow_existing_running: bool = False, run_control: RunControl | None = None) -> dict[str, Any]:
     repo = repository()
     try:
         run_id = requested_run_id or new_run_id()
@@ -201,7 +205,10 @@ def _execute_run(*, book: dict[str, Any], requested_run_id: str | None = None, o
                 pdf_path=book["stored_path"],
                 document_id=logical_document_id,
                 progress_callback=lambda stage, snapshot, phase: _publish_run_progress(repo, run_id, stage, snapshot, phase),
+                run_control=run_control,
             )
+            if run_control is not None:
+                run_control.raise_if_stopped()
             last_progress = ((repo.get_run(run_id) or {}).get("metadata") or {}).get("progress") or {}
             result = persist_workflow_result(
                 repo,
@@ -218,6 +225,12 @@ def _execute_run(*, book: dict[str, Any], requested_run_id: str | None = None, o
             repo.update_run(run_id, metadata={**(finished.get("metadata") or {}), "progress": progress})
             result["run"] = repo.get_run(run_id)
             return {"stored": False, "state": state, "result": result}
+        except RunStopped as exc:
+            stopped = repo.get_run(run_id) or {}
+            progress = dict((stopped.get("metadata") or {}).get("progress") or {})
+            progress.update({"status": "cancelled", "stop_reason": str(exc)})
+            repo.update_run(run_id, status="cancelled", error=str(exc), metadata={**(stopped.get("metadata") or {}), "progress": progress})
+            return {"stored": False, "state": {"run_id": run_id, "workflow_status": "cancelled"}, "result": {"run": repo.get_run(run_id), "artifacts": {}}}
         except HTTPException:
             raise
         except Exception as exc:
@@ -235,6 +248,8 @@ def _publish_run_progress(repo: Any, run_id: str, stage: str, state: dict[str, A
     if stage not in _RUN_STAGES:
         return
     run = repo.get_run(run_id) or {}
+    if run.get("status") in {"stopping", "cancelled"}:
+        return
     metadata = run.get("metadata") or {}
     previous = metadata.get("progress") or {}
     stage_index = list(_RUN_STAGES).index(stage)
@@ -252,12 +267,17 @@ def _publish_run_progress(repo: Any, run_id: str, stage: str, state: dict[str, A
 
 
 def _background_run(book: dict[str, Any], run_id: str) -> None:
+    with _run_controls_lock:
+        control = _run_controls.get(run_id)
     try:
-        _execute_run(book=book, requested_run_id=run_id, allow_existing_running=True)
+        _execute_run(book=book, requested_run_id=run_id, allow_existing_running=True, run_control=control)
     except Exception:
         # _execute_run records terminal failure; the worker must not surface
         # an unhandled exception to the server process.
         return
+    finally:
+        with _run_controls_lock:
+            _run_controls.pop(run_id, None)
 
 
 @router.get("/health")
@@ -356,6 +376,8 @@ def create_run(request: RunRequest) -> dict[str, Any]:
             created = repo.get_run(run_id)
         finally:
             repo.close()
+        with _run_controls_lock:
+            _run_controls[run_id] = RunControl()
         _run_executor.submit(_background_run, book, run_id)
         return {"status": "running", "run_id": run_id, "run": created, "progress": (created or {}).get("metadata", {}).get("progress")}
     execution = _execute_run(book=book, requested_run_id=request.run_id)
@@ -403,6 +425,31 @@ def create_run(request: RunRequest) -> dict[str, Any]:
             "content_loop": loaded.get("content_loop"),
         }
     return _run_response_from_state(execution["result"], execution["state"])
+
+
+@router.post("/api/runs/{run_id}/stop")
+def stop_run(run_id: str) -> dict[str, Any]:
+    """Request cooperative cancellation; the worker owns the terminal state."""
+    repo = repository()
+    try:
+        run = repo.get_run(run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail=f"未找到运行：{run_id}")
+        status = str(run.get("status") or "")
+        if status in {"succeeded", "blocked", "failed", "cancelled"}:
+            return {"status": status, "run_id": run_id, "run": run, "stop_requested": False}
+        with _run_controls_lock:
+            control = _run_controls.get(run_id)
+            if control is None:
+                raise HTTPException(status_code=409, detail="运行执行器不可用")
+            control.request_stop()
+        metadata = dict(run.get("metadata") or {})
+        progress = dict(metadata.get("progress") or {})
+        progress.update({"status": "stopping", "stop_requested": True})
+        updated = repo.update_run(run_id, status="stopping", metadata={**metadata, "progress": progress})
+        return {"status": "stopping", "run_id": run_id, "run": updated, "stop_requested": True}
+    finally:
+        repo.close()
 
 
 @router.get("/api/runs/{run_id}")

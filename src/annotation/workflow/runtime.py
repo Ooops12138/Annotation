@@ -76,11 +76,13 @@ from annotation.workflow.persistence import persist_workflow_snapshots
 from annotation.workflow.quiz import blocked_quiz_artifact, generate_quiz_artifact, validate_quiz_coverage
 from annotation.fact_checking import SQLiteFts5TextbookDatabaseSearchSkill, web_search_skill_from_env
 from annotation.retrieval import HybridTextbookSearchTool, LlamaIndexChromaTextbookSearchTool, UnifiedRetrievalService, index_source_blocks
+from annotation.workflow.control import RunControl
 
 def build_minimal_graph(
     provider: ModelProvider | None = None,
     *,
     progress_callback: Callable[[str, WorkflowState, str], None] | None = None,
+    run_control: RunControl | None = None,
     blueprint_max_attempts: int | None = None,
     content_reflection_max_attempts: int | None = None,
     fact_check_max_corrections: int | None = None,
@@ -964,9 +966,13 @@ def build_minimal_graph(
                 state = {**state, "content_retrieval_connection": connection}
             close_connection = False
             try:
+                if run_control is not None:
+                    run_control.raise_if_stopped()
                 if progress_callback is not None:
                     progress_callback(_name, state, "started")
                 update = _node(state)
+                if run_control is not None:
+                    run_control.raise_if_stopped()
                 if progress_callback is not None:
                     progress_callback(_name, {**state, **update}, "completed")
                 if _name == "prepare_content_tools":
@@ -1047,6 +1053,7 @@ def run_minimal_workflow(
     interactive_component_max_attempts: int | None = None,
     interactive_component_sandbox_runner: Callable[..., Any] | None = None,
     progress_callback: Callable[[str, WorkflowState, str], None] | None = None,
+    run_control: RunControl | None = None,
 ) -> WorkflowState:
     initial: WorkflowState = {"run_id": run_id}
     if blueprint:
@@ -1061,6 +1068,7 @@ def run_minimal_workflow(
     graph = build_minimal_graph(
         provider,
         progress_callback=progress_callback,
+        run_control=run_control,
         blueprint_max_attempts=blueprint_max_attempts,
         content_reflection_max_attempts=content_reflection_max_attempts,
         fact_check_max_corrections=fact_check_max_corrections,
