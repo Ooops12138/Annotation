@@ -183,7 +183,7 @@ def test_valid_component_is_accepted_after_shared_sandbox_and_critic() -> None:
     assert "json" in provider.calls[1].prompt.lower()
     assert "show-supremum" in provider.calls[0].prompt
     assert '"issues"' in provider.calls[1].prompt
-    assert "不得输出" in provider.calls[1].prompt
+    assert "Do not output fields outside the schema" in provider.calls[1].prompt
 
 
 def test_unsupported_control_revises_before_browser_sandbox() -> None:
@@ -260,7 +260,7 @@ def test_not_needed_decision_is_preserved_in_trace() -> None:
     assert '"task_id"' in provider.calls[0].prompt
     assert '"not_needed_reason"' in provider.calls[0].prompt
     assert "`accepted_content_artifact_id`" in provider.calls[0].prompt
-    assert "必须完全省略 `not_needed_reason`" in provider.calls[0].prompt
+    assert "omit `not_needed_reason` entirely" in provider.calls[0].prompt
 
 
 def test_schema_error_is_passed_to_the_interactive_revision_prompt() -> None:

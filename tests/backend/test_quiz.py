@@ -1,4 +1,5 @@
 import pytest
+import json
 from pydantic import ValidationError
 
 from annotation.domain.artifacts import (
@@ -20,6 +21,65 @@ from annotation.workflow.quiz import (
     validate_quiz_artifact,
     validate_quiz_coverage,
 )
+
+
+@pytest.mark.parametrize("command", ["frac{a}{b}", "neq", "text{x}", "beta", "right)"])
+@pytest.mark.parametrize("field", ["question", "options", "answer", "explanation"])
+def test_quiz_rejects_json_latex_escape_damage(command, field):
+    unit = _unit()
+    artifact = _artifact(unit)
+    broken = json.loads('{"value":"$' + chr(92) + command + '$"}')["value"]
+    question = artifact.questions[0]
+    if field in {"answer", "options"}:
+        question.options = [broken, "other"]
+        question.answer = broken
+    else:
+        setattr(question, field, broken)
+    check = validate_quiz_artifact(artifact, unit=unit, context_pack=_pack(unit))
+    assert check.status == "blocked"
+    assert any(issue.category == "formula" for issue in check.issues)
+
+
+def test_quiz_omissions_persist_and_cannot_reference_another_task_objective(tmp_path):
+    from annotation.domain.artifacts import OmittedQuestion
+    from annotation.workflow.persistence import write_quiz_artifact
+    unit = _unit()
+    artifact = _artifact(unit, questions=[])
+    artifact.omitted_questions = [OmittedQuestion(objective=unit.learning_objectives[0], reason="No unambiguous evidence")]
+    path = write_quiz_artifact({"run_id": unit.run_id, "quiz_artifacts": [artifact]}, root=tmp_path)
+    saved = json.loads(path.read_text(encoding="utf-8"))["quiz_artifacts"][0]
+    assert saved["omitted_questions"][0]["reason"] == "No unambiguous evidence"
+    assert validate_quiz_artifact(artifact, unit=unit, context_pack=_pack(unit)).status == "accepted"
+    artifact.omitted_questions[0].objective = "other task objective"
+    assert validate_quiz_artifact(artifact, unit=unit, context_pack=_pack(unit)).status == "blocked"
+
+
+def test_workflow_quiz_receives_accepted_explanation_and_callouts(monkeypatch):
+    from annotation.domain.artifacts import ContentArtifact
+    from annotation.workflow import content_nodes
+    from types import SimpleNamespace
+    unit = _unit()
+    task, pack = _task(unit), _pack(unit)
+    explanation = ContentArtifact(artifact_id="accepted-prose", run_id=unit.run_id, version=1, status="accepted", created_by="test",
+        task_id=task.task_id, knowledge_unit_ids=[unit.artifact_id], content="Use notation $M$ for this lesson.",
+        metadata={"callouts": [{"title": "Remember", "tone": "info", "content": "Use the same notation."}]})
+    wrong = explanation.model_copy(update={"artifact_id": "wrong", "task_id": "other-task", "content": "OTHER TASK PROSE"})
+    class Provider:
+        provider = "test"
+        def generate_structured(self, request):
+            self.prompt = request.prompt
+            draft = QuizDraft(knowledge_unit_id=unit.artifact_id, target_objectives=unit.learning_objectives, questions=[_question(unit, "q1")])
+            return SimpleNamespace(value=draft, raw_text=draft.model_dump_json())
+    provider = Provider()
+    monkeypatch.setattr(content_nodes, "retrieve_quiz_context", lambda *args, **kwargs: kwargs["context_pack"])
+    result = content_nodes.generate_task_quiz(SimpleNamespace(provider=provider),
+        {"run_id": unit.run_id, "content_artifacts": [wrong, explanation]}, task,
+        units={unit.artifact_id: unit}, packs={task.task_id: pack}, retrieval_service=None)
+    assert result.artifact.status == "accepted"
+    assert explanation.content in provider.prompt
+    assert "Use the same notation." in provider.prompt
+    assert "OTHER TASK PROSE" not in provider.prompt
+    assert "The explanation defines teaching scope, not factual authority" in provider.prompt
 
 
 def _unit(unit_id: str = "ku-1") -> KnowledgeUnit:

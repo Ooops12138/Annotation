@@ -166,6 +166,12 @@ def review(ctx: WorkflowContext, state: WorkflowState) -> dict[str, Any]:
             )
         )
     issues.extend(artifact_issues(artifacts, kind="content", valid_refs=valid_refs))
+    for artifact in artifacts:
+        if artifact.status == "accepted" and artifact.metadata.get("evidence_notes"):
+            issues.append(ReviewIssue(issue_id=f"review-evidence-notes-{artifact.artifact_id}",
+                category="uncertainty", severity="warning", layer="fact",
+                message="本节部分内容的教材依据存在不确定性，建议核实。", target_id=artifact.artifact_id,
+                suggested_action="结合教材原文核实证据说明中记录的疑问。"))
     issues.extend(
         artifact_issues(publishable_quizzes(state), kind="quiz", valid_refs=valid_refs)
     )

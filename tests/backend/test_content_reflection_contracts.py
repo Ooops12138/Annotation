@@ -184,7 +184,7 @@ def test_content_reflection_prompts_render_all_auditable_inputs() -> None:
     assert "severity" in critic and "route" in critic
     assert "[src-1] 教材证据" in critic
     assert "do not require" in critic
-    assert "gap belongs in artifact metadata" in critic
+    assert "gap belongs in the candidate evidence_notes metadata" in critic
     assert "{{CANDIDATE_ARTIFACT}}" not in critic
     assert revision.startswith("## Role\n")
     assert "(`revise_content_artifact`)." in revision.split("## Task", 1)[0]

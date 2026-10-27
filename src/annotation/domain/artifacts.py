@@ -138,6 +138,23 @@ class QuizQuestion(BaseModel):
         return self
 
 
+class EvidenceNote(BaseModel):
+    """Internal evidence uncertainty; never rendered verbatim as teaching prose."""
+
+    model_config = ConfigDict(extra="forbid")
+    claim: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+    source_refs: list[str] = Field(default_factory=list)
+
+
+class OmittedQuestion(BaseModel):
+    """An auditable reason for not writing a question for a task objective."""
+
+    model_config = ConfigDict(extra="forbid")
+    objective: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+
+
 class QuizDraft(BaseModel):
     """Structured model response for one knowledge unit's quiz call."""
 
@@ -145,6 +162,7 @@ class QuizDraft(BaseModel):
     knowledge_unit_id: str
     target_objectives: list[str] = Field(default_factory=list)
     questions: list[QuizQuestion] = Field(default_factory=list)
+    omitted_questions: list[OmittedQuestion] = Field(default_factory=list)
 
 
 class QuizArtifact(ArtifactBase):
@@ -154,6 +172,7 @@ class QuizArtifact(ArtifactBase):
     knowledge_unit_ids: list[str] = Field(default_factory=list)
     target_objectives: list[str] = Field(default_factory=list)
     questions: list[QuizQuestion] = Field(default_factory=list)
+    omitted_questions: list[OmittedQuestion] = Field(default_factory=list)
     task_id: str | None = None
     context_pack_id: str | None = None
     prompt_version: str | None = None

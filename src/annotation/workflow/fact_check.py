@@ -40,12 +40,12 @@ from annotation.prompt_loader import load_prompt
 from annotation.providers import ModelProvider, ProviderError, StructuredGenerationRequest
 from annotation.retrieval import index_source_blocks
 from annotation.workflow.content import render_context_pack
-from annotation.workflow.content_support import _content_artifact_from_draft, _content_hard_check
+from annotation.workflow.content_support import _content_artifact_from_draft, _content_hard_check, _content_prompt_task
 from annotation.workflow.models import (
     ContentDraft, FactCheckAssessmentDraft, FactCheckAssessmentsDraft,
     FactCheckClaimsDraft, FactCheckRetrievalDecision,
 )
-from annotation.workflow.quiz import validate_quiz_artifact
+from annotation.workflow.quiz import validate_quiz_artifact, quiz_draft_issues, accepted_content_context
 
 
 def _dump(value: Any) -> Any:
@@ -399,6 +399,7 @@ def _correct_content(
         CONTEXT_PACK=render_context_pack(context_pack),
         CANDIDATE_ARTIFACT=json.dumps(_dump(content), ensure_ascii=False, indent=2),
         FACT_CHECK_FEEDBACK=json.dumps(feedback, ensure_ascii=False, indent=2),
+        CONTENT_TASK=_content_prompt_task(task),
     )
     try:
         response = provider.generate_structured(StructuredGenerationRequest(
@@ -421,7 +422,7 @@ def _correct_content(
         run_id=content.run_id,
         provider_name=str(getattr(provider, "provider", "unknown")),
         attempt=content.version + 1,
-        prompt_version="revise_content_for_fact_check:v1",
+        prompt_version="revise_content_for_fact_check:v2",
     )
     check = _content_hard_check(
         task=task,
@@ -445,6 +446,7 @@ def _correct_quiz(
     feedback: list[dict[str, Any]],
     valid_source_refs: set[str],
     correction_number: int,
+    accepted_content: ContentArtifact | None = None,
 ) -> tuple[QuizArtifact | None, str | None]:
     prompt = load_prompt(
         "regenerate_quiz_for_fact_check",
@@ -452,6 +454,9 @@ def _correct_quiz(
         CONTEXT_PACK=render_context_pack(context_pack),
         QUIZ_ARTIFACT=json.dumps(_dump(quiz), ensure_ascii=False, indent=2),
         FACT_CHECK_FEEDBACK=json.dumps(feedback, ensure_ascii=False, indent=2),
+        CONTENT_TASK=_content_prompt_task(task),
+        COURSE_ARCHITECT_DECISION=json.dumps({"quiz_count": task.quiz_count, "acceptance_criteria": task.acceptance_criteria}),
+        ACCEPTED_CONTENT=accepted_content_context(accepted_content),
     )
     try:
         response = provider.generate_structured(StructuredGenerationRequest(
@@ -476,15 +481,16 @@ def _correct_quiz(
         knowledge_unit_ids=[unit.artifact_id],
         target_objectives=_unique([*draft.target_objectives, *(value for question in draft.questions for value in question.target_objectives)]),
         questions=list(draft.questions),
+        omitted_questions=list(draft.omitted_questions),
         task_id=task.task_id,
         context_pack_id=context_pack.context_pack_id,
-        prompt_version="regenerate_quiz_for_fact_check:v1",
-        generation_metadata={"agent": "regenerate_quiz_for_fact_check", "revision_of": quiz.artifact_id},
+        prompt_version="regenerate_quiz_for_fact_check:v2",
+        generation_metadata={"agent": "regenerate_quiz_for_fact_check", "revision_of": quiz.artifact_id, "prompt": prompt},
         raw_response=str(getattr(response, "raw_text", "") or draft.model_dump_json()),
     )
     check = validate_quiz_artifact(candidate, unit=unit, context_pack=context_pack, valid_source_refs=valid_source_refs)
-    candidate.issues = list(check.issues)
-    candidate.status = "accepted" if check.status == "accepted" else "needs_revision"
+    candidate.issues = [*quiz_draft_issues(draft, task, unit, candidate.artifact_id), *check.issues]
+    candidate.status = "needs_revision" if any(issue.severity == "blocking" for issue in candidate.issues) else "accepted"
     return candidate, None if candidate.status == "accepted" else "quiz_correction_structure_check_failed"
 
 
@@ -728,6 +734,7 @@ def _check_unit(
                     provider, task=task, unit=unit, context_pack=context_pack, quiz=current_quiz,
                     feedback=_feedback(claims, assessments, "regenerate_quiz"), valid_source_refs=valid_source_refs,
                     correction_number=corrections + 1,
+                    accepted_content=current_content,
                 )
                 corrections += 1
                 rounds.append(FactCheckRoundTrace(

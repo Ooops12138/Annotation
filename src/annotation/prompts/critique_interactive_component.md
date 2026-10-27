@@ -24,6 +24,8 @@ Return only a valid JSON object matching `InteractiveComponentCritiqueDraft`.
 
 ## Hard Rules
 
+{{TRUST_BOUNDARY}}
+
 - The top level must contain only `issues`. Each issue contains `code`, `message` and `suggested_action`. When there are no issues, return `{"issues":[]}`. Do not output fields outside the schema.
 - Do not add sources.
 - The shared renderer's control limits are acceptance requirements: `interval_line` supports only the optional `show-supremum` toggle, which displays a supremum marker. It does not switch endpoint types, interval ranges or maxima. `complex_plane` and `function_graph` currently support no controls.

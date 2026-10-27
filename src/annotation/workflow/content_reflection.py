@@ -194,7 +194,7 @@ def build_content_reflection_subgraph(
                 GENERATION_ERROR=str(state.get("generation_error") or ""),
             )
             agent = "revise_content_artifact"
-            prompt_version = "revise_content_artifact:v1"
+            prompt_version = "revise_content_artifact:v2"
         else:
             prompt = load_prompt(
                 "generate_content_artifact",
@@ -204,7 +204,7 @@ def build_content_reflection_subgraph(
                 ACCEPTANCE_CRITERIA=json.dumps(task.acceptance_criteria, ensure_ascii=False),
             )
             agent = "generate_content_artifact"
-            prompt_version = "generate_content_artifact:v1"
+            prompt_version = "generate_content_artifact:v2"
         result: dict[str, Any] = {
             "attempt": attempt,
             "generation_stage": "revision" if is_revision else "initial",

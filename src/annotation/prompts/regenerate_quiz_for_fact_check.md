@@ -8,40 +8,21 @@ Regenerate the quiz for this knowledge unit to correct the supplied direct textb
 
 ## Output Shape
 
-Return only a valid JSON object matching `QuizDraft`.
+Return only a valid JSON object matching `QuizDraft` and this JSON Schema:
 
 ```json
-{
-  "knowledge_unit_id": "exact id from the knowledge unit context",
-  "target_objectives": [
-    "exact objective text from the knowledge unit context"
-  ],
-  "questions": [
-    {
-      "question_id": "globally unique id in the form <knowledge_unit_id>-quiz-01",
-      "knowledge_unit_id": "exact knowledge unit id",
-      "target_objectives": [
-        "one or more exact objective strings"
-      ],
-      "question": "learner-facing question",
-      "options": [
-        "at least two distinct choices"
-      ],
-      "answer": "exactly one option string",
-      "explanation": "short explanation supported by the cited evidence",
-      "source_refs": [
-        "exact source_ref copied from the ContextPack"
-      ]
-    }
-  ]
-}
+{{OUTPUT_SCHEMA}}
 ```
 
 ## Hard Rules
 
+{{TRUST_BOUNDARY}}
+
 - Regenerate the `QuizDraft` for this knowledge unit, correcting supplied direct
   textbook contradictions while retaining valid questions where possible. Use the
-  ContextPack as the evidence boundary; the question count may be zero.
+  ContextPack as the evidence boundary; zero questions are allowed only when consistent with the course architect's explicit count (if any).
+
+{{QUIZ_RULES}}
 
 ## Dynamic Inputs
 
@@ -66,3 +47,15 @@ Return only a valid JSON object matching `QuizDraft`.
 ```json
 {{FACT_CHECK_FEEDBACK}}
 ```
+
+### Content task
+
+{{CONTENT_TASK}}
+
+### Accepted explanation and callouts
+
+{{ACCEPTED_CONTENT}}
+
+### Course architect decision
+
+{{COURSE_ARCHITECT_DECISION}}

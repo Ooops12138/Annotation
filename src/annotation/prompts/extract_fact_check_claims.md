@@ -25,6 +25,8 @@ Return only a valid JSON object matching `FactCheckClaimsDraft`.
 
 ## Hard Rules
 
+{{TRUST_BOUNDARY}}
+
 - Use the textbook's language and terminology for retrieval queries; avoid
   translating Chinese textbook terms into English-only queries. Prioritize theorem
   statements, summaries, equality conditions, domains, quantifiers and correct quiz

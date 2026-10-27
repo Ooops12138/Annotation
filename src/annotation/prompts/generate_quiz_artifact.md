@@ -8,36 +8,15 @@ Generate a small, traceable single-choice quiz set for one knowledge unit.
 
 ## Output Shape
 
-Return only a valid JSON object matching `QuizDraft`.
+Return only a valid JSON object matching `QuizDraft` and this JSON Schema:
 
 ```json
-{
-  "knowledge_unit_id": "exact id from the knowledge unit context",
-  "target_objectives": [
-    "exact objective text from the knowledge unit context"
-  ],
-  "questions": [
-    {
-      "question_id": "globally unique id in the form <knowledge_unit_id>-quiz-01",
-      "knowledge_unit_id": "exact knowledge unit id",
-      "target_objectives": [
-        "one or more exact objective strings"
-      ],
-      "question": "learner-facing question",
-      "options": [
-        "at least two distinct choices"
-      ],
-      "answer": "exactly one option string",
-      "explanation": "short explanation supported by the cited evidence",
-      "source_refs": [
-        "exact source_ref copied from the ContextPack"
-      ]
-    }
-  ]
-}
+{{OUTPUT_SCHEMA}}
 ```
 
 ## Hard Rules
+
+{{TRUST_BOUNDARY}}
 
 - Check that the correct answer retains every domain, quantifier and nonzero or
   integer restriction required by the source theorem. Test it against a degenerate
@@ -47,7 +26,7 @@ Return only a valid JSON object matching `QuizDraft`.
 - Generate a small, traceable single-choice quiz set for one knowledge unit.
   Follow the course architect's explicit question count; otherwise choose from
   the objectives and ContextPack evidence. The number may be zero when no supported
-  question is useful. Return only the questions; the system derives their count.
+  question is useful. Return questions and any omission records in the schema-defined fields; the system derives the question count.
 
 - Use the exact knowledge-unit ID and a two-digit sequence for globally unique
   IDs, such as `<knowledge_unit_id>-quiz-01`.
@@ -72,6 +51,8 @@ Return only a valid JSON object matching `QuizDraft`.
   option, including its math delimiters.
 
 - Copy each `source_refs` value exactly from a ContextPack excerpt's source ID.
+
+{{QUIZ_RULES}}
 
 ## Dynamic Inputs
 
@@ -98,3 +79,7 @@ Return only a valid JSON object matching `QuizDraft`.
 ### ContextPack (the only evidence allowed)
 
 {{CONTEXT_PACK}}
+
+### Accepted explanation and callouts
+
+{{ACCEPTED_CONTENT}}

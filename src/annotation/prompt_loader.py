@@ -7,6 +7,7 @@ placeholders such as ``{{TEXTBOOK_CONTEXT}}`` for runtime context.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -30,6 +31,26 @@ def load_prompt(agent: str, **values: object) -> str:
     if not path.is_file():
         raise FileNotFoundError(f"prompt file not found for agent {agent!r}: {path}")
     template = path.read_text(encoding="utf-8")
+    # Shared contracts are expanded before runtime data, never recursively in it.
+    for key, filename in {
+        "TRUST_BOUNDARY": "trust_boundary",
+        "CONTENT_RULES": "content_rules",
+        "QUIZ_RULES": "quiz_rules",
+    }.items():
+        if "{{" + key + "}}" in template:
+            template = template.replace("{{" + key + "}}", (_PROMPTS_DIR / "shared" / f"{filename}.md").read_text(encoding="utf-8").strip())
+    if "{{OUTPUT_SCHEMA}}" in template:
+        from annotation.workflow.models import ContentDraft
+        from annotation.domain.artifacts import QuizDraft
+
+        schema = {
+            "generate_content_artifact": ContentDraft,
+            "revise_content_artifact": ContentDraft,
+            "revise_content_for_fact_check": ContentDraft,
+            "generate_quiz_artifact": QuizDraft,
+            "regenerate_quiz_for_fact_check": QuizDraft,
+        }[agent]
+        template = template.replace("{{OUTPUT_SCHEMA}}", json.dumps(schema.model_json_schema(), ensure_ascii=True, indent=2))
 
     def replace(match: re.Match[str]) -> str:
         key = match.group(1)

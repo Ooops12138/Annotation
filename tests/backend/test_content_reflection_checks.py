@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import pytest
+
 from annotation.domain.artifacts import (
     ContentArtifact,
     ContentTask,
@@ -10,6 +13,55 @@ from annotation.domain.artifacts import (
 from annotation.workflow.content_support import _content_hard_check
 from annotation.workflow.content_support import _content_artifact_from_draft
 from annotation.workflow.models import CalloutDraft, ContentDraft
+
+
+@pytest.mark.parametrize("command", ["frac{a}{b}", "neq", "text{x}", "beta", "right)"])
+@pytest.mark.parametrize("field", ["content", "callout"])
+def test_hard_check_rejects_json_decoded_latex_escape_damage(command, field):
+    broken = json.loads('{"value":"$' + chr(92) + command + '$"}')["value"]
+    draft = ContentDraft(title="title", content=broken if field == "content" else "Valid prose.", source_refs=["src-1"],
+        callouts=[CalloutDraft(title="note", content=broken)] if field == "callout" else [])
+    artifact = _content_artifact_from_draft(draft=draft, task=_task(), unit=_unit(), pack=_pack(), run_id=_task().run_id, provider_name="test")
+    check = _content_hard_check(task=_task(), unit=_unit(), context_pack=_pack(), valid_source_refs={"src-1"}, candidate_artifact=artifact)
+    assert check.status == "needs_revision"
+    assert any(issue.category == "formula" for issue in check.issues)
+
+
+def test_valid_json_escaped_math_and_multiline_markdown_are_preserved():
+    value = json.loads(r'{"content":"Paragraph.\n\n$\\frac{a}{b} \\neq 0$\n\n$$\\begin{aligned}a&=b\\\\\nc&=d\\end{aligned}$$"}')["content"]
+    candidate = _primary(source_refs=["src-1"], content=value)
+    result = _content_hard_check(task=_task(), unit=_unit(), context_pack=_pack(), valid_source_refs={"src-1"}, candidate_artifact=candidate)
+    assert result.status == "accepted"
+    assert candidate.content == value
+
+
+def test_evidence_notes_persist_and_require_task_scoped_sources(tmp_path, monkeypatch):
+    from annotation.workflow.content import write_content_run_artifact
+    from annotation.workflow.review_nodes import review
+    from annotation.workflow.helpers import assemble_document_from_artifacts
+    import annotation.workflow.review_nodes as review_nodes
+    task, unit, pack = _task(), _unit(), _pack()
+    draft = ContentDraft(title="title", content="Explanation.", source_refs=["src-1"],
+        evidence_notes=[{"claim": "uncertain claim", "reason": "ambiguous wording", "source_refs": ["src-1"]}])
+    artifact = _content_artifact_from_draft(draft=draft, task=task, unit=unit, pack=pack, run_id=task.run_id, provider_name="test")
+    artifact.status = "accepted"
+    path = write_content_run_artifact(run_id=task.run_id, blueprint_version=task.blueprint_version, tasks=[task], context_packs=[pack],
+        artifacts=[artifact], checks={}, provider_metadata={}, root=tmp_path)
+    persisted = json.loads(path.read_text(encoding="utf-8"))["content_artifacts"][0]
+    assert persisted["metadata"]["evidence_notes"][0]["reason"] == "ambiguous wording"
+    from annotation.domain.artifacts import LearningBlueprint
+    blueprint = LearningBlueprint(artifact_id="bp", run_id=task.run_id, version=1, status="accepted", created_by="test", knowledge_units=[unit], title="Book")
+    document = assemble_document_from_artifacts(task.run_id, blueprint, [artifact], "test")
+    monkeypatch.setattr(review_nodes, "review_report_for", lambda document, state: type("Report", (), {"report_id": "report", "artifact_path": None})())
+    state = {"document": document, "blueprint": blueprint, "source_refs": ["src-1"], "content_tasks": [task], "content_artifacts": [artifact], "context_packs": [pack]}
+    reviewed = review(None, state)["document"]
+    issue = next(issue for issue in reviewed.issues if issue.issue_id.startswith("review-evidence-notes"))
+    assert issue.severity == "warning"
+    assert "uncertain claim" not in issue.message and "src-1" not in issue.message
+    assert "uncertain claim" not in document.model_dump_json()
+    artifact.metadata["evidence_notes"][0]["source_refs"] = ["unknown"]
+    checked = _content_hard_check(task=task, unit=unit, context_pack=pack, valid_source_refs={"src-1"}, candidate_artifact=artifact)
+    assert checked.status == "needs_revision"
 
 
 def _unit() -> KnowledgeUnit:

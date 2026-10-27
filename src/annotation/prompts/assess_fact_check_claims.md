@@ -25,6 +25,8 @@ Return only a valid JSON object matching `FactCheckAssessmentsDraft`.
 
 ## Hard Rules
 
+{{TRUST_BOUNDARY}}
+
 - Evidence is supplied as a deduplicated records table with per-claim evidence_ids.
   Only records assigned to that claim may support its judgement. Nonempty evidence
   is not necessarily relevant: headings alone cannot support a theorem. Check the

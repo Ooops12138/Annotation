@@ -8,26 +8,15 @@ Revise one Markdown-first candidate using the supplied hard-check and teaching-q
 
 ## Output Shape
 
-Return only a valid JSON object matching `ContentDraft`.
+Return only a valid JSON object matching `ContentDraft` and this JSON Schema:
 
 ```json
-{
-  "title": "string",
-  "content": "learner-facing Markdown",
-  "callouts": [
-    {
-      "title": "string",
-      "tone": "info|warning|success",
-      "content": "learner-facing Markdown"
-    }
-  ],
-  "source_refs": [
-    "exact source IDs from ContextPack"
-  ]
-}
+{{OUTPUT_SCHEMA}}
 ```
 
 ## Hard Rules
+
+{{TRUST_BOUNDARY}}
 
 - You revise one Markdown-first candidate for one knowledge unit. Return a valid
   JSON object matching `ContentDraft`.
@@ -62,6 +51,8 @@ Return only a valid JSON object matching `ContentDraft`.
   `content` where they help explain the unit.
 
 - `callouts` remains optional and is for points that benefit from emphasis.
+
+{{CONTENT_RULES}}
 
 ## Dynamic Inputs
 

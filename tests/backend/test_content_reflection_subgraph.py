@@ -99,6 +99,26 @@ def _draft(*, refs: list[str]) -> dict[str, Any]:
     }
 
 
+def test_split_task_critic_receives_only_its_assigned_objectives():
+    import json
+    from annotation.domain.artifacts import LearningBlueprint
+    from annotation.workflow.course_architect import teaching_blueprint
+    state = _state()
+    original = state["unit"].model_copy(update={"learning_objectives": ["assigned objective", "other task objective"]})
+    task = state["task"].model_copy(update={"covered_objectives": {original.artifact_id: ["assigned objective"]}})
+    blueprint = LearningBlueprint(artifact_id="bp", run_id=state["run_id"], version=1, status="accepted", created_by="test", title="Book", knowledge_units=[original])
+    state["unit"] = teaching_blueprint(blueprint, [task]).knowledge_units[0]
+    state["task"] = task
+    provider = ScriptedContentProvider([_draft(refs=["src-1"]), {"issues": []}])
+    result = build_content_reflection_subgraph(provider, max_attempts=3).invoke(state)
+    critic = next(call for call in provider.calls if call.schema.__name__ == "ContentCritiqueDraft")
+    context = critic.prompt.split("### Knowledge unit", 1)[1].split("```json", 1)[1].split("```", 1)[0]
+    assert json.loads(context)["learning_objectives"] == ["assigned objective"]
+    assert "other task objective" not in critic.prompt
+    assert "Judge only the learning objectives" in critic.prompt
+    assert result["route"] == "accept"
+
+
 def test_hard_check_revises_before_calling_critic_and_preserves_source_evidence() -> None:
     provider = ScriptedContentProvider([
         _draft(refs=["unknown-source"]),

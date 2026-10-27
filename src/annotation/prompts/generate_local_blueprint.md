@@ -34,6 +34,8 @@ Return only a valid JSON object matching `LocalBlueprintDraft`.
 
 ## Hard Rules
 
+{{TRUST_BOUNDARY}}
+
 - Before returning, compare the union of your units' learning objectives with ALL
   teaching content in the owned window: definitions, theorem hypotheses and
   conclusions, methods and examples. Do not represent only the beginning or only

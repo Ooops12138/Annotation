@@ -33,6 +33,8 @@ Return only a valid JSON object matching `ContentTaskPlanDraft`.
 
 ## Hard Rules
 
+{{TRUST_BOUNDARY}}
+
 - You are the course architect for this run. Your job is to design the
   structured ContentTask list from the accepted Learning Blueprint. Do not write
   learner-facing explanations, quiz questions, frontend code, or component specs.

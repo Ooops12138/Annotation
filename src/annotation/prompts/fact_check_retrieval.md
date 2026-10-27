@@ -21,6 +21,8 @@ Return only a valid JSON object matching `FactCheckRetrievalDecision`.
 
 ## Hard Rules
 
+{{TRUST_BOUNDARY}}
+
 - Choose the smallest evidence action needed to assess the assertion. Return
   only a `FactCheckRetrievalDecision` JSON object.
 

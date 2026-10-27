@@ -20,6 +20,8 @@ Return only a valid JSON object matching `QuizRetrievalDecision`.
 
 ## Hard Rules
 
+{{TRUST_BOUNDARY}}
+
 - Decide whether the current ContextPack is sufficient to write evidence-backed
   practice questions. Return only `QuizRetrievalDecision` JSON. Choose
   `use_context` when it contains direct support; otherwise choose `search` and

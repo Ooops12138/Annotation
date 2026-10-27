@@ -11,6 +11,7 @@ from annotation.domain.artifacts import (
     BlueprintCheckResult,
     BlueprintLoopTrace,
     ContentArtifact,
+    EvidenceNote,
     ContentAttemptTrace,
     ContentHardCheckResult,
     ContentTask,
@@ -72,6 +73,7 @@ class ContentDraft(BaseModel):
     # including follow-along steps, stays in the Markdown body.
     callouts: list[CalloutDraft] = Field(default_factory=list)
     source_refs: list[str] = Field(default_factory=list)
+    evidence_notes: list[EvidenceNote] = Field(default_factory=list)
 
 
 class RetrievalDecision(BaseModel):

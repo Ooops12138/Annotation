@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import pytest
 from typing import Any
 
 from annotation.domain.artifacts import (
@@ -24,6 +25,62 @@ from annotation.providers.models import (
 from annotation.fact_checking import EvidenceKind, EvidenceRecord, SearchResult, SearchStatus
 from annotation.workflow.fact_check import run_fact_check_loop
 from annotation.workflow import run_minimal_workflow
+
+
+@pytest.mark.parametrize("change", ["count", "unit", "objective", "escape"])
+def test_fact_quiz_correction_enforces_generation_contract(change):
+    from annotation.workflow.fact_check import _correct_quiz
+    from annotation.domain.artifacts import QuizDraft, OmittedQuestion
+    blueprint, task, pack, content, quizzes, _ = _fixture(with_quiz=True)
+    task.quiz_count = 1
+    task.depth_guidance = "detailed"
+    draft = QuizDraft(knowledge_unit_id="unit-1", target_objectives=["理解上确界"], questions=quizzes[0].questions)
+    if change == "count":
+        draft.questions = []
+        draft.omitted_questions = [OmittedQuestion(objective="理解上确界", reason="not supported")]
+    elif change == "unit":
+        draft.knowledge_unit_id = "wrong-unit"
+    elif change == "objective":
+        draft.questions[0].target_objectives = ["different objective"]
+    else:
+        draft.questions[0].explanation = __import__("json").loads(r'"$\beta$"')
+
+    class Provider:
+        provider = "test"
+        def generate_structured(self, request):
+            self.request = request
+            return StructuredGenerationResponse(value=draft, raw_text=draft.model_dump_json(), provider="test", model="test", base_url=None, config_version="test", duration_ms=0)
+    provider = Provider()
+    candidate, error = _correct_quiz(provider, task=task, unit=blueprint.knowledge_units[0], context_pack=pack,
+        quiz=quizzes[0], feedback=[], valid_source_refs={"src-1"}, correction_number=1, accepted_content=content)
+    assert error == "quiz_correction_structure_check_failed"
+    assert candidate.status == "needs_revision"
+    assert '"quiz_count": 1' in provider.request.prompt
+    assert "detailed" in provider.request.prompt
+    assert content.content in provider.request.prompt
+    assert "Escape every LaTeX backslash" in provider.request.prompt
+    assert "preserve existing IDs" in provider.request.prompt
+
+
+def test_fact_content_correction_keeps_depth_and_rejects_escape_damage():
+    from annotation.workflow.fact_check import _correct_content
+    from annotation.workflow.models import ContentDraft
+    blueprint, task, pack, content, _, _ = _fixture()
+    task.depth_guidance = "detailed"
+    class Provider:
+        provider = "test"
+        def generate_structured(self, request):
+            self.request = request
+            draft = ContentDraft(title="title", content=__import__("json").loads(r'"$\frac{a}{b}$"'), source_refs=["src-1"])
+            return StructuredGenerationResponse(value=draft, raw_text=draft.model_dump_json(), provider="test", model="test", base_url=None, config_version="test", duration_ms=0)
+    provider = Provider()
+    candidate, error = _correct_content(provider, task=task, unit=blueprint.knowledge_units[0], context_pack=pack,
+        content=content, feedback=[], valid_source_refs={"src-1"})
+    assert error == "content_correction_structure_check_failed"
+    assert candidate.status == "needs_revision"
+    assert "detailed" in provider.request.prompt
+    assert "Do not put source IDs" in provider.request.prompt
+    assert "Escape every LaTeX backslash" in provider.request.prompt
 
 
 class ScriptedFactCheckProvider:

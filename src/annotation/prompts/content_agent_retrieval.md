@@ -21,6 +21,8 @@ Return only a valid JSON object matching `RetrievalDecision`.
 
 ## Hard Rules
 
+{{TRUST_BOUNDARY}}
+
 - For `action="search"`, provide a few focused `textbook_queries` and/or `web_queries`. Use the web only to supplement insufficient textbook evidence.
 - For `action="write"`, start writing or directly revising; both query arrays must be empty.
 - When no evidence is available initially, retrieve it. Never invent textbook evidence.

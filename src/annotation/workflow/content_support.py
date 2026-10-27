@@ -14,6 +14,7 @@ from annotation.domain.artifacts import (
     ContentTask,
     ContentUnitLoopTrace,
     ContextPack,
+    EvidenceNote,
     KnowledgeUnit,
     LearningBlueprint,
     ReviewIssue,
@@ -32,9 +33,23 @@ def _formula_format_issues(nodes: list[Any]) -> list[str]:
     return issues
 
 
+def math_control_issues(content: str) -> list[str]:
+    """Detect decoded JSON escape damage without rewriting learner content."""
+    issues = []
+    if re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", content):
+        issues.append("文本包含非法控制字符；请正确转义 JSON 中的 LaTeX 反斜杠")
+    prose = re.sub(r"`{3}[\s\S]*?`{3}|`[^`\n]*`", "", content)
+    for match in re.finditer(r"(?<!\\)\$\$(.*?)\$\$|(?<!\\)\$(?!\$)(.*?)(?<!\\)\$|\\\((.*?)\\\)|\\\[(.*?)\\\]", prose, re.S):
+        inline = match.group(2) if match.group(2) is not None else match.group(3)
+        expression = next(group for group in match.groups() if group is not None)
+        if re.search(r"[\t\r\n]" if inline is not None else r"[\t\r]", expression):
+            issues.append("数学表达式包含异常换行、制表或回车；请检查 JSON 转义")
+    return issues
+
+
 def _markdown_formula_format_issues(node_id: str, content: str) -> list[str]:
     """Validate explicit Markdown math delimiters without guessing bare math."""
-    issues: list[str] = []
+    issues: list[str] = math_control_issues(content)
     # Code snippets may legitimately contain dollar signs or Unicode glyphs;
     # they are not learner-facing formulas and must not create review noise.
     prose = re.sub(r"\x60\x60\x60[\s\S]*?\x60\x60\x60|\x60[^\x60\n]*\x60", "", content)
@@ -141,7 +156,7 @@ def _content_artifact_from_draft(
     run_id: str,
     provider_name: str,
     attempt: int = 1,
-    prompt_version: str = "generate_content_artifact:v1",
+    prompt_version: str = "generate_content_artifact:v2",
 ) -> ContentArtifact:
     refs = _lossless_refs(draft.source_refs)
     content = draft.content
@@ -172,6 +187,7 @@ def _content_artifact_from_draft(
             "retrieval_strategy": list(pack.retrieval_strategy),
             "source_snapshot": pack.source_snapshot,
             "callouts": callouts,
+            "evidence_notes": [note.model_dump(mode="json") for note in draft.evidence_notes],
         },
         content=content,
     )
@@ -299,7 +315,19 @@ def _content_hard_check(
                 source_refs=invalid,
                 suggested_action="删除未知来源，并使用当前 ContextPack 中的精确 source_ref。",
             ))
+        raw_notes = artifact.metadata.get("evidence_notes", [])
+        try:
+            if not isinstance(raw_notes, list):
+                raise ValueError("evidence_notes must be a list")
+            for raw_note in raw_notes:
+                note = EvidenceNote.model_validate(raw_note)
+                if any(ref not in pack_refs or ref not in valid_source_refs for ref in note.source_refs):
+                    raise ValueError("evidence note contains unknown sources")
+        except (ValueError, TypeError):
+            issues.append(content_issue(task=task, suffix=f"evidence-notes-{artifact.artifact_id}",
+                category="source", severity="blocking", message="证据说明结构或来源不符合当前任务契约。", target_id=artifact.artifact_id))
         formula_messages = _markdown_formula_format_issues(artifact.artifact_id, artifact.content)
+        formula_messages.extend(math_control_issues(artifact.title or ""))
         raw_callouts = artifact.metadata.get("callouts", [])
         if not isinstance(raw_callouts, list):
             issues.append(content_issue(
@@ -329,6 +357,7 @@ def _content_hard_check(
             formula_messages.extend(_markdown_formula_format_issues(
                 f"{artifact.artifact_id}-callout-{callout_index}", callout.content,
             ))
+            formula_messages.extend(math_control_issues(callout.title))
         for index, message in enumerate(formula_messages, start=1):
             issues.append(content_issue(
                 task=task,
@@ -493,6 +522,8 @@ def _content_prompt_task(task: ContentTask) -> str:
             "task_id": task.task_id,
             "knowledge_unit_id": task.knowledge_unit_id,
             "depth_guidance": task.depth_guidance,
+            "covered_objectives": task.covered_objectives,
+            "acceptance_criteria": task.acceptance_criteria,
         },
         ensure_ascii=False,
         indent=2,

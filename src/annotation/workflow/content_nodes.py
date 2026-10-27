@@ -495,6 +495,8 @@ def generate_task_quiz(
             context_pack=pack,
             run_id=state["run_id"],
             retrieval_service=None,
+            accepted_content=next((content for content in state.get("content_artifacts", [])
+                if content.task_id == task.task_id and content.status == "accepted"), None),
         )
     except Exception as exc:
         logger.exception("Unexpected quiz generation failure for %s", task.task_id)

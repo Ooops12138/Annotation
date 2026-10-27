@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from annotation.domain.artifacts import (
     ContextPack,
+    ContentArtifact,
     ContextExcerpt,
     RetrievalCall,
     ContentTask,
@@ -35,9 +36,10 @@ from annotation.providers.models import ModelProvider, ProviderError, Structured
 from annotation.workflow.content import render_context_pack
 from annotation.config import model_max_output_tokens
 from annotation.workflow.models import QuizRetrievalDecision
+from annotation.workflow.content_support import math_control_issues, _markdown_formula_format_issues
 
 
-QUIZ_PROMPT_VERSION = "generate_quiz_artifact:v4"
+QUIZ_PROMPT_VERSION = "generate_quiz_artifact:v5"
 logger = logging.getLogger(__name__)
 # There is intentionally no default or minimum quiz size.  The agent decides
 # how many evidence-supported items are useful for a unit, including zero.
@@ -157,6 +159,13 @@ def _quiz_formula_format_issue(value: str) -> str | None:
     """Return a learner-facing field's formula-format violation, if any."""
 
     text = str(value or "")
+    controls = math_control_issues(text)
+    if controls:
+        return controls[0]
+    if "$$" in text or re.search(r"\\[\[\]()]", text):
+        return "只能使用 `$...$` 行内数学定界符"
+    if _markdown_formula_format_issues("quiz-field", text):
+        return "数学定界符未配对或包含非法数学格式"
     if _QUIZ_UNICODE_MATH.search(text):
         return "包含未用 LaTeX 定界的 Unicode 数学符号或上下标"
     # Remove valid inline math before looking for a bare ASCII formula. This
@@ -186,6 +195,10 @@ def validate_quiz_artifact(
     valid_ids: list[str] = []
     unit_id = unit.artifact_id if unit else (artifact.knowledge_unit_ids[0] if artifact.knowledge_unit_ids else None)
     objective_set = set(unit.learning_objectives) if unit else set()
+    for index, omission in enumerate(artifact.omitted_questions):
+        if unit is not None and omission.objective not in objective_set:
+            issues.append(_issue(f"quiz-invalid-omission-{artifact.artifact_id}-{index}",
+                category="coverage", severity="blocking", message="省略题目的目标不属于当前任务。", target_id=artifact.artifact_id))
     # The chapter source set proves that a ref exists, while the ContextPack
     # set enforces the narrower "use only this call's evidence" boundary.
     source_set = _valid_source_set(valid_source_refs=valid_source_refs, context_pack=None)
@@ -637,6 +650,7 @@ def build_quiz_prompt(
     context_pack: ContextPack,
     *,
     revision_feedback: Iterable[str] = (),
+    accepted_content: ContentArtifact | None = None,
 ) -> str:
     """Render the bounded prompt for one quiz structured call."""
 
@@ -657,13 +671,33 @@ def build_quiz_prompt(
         TARGET_OBJECTIVES=json.dumps(unit.learning_objectives, ensure_ascii=False),
         COURSE_ARCHITECT_DECISION=json.dumps(decision, ensure_ascii=False, indent=2),
         REVISION_FEEDBACK=(
-            "## Required revision\n\nThe previous quiz failed deterministic validation. "
+            "### Required revision\n\nThe previous quiz failed deterministic validation. "
             "Correct every issue below and return a complete replacement JSON object:\n\n"
             + "\n".join(f"- {message}" for message in feedback)
             if feedback
             else ""
         ),
+        ACCEPTED_CONTENT=accepted_content_context(accepted_content),
     )
+
+
+def accepted_content_context(content: ContentArtifact | None) -> str:
+    if content is None:
+        return "No accepted explanation was supplied. Do not assume additional teaching coverage."
+    return json.dumps({"artifact_id": content.artifact_id, "title": content.title,
+        "content": content.content, "callouts": content.metadata.get("callouts", [])}, ensure_ascii=False)
+
+
+def quiz_draft_issues(draft: QuizDraft, task: ContentTask, unit: KnowledgeUnit, artifact_id: str) -> list[ReviewIssue]:
+    """The same response-binding and count rules apply to every generation route."""
+    issues = []
+    if draft.knowledge_unit_id != unit.artifact_id:
+        issues.append(_issue(f"quiz-draft-unit-mismatch-{artifact_id}", category="coverage", severity="blocking",
+            message="题目生成响应的 knowledge_unit_id 与当前任务单元不一致。", target_id=artifact_id))
+    if task.quiz_count is not None and len(draft.questions) != task.quiz_count:
+        issues.append(_issue(f"quiz-count-mismatch-{artifact_id}", category="coverage", severity="blocking",
+            message=f"题目数量与课程架构师指定不一致：期望 {task.quiz_count}，实际 {len(draft.questions)}。", target_id=artifact_id))
+    return issues
 
 
 def _response_metadata(response: Any) -> dict[str, Any]:
@@ -806,6 +840,7 @@ def generate_quiz_artifact(
     run_id: str | None = None,
     max_attempts: int = 2,
     retrieval_service: Any | None = None,
+    accepted_content: ContentArtifact | None = None,
 ) -> QuizArtifact:
     """Generate, hard-check, and revise one quiz set within a bounded loop."""
     provider_name = str(getattr(provider, "provider", "unknown"))
@@ -831,7 +866,7 @@ def generate_quiz_artifact(
     feedback: list[str] = []
     last: QuizArtifact | None = None
     for attempt in range(1, max(1, max_attempts) + 1):
-        prompt = build_quiz_prompt(task, unit, context_pack, revision_feedback=feedback)
+        prompt = build_quiz_prompt(task, unit, context_pack, revision_feedback=feedback, accepted_content=accepted_content)
         metadata: dict[str, Any] = {
             "agent": "generate_quiz_artifact", "task_id": task.task_id,
             "context_pack_id": context_pack.context_pack_id, "attempt": attempt,
@@ -863,13 +898,11 @@ def generate_quiz_artifact(
                 knowledge_unit_ids=[unit.artifact_id],
                 target_objectives=_dedupe([*draft.target_objectives, *(o for q in draft.questions for o in q.target_objectives)]),
                 questions=list(draft.questions), task_id=task.task_id,
+                omitted_questions=list(draft.omitted_questions),
                 context_pack_id=context_pack.context_pack_id, prompt_version=QUIZ_PROMPT_VERSION,
                 generation_metadata={**metadata, "prompt": prompt}, raw_response=raw_response,
             )
-            if draft.knowledge_unit_id != unit.artifact_id:
-                artifact.issues.append(_issue(f"quiz-draft-unit-mismatch-{artifact.artifact_id}", category="coverage", severity="blocking", message="题目生成响应的 knowledge_unit_id 与当前任务单元不一致。", target_id=artifact.artifact_id))
-            if task.quiz_count is not None and count != task.quiz_count:
-                artifact.issues.append(_issue(f"quiz-count-mismatch-{artifact.artifact_id}", category="coverage", severity="blocking", message=f"题目数量与课程架构师指定不一致：期望 {task.quiz_count}，实际 {count}。", target_id=artifact.artifact_id))
+            artifact.issues.extend(quiz_draft_issues(draft, task, unit, artifact.artifact_id))
             check = validate_quiz_artifact(artifact, unit=unit, context_pack=context_pack)
             artifact.issues = _dedupe_issues([*artifact.issues, *check.issues])
             blocking = [issue for issue in artifact.issues if issue.severity == "blocking"]

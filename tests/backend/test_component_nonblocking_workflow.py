@@ -2,6 +2,7 @@
 
 import json
 import uuid
+import threading
 from pathlib import Path
 
 import pytest
@@ -19,10 +20,13 @@ from test_interactive_component_loop import ScriptedComponentProvider, _interval
 
 def test_all_required_units_are_attempted_and_one_failure_keeps_other_components():
     calls = []
+    lock = threading.Lock()
 
     def sandbox(spec, **kwargs):
-        calls.append(kwargs["task_id"])
-        if len(calls) == 1:
+        with lock:
+            first = not calls
+            calls.append(kwargs["task_id"])
+        if first:
             raise RuntimeError("first component browser failed")
         return InteractiveComponentSandboxReport(status="passed")
 
@@ -35,8 +39,9 @@ def test_all_required_units_are_attempted_and_one_failure_keeps_other_components
     results = state["interactive_component_results"]
     assert [result["content_task_id"] for result in results] == [task.task_id for task in required]
     assert len(calls) == len(required)
-    assert results[0]["interactive_component_status"] == "failed"
-    assert all(result["interactive_component_status"] == "accepted" for result in results[1:])
+    statuses = [result["interactive_component_status"] for result in results]
+    assert statuses.count("failed") == 1
+    assert statuses.count("accepted") == len(required) - 1
     components = [node for section in state["document"].sections for node in section.children if node.type == "interactive_component"]
     assert len(components) == len(required) - 1
     assert not state.get("errors")

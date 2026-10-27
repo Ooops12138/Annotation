@@ -37,6 +37,8 @@ Return only a valid JSON object matching `BlueprintDraft`.
 
 ## Hard Rules
 
+{{TRUST_BOUNDARY}}
+
 - You revise a candidate Learning Blueprint for the Annotation textbook pipeline.
 
 - Return a valid `BlueprintDraft` JSON object. Keep facts grounded in the

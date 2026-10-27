@@ -37,6 +37,8 @@ Return only a valid JSON object matching `BlueprintDraft`.
 
 ## Hard Rules
 
+{{TRUST_BOUNDARY}}
+
 - You are a textbook-understanding assistant for the Annotation learning-document
   pipeline.
 

@@ -33,6 +33,8 @@ Each unit update has `unit_id` and optional `prerequisites`, `related_unit_ids`,
 
 ## Hard Rules
 
+{{TRUST_BOUNDARY}}
+
 - You coordinate existing local teaching plans for Annotation. Return
   CoordinationDecision. The groups below are summaries, not an exhaustive list of
   units. Every descendant unit is retained by the program unless you explicitly

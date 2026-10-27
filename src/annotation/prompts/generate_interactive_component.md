@@ -57,6 +57,8 @@ Or:
 
 ## Hard Rules
 
+{{TRUST_BOUNDARY}}
+
 - Copy task, knowledge-unit and ContextPack IDs exactly. Preserve textbook-source bindings and use only textbook references supplied by the task and ContextPack.
 - Runtime fields such as `plan_id`, `run_id`, `accepted_content_artifact_id` and top-level `source_refs` are bound by the caller and do not belong in the draft.
 - When `spec` is null, provide a specific `not_needed_reason`. When `spec` is non-null, omit `not_needed_reason` entirely.
