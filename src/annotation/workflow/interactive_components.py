@@ -45,6 +45,9 @@ from annotation.workflow.models import InteractiveComponentDraft, InteractiveCom
 
 SandboxRunner = Callable[..., InteractiveComponentSandboxReport]
 
+INTERACTIVE_COMPONENT_PROMPT_VERSION = "generate_interactive_component:v2:core-contract"
+INTERACTIVE_COMPONENT_REVISION_PROMPT_VERSION = "revise_interactive_component:v2:core-contract"
+
 
 def _unique(values: Iterable[str]) -> list[str]:
     return list(dict.fromkeys(value.strip() for value in values if value and value.strip()))
@@ -360,7 +363,7 @@ def build_interactive_component_subgraph(
                 CRITIQUE_RESULT=json.dumps(state.get("critic_parsed_output") or {"issues": []}, ensure_ascii=False, indent=2),
                 GENERATION_ERROR=str(state.get("generation_error") or ""),
             )
-            agent, prompt_version = "revise_interactive_component", "revise_interactive_component:v1"
+            agent, prompt_version = "revise_interactive_component", INTERACTIVE_COMPONENT_REVISION_PROMPT_VERSION
         else:
             prompt = load_prompt(
                 "generate_interactive_component",
@@ -369,7 +372,7 @@ def build_interactive_component_subgraph(
                 CONTEXT_PACK=render_context_pack(pack),
                 COMPONENT_TASK=json.dumps(task.model_dump(mode="json"), ensure_ascii=False, indent=2),
             )
-            agent, prompt_version = "generate_interactive_component", "generate_interactive_component:v1"
+            agent, prompt_version = "generate_interactive_component", INTERACTIVE_COMPONENT_PROMPT_VERSION
         result: dict[str, Any] = {
             "attempt": attempt,
             "generation_stage": "revision" if revision else "initial",
@@ -408,6 +411,7 @@ def build_interactive_component_subgraph(
                     max_output_tokens=output_limit(min(5000, model_max_output_tokens())),
                     metadata={
                         "agent": agent,
+                        "prompt_version": prompt_version,
                         "run_id": state["run_id"],
                         "task_id": task.task_id,
                         "knowledge_unit_id": unit.artifact_id,
@@ -500,6 +504,7 @@ def build_interactive_component_subgraph(
         candidate = state.get("candidate_artifact")
         prompt = load_prompt(
             "critique_interactive_component",
+            profile="interactive",
             KNOWLEDGE_UNIT_CONTEXT=_interactive_prompt_unit(state["unit"]),
             ACCEPTED_CONTENT=_interactive_prompt_content(state["content_artifact"]),
             CONTEXT_PACK=render_context_pack(state["context_pack"]),
@@ -530,6 +535,7 @@ def build_interactive_component_subgraph(
                     max_output_tokens=output_limit(1400),
                     metadata={
                         "agent": "critique_interactive_component",
+                        "prompt_version": "critique_interactive_component:v2:interactive-critique-profile",
                         "run_id": state["run_id"],
                         "task_id": task.task_id,
                         "knowledge_unit_id": task.knowledge_unit_id,
@@ -540,6 +546,7 @@ def build_interactive_component_subgraph(
                 critique = InteractiveComponentCritiqueDraft.model_validate(response.value.model_dump(mode="python"))
                 metadata = response_metadata(response)
                 metadata["agent"] = "critique_interactive_component"
+                metadata["prompt_version"] = "critique_interactive_component:v2:interactive-critique-profile"
                 raw_output = response.raw_text
             result.update({
                 "critic_status": "succeeded",
@@ -562,14 +569,14 @@ def build_interactive_component_subgraph(
                 "critic_error": str(exc),
                 "critic_error_category": category,
                 "critic_retryable": bool(getattr(exc, "retryable", False) or category == "schema"),
-                "critic_provider_metadata": {**provider_metadata(provider), "agent": "critique_interactive_component"},
+                "critic_provider_metadata": {**provider_metadata(provider), "agent": "critique_interactive_component", "prompt_version": "critique_interactive_component:v2:interactive-critique-profile"},
             })
         except Exception as exc:
             result.update({
                 "critic_status": "provider_error",
                 "critic_error": str(exc),
                 "critic_error_category": "runtime",
-                "critic_provider_metadata": {**provider_metadata(provider), "agent": "critique_interactive_component"},
+                "critic_provider_metadata": {**provider_metadata(provider), "agent": "critique_interactive_component", "prompt_version": "critique_interactive_component:v2:interactive-critique-profile"},
             })
         return result
 

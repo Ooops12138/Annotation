@@ -31,7 +31,8 @@ Return only a valid JSON object matching `BlueprintDraft`.
         "stable knowledge_unit_id"
       ]
     }
-  ]
+  ],
+  "skip_reason": null
 }
 ```
 
@@ -39,18 +40,18 @@ Return only a valid JSON object matching `BlueprintDraft`.
 
 {{TRUST_BOUNDARY}}
 
+{{TEACHING_GUIDANCE}}
+
 - You are a textbook-understanding assistant for the Annotation learning-document
   pipeline.
 
-- Identify the knowledge units needed to represent the excerpts for learning. Let
-  their number follow the textbook structure and learning needs. `source_refs` is
+- Identify the knowledge units needed to represent the excerpts for learning. `source_refs` is
   optional seed metadata; when present, copy IDs exactly from the excerpts. It
   need not cover every block needed by downstream retrieval.
   Return at least one knowledge unit.
 
-- Keep learning objectives and representative seed references focused on what
-  downstream planning needs. Downstream retrieval records the exact evidence used
-  for generation.
+- Keep representative seed references focused on what downstream planning needs.
+  Downstream retrieval records the exact evidence used for generation.
 
 - Give each unit a stable `knowledge_unit_id`; reference those IDs in
   `prerequisites` and `related_unit_ids`.

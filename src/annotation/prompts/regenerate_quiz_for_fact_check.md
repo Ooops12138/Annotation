@@ -24,6 +24,8 @@ Return only a valid JSON object matching `QuizDraft` and this JSON Schema:
 
 {{QUIZ_RULES}}
 
+{{DOMAIN_RULES}}
+
 ## Dynamic Inputs
 
 ### Knowledge unit

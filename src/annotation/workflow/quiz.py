@@ -11,7 +11,6 @@ import json
 import hashlib
 import logging
 import math
-import re
 from collections.abc import Iterable, Mapping
 from typing import Any, Literal
 
@@ -36,10 +35,11 @@ from annotation.providers.models import ModelProvider, ProviderError, Structured
 from annotation.workflow.content import render_context_pack
 from annotation.config import model_max_output_tokens
 from annotation.workflow.models import QuizRetrievalDecision
-from annotation.workflow.content_support import math_control_issues, _markdown_formula_format_issues
+from annotation.workflow.content_support import _markdown_formula_format_issues
 
 
-QUIZ_PROMPT_VERSION = "generate_quiz_artifact:v6"
+QUIZ_PROMPT_VERSION = "generate_quiz_artifact:v8:mathematics-quiz-profile"
+QUIZ_RETRIEVAL_PROMPT_VERSION = "quiz_retrieval:v2:retrieval-profile"
 logger = logging.getLogger(__name__)
 # There is intentionally no default or minimum quiz size.  The agent decides
 # how many evidence-supported items are useful for a unit, including zero.
@@ -148,33 +148,10 @@ def _context_refs(context_pack: ContextPack) -> list[str]:
     ])
 
 
-_QUIZ_UNICODE_MATH = re.compile(r"[Σ∑√∞≤≥≠≈∂∫∏∈∉⊂⊆⊕×÷±]|[₀₁₂₃₄₅₆₇₈₉⁰¹²³⁴⁵⁶⁷⁸⁹]")
-_QUIZ_BARE_FORMULA = re.compile(
-    r"(?<![A-Za-z])(?:[A-Za-z](?:\s*[_^]?\s*[A-Za-z0-9]+)?\s*)"
-    r"(?:=|≤|≥|<|>|\+|−|-|\*|/|\^)(?:\s*[A-Za-z0-9(){}._^+\-*/=<>≤≥]+)"
-)
-
-
 def _quiz_formula_format_issue(value: str) -> str | None:
-    """Return a learner-facing field's formula-format violation, if any."""
-
-    text = str(value or "")
-    controls = math_control_issues(text)
-    if controls:
-        return controls[0]
-    if "$$" in text or re.search(r"\\[\[\]()]", text):
-        return "只能使用 `$...$` 行内数学定界符"
-    if _markdown_formula_format_issues("quiz-field", text):
-        return "数学定界符未配对或包含非法数学格式"
-    if _QUIZ_UNICODE_MATH.search(text):
-        return "包含未用 LaTeX 定界的 Unicode 数学符号或上下标"
-    # Remove valid inline math before looking for a bare ASCII formula. This
-    # intentionally checks only equation/operator-shaped fragments so normal
-    # prose such as "选项 A" remains valid.
-    outside = re.sub(r"\$[^$\n]+\$", "", text)
-    if _QUIZ_BARE_FORMULA.search(outside):
-        return "包含未放入 `$...$` 的裸公式"
-    return None
+    """Apply the same Markdown format checks as learner-facing prose."""
+    issues = _markdown_formula_format_issues("quiz-field", str(value or ""))
+    return issues[0] if issues else None
 
 
 def validate_quiz_artifact(
@@ -667,6 +644,7 @@ def build_quiz_prompt(
     }
     return load_prompt(
         "generate_quiz_artifact",
+        profile="mathematics_quiz",
         KNOWLEDGE_UNIT_CONTEXT=_unit_context(unit),
         CONTEXT_PACK=render_context_pack(context_pack),
         TARGET_OBJECTIVES=json.dumps(unit.objective_context(), ensure_ascii=False),
@@ -727,6 +705,7 @@ def retrieve_quiz_context(
         return context_pack
     prompt = load_prompt(
         "quiz_retrieval",
+        profile="retrieval",
         UNIT=json.dumps(_unit_context(unit), ensure_ascii=False),
         CONTEXT=render_context_pack(context_pack),
     )
@@ -738,7 +717,7 @@ def retrieve_quiz_context(
             prompt=prompt,
             schema=QuizRetrievalDecision,
             max_output_tokens=min(700, model_max_output_tokens()),
-            metadata={"agent": "quiz_retrieval", "task_id": task.task_id},
+            metadata={"agent": "quiz_retrieval", "prompt_version": QUIZ_RETRIEVAL_PROMPT_VERSION, "task_id": task.task_id},
         ))
         decision = QuizRetrievalDecision.model_validate(response.value.model_dump(mode="python"))
     if decision.action == "use_context":

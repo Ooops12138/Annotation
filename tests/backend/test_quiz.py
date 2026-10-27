@@ -284,12 +284,12 @@ def test_validation_limits_question_sources_to_context_pack() -> None:
     assert any(issue.issue_id.startswith("quiz-question-invalid-sources") for issue in check.issues)
 
 
-def test_validation_blocks_unicode_or_bare_quiz_formulas() -> None:
+def test_validation_blocks_unicode_subscripts_and_unpaired_math() -> None:
     unit = _unit()
     bad = _question(unit, "q-formula").model_copy(update={
         "options": ["Σₖ₌₁ⁿ aₖbₖ", "$x+y=y+x$"],
         "answer": "Σₖ₌₁ⁿ aₖbₖ",
-        "explanation": "x + y = y + x 是交换律。",
+        "explanation": "未闭合公式 $x+y",
     })
     artifact = _artifact(unit, questions=[bad])
 
@@ -515,3 +515,34 @@ def test_quiz_prompt_allows_agent_to_select_count() -> None:
     assert '"question_count"' not in prompt
     assert "exactly `2` questions" not in prompt
     assert "{{CONTEXT_PACK}}" not in prompt
+    assert "### Domain rules: mathematics quiz" in prompt
+    assert "{{DOMAIN_RULES}}" not in prompt
+
+
+@pytest.mark.parametrize("text", [
+    "$$\nx^2+y^2\n$$",
+    r"\[x^2+y^2\]",
+    r"\(x+1\)",
+    "第一段\n\n- 条件一\n- 条件二",
+    "```python\nx = 2\nlabel = 'x² and $value'\n```",
+    "`x² = $value`",
+])
+def test_quiz_all_fields_accept_body_markdown(text: str) -> None:
+    unit = _unit()
+    question = _question(unit, "q-markdown").model_copy(update={
+        "question": text, "options": [text, "另一选项"],
+        "answer": text, "explanation": text,
+    })
+    check = validate_quiz_artifact(
+        _artifact(unit, questions=[question]), unit=unit, valid_source_refs={"src-1"},
+    )
+    assert not [issue for issue in check.issues if issue.category == "formula"]
+
+
+@pytest.mark.parametrize("text", ["$$x+1", "$x+1", "bad\x0crac", "$x\ny$"])
+def test_quiz_and_body_reject_the_same_format_damage(text: str) -> None:
+    from annotation.workflow.content_support import _markdown_formula_format_issues
+    from annotation.workflow.quiz import _quiz_formula_format_issue
+
+    assert _markdown_formula_format_issues("body", text)
+    assert _quiz_formula_format_issue(text)

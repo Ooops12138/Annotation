@@ -116,6 +116,8 @@ def test_split_task_critic_receives_only_its_assigned_objectives():
     assert json.loads(context)["learning_objectives"] == [original.objective_context()[0]]
     assert "other task objective" not in critic.prompt
     assert "Judge only the learning objectives" in critic.prompt
+    assert "### Domain teaching guidance: mathematics" in critic.prompt
+    assert critic.metadata["prompt_version"] == "critique_content_artifact:v2:mathematics-teaching-profile"
     assert result["route"] == "accept"
 
 
@@ -252,6 +254,8 @@ def test_agent_can_retrieve_from_empty_bootstrap_but_cannot_generate_without_evi
     trace = result["content_loop_trace"]
     assert trace.final_status == ("accepted" if has_hits else "blocked")
     assert [r.schema.__name__ for r in provider.calls] == (["RetrievalDecision", "RetrievalDecision", "ContentDraft", "ContentCritiqueDraft"] if has_hits else ["RetrievalDecision", "RetrievalDecision"])
+    retrieval_prompts = [call.prompt for call in provider.calls if call.schema.__name__ == "RetrievalDecision"]
+    assert retrieval_prompts and all("### Retrieval rules" in prompt for prompt in retrieval_prompts)
     if not has_hits:
         assert trace.stop_reason == "context_pack_empty"
         assert not result["context_pack"].source_refs

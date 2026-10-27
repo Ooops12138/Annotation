@@ -26,12 +26,11 @@ Return only a valid JSON object matching `InteractiveComponentCritiqueDraft`.
 
 {{TRUST_BOUNDARY}}
 
+{{INTERACTIVE_CRITIQUE_RULES}}
+
 - The top level must contain only `issues`. Each issue contains `code`, `message` and `suggested_action`. When there are no issues, return `{"issues":[]}`. Do not output fields outside the schema.
 - Do not add sources.
 - The shared renderer's control limits are acceptance requirements: `interval_line` supports only the optional `show-supremum` toggle, which displays a supremum marker. It does not switch endpoint types, interval ranges or maxima. `complex_plane` and `function_graph` currently support no controls.
-- Do not report `interaction_mismatch` merely because endpoint switching is absent. Use it only when actual behavior contradicts the spec's description or textbook facts.
-- Use `objective_mismatch`, `source_mismatch`, `mathematical_mismatch` and `interaction_mismatch` only for blocking inconsistencies. Use `accessibility` for accessibility issues that do not change mathematical facts.
-- Do not replace the existing source, expression, safety or browser-rendering hard checks.
 
 ## Dynamic Inputs
 

@@ -27,16 +27,14 @@ Return only a valid JSON object matching `FactCheckAssessmentsDraft`.
 
 {{TRUST_BOUNDARY}}
 
+{{DOMAIN_RULES}}
+
 - Evidence is supplied as a deduplicated records table with per-claim evidence_ids.
   Only records assigned to that claim may support its judgement. Nonempty evidence
-  is not necessarily relevant: headings alone cannot support a theorem. Check the
-  domain, all quantifiers, signs, nonzero hypotheses and degenerate cases. Check
-  summaries independently even if an earlier proof includes the missing condition.
-  For an iff or equality condition, try a zero vector, a zero denominator and
-  boundary cases permitted by the statement. Separate real proofs using order from
-  complex extensions. An explicit counterexample derived from the supplied textbook
-  definitions is a locatable contradiction; explain the substitution and the
-  relevant source_ref. Do not classify a false mathematical statement as a stance.
+  is not necessarily relevant: headings alone cannot support a theorem. An explicit
+  counterexample derived from the supplied textbook definitions is a locatable
+  contradiction; explain the substitution and the relevant source_ref. Do not
+  classify a false mathematical statement as a stance.
   If the source wording itself is ambiguous, mark insufficient and identify the
   ambiguity rather than silently treating a repaired statement as supported.
 

@@ -26,6 +26,8 @@ Return only a valid JSON object matching `ContentDraft` and this JSON Schema:
 
 {{CONTENT_RULES}}
 
+{{DOMAIN_RULES}}
+
 ## Dynamic Inputs
 
 ### Knowledge unit

@@ -27,6 +27,9 @@ from annotation.workflow.helpers import (
     source_context,
 )
 from annotation.workflow.models import BlueprintDraft, WorkflowState
+
+BLUEPRINT_GENERATION_PROMPT_VERSION = "load_or_create_blueprint:v2:blueprint-profile"
+BLUEPRINT_REVISION_PROMPT_VERSION = "revise_blueprint:v2:blueprint-profile"
 from annotation.workflow.context import WorkflowContext
 import logging
 
@@ -78,6 +81,7 @@ def prepare_blueprint(ctx: WorkflowContext, state: WorkflowState) -> dict[str, A
     prompt = (
         load_prompt(
             "load_or_create_blueprint",
+            profile="blueprint",
             TEXTBOOK_CONTEXT=source_context(state["source_blocks"]),
         )
         if len(windows) == 1
@@ -152,6 +156,7 @@ def generate_blueprint_attempt(
     if attempt == 1:
         prompt = load_prompt(
             "load_or_create_blueprint",
+            profile="blueprint",
             TEXTBOOK_CONTEXT=source_context(state["source_blocks"]),
         )
         agent = "load_or_create_blueprint"
@@ -159,6 +164,7 @@ def generate_blueprint_attempt(
         check = state.get("blueprint_check")
         prompt = load_prompt(
             "revise_blueprint",
+            profile="blueprint",
             TEXTBOOK_CONTEXT=source_context(state["source_blocks"]),
             PREVIOUS_BLUEPRINT=json.dumps(
                 previous.model_dump(mode="json") if previous is not None else {},
@@ -205,6 +211,7 @@ def generate_blueprint_attempt(
                 max_output_tokens=budget.output_tokens,
                 metadata={
                     "agent": agent,
+                    "prompt_version": BLUEPRINT_GENERATION_PROMPT_VERSION if agent == "load_or_create_blueprint" else BLUEPRINT_REVISION_PROMPT_VERSION,
                     "run_id": state["run_id"],
                     "attempt": attempt,
                 },

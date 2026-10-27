@@ -29,22 +29,11 @@ Return only a valid JSON object matching `ContentDraft` and this JSON Schema:
   addressing blocking issues. For Critic feedback, use `coverage` for a missing
   required objective or prerequisite bridge, `clarity` for explanations a
   beginner cannot follow, and `organization` for a confusing sequence or
-  structure. Follow each issue's message and suggested action. Follow the
-  ContentTask's `depth_guidance`:
-  `concise` focuses on the core objective and essential steps; `standard` fully
-  explains the objectives with necessary reasoning and useful examples;
-  `detailed` unpacks important or difficult ideas with fuller steps, derivations,
-  prerequisite bridges, and additional supported examples where useful. Let the
+  structure. Follow each issue's message and suggested action. Let the
   ContextPack determine which details are supported. Quiz generation is a
   separate downstream step.
   Never add `quiz`, `questions`, options, answers, or explanations to this
   ContentDraft.
-
-- `content` is the complete learner-facing Markdown body. Put every intentional
-  formula, equation, symbolic definition, inequality, unit expression, or derivation in
-  `$...$` or `$$...$$` delimiters. Do not use bare formulas or Unicode
-  superscripts/subscripts. Markdown math is the only formula presentation path;
-  do not return a separate formula field.
 
 - Organize the explanation according to the needs of the knowledge unit, without
   forcing a fixed section layout. Keep examples, derivations, and reasoning in
@@ -53,6 +42,10 @@ Return only a valid JSON object matching `ContentDraft` and this JSON Schema:
 - `callouts` remains optional and is for points that benefit from emphasis.
 
 {{CONTENT_RULES}}
+
+{{DOMAIN_RULES}}
+
+{{TEACHING_GUIDANCE}}
 
 ## Dynamic Inputs
 

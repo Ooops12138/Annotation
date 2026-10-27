@@ -137,9 +137,10 @@ def _plan_content_task_batch(
     """Return ContentTask objects planned by the course architect agent."""
 
     provider_name = str(getattr(provider, "provider", "unknown"))
-    prompt = load_prompt("plan_content_tasks", BLUEPRINT=_blueprint_context(blueprint))
+    prompt = load_prompt("plan_content_tasks", profile="blueprint", BLUEPRINT=_blueprint_context(blueprint))
     metadata: dict[str, Any] = {
         "agent": "plan_content_tasks",
+        "prompt_version": "plan_content_tasks:v2:blueprint-profile",
         "run_id": run_id,
         "blueprint_artifact_id": blueprint.artifact_id,
         "blueprint_version": blueprint.version,

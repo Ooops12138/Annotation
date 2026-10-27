@@ -1,0 +1,122 @@
+{
+  "archive_id": "2026-10-27-original",
+  "captured_at": "2026-10-27",
+  "source_root": "src/annotation/prompts",
+  "files": [
+    {
+      "path": "prompts\\assess_fact_check_claims.md",
+      "sha256": "dc7e1a4230c134591e124ad1f9369895e0806fd17d12b25dac0c1a67bca38ed9",
+      "bytes": 2136
+    },
+    {
+      "path": "prompts\\content_agent_retrieval.md",
+      "sha256": "8b7b5409e81c13718d44b92185609b3caf4cc216b84606003c03e5869460bc45",
+      "bytes": 1910
+    },
+    {
+      "path": "prompts\\coordinate_blueprint.md",
+      "sha256": "1438fb813b425830176b5e060d03832e929d2fba8f55ecd48ab15797dcf156ec",
+      "bytes": 3722
+    },
+    {
+      "path": "prompts\\critique_content_artifact.md",
+      "sha256": "b2beef970e3654ceb0da69d5db119b94a8ce17353ca4251c6558143b3738e6df",
+      "bytes": 2924
+    },
+    {
+      "path": "prompts\\critique_interactive_component.md",
+      "sha256": "e09b319f84e1d2f163699e16b60f56c0868aff9e856c4f1580e5579ef877df20",
+      "bytes": 1827
+    },
+    {
+      "path": "prompts\\extract_fact_check_claims.md",
+      "sha256": "d830a0c0761fe0a608f854cc3321e23cf1302edaf2a8c95a8bc54847c01e3637",
+      "bytes": 1693
+    },
+    {
+      "path": "prompts\\fact_check_retrieval.md",
+      "sha256": "1d2e7a1311ace6f657d8f2496284e4750c371a9ed33e2a7b503c9d1596144d12",
+      "bytes": 1830
+    },
+    {
+      "path": "prompts\\generate_content_artifact.md",
+      "sha256": "2266b6aae48a598af6a47c72cb40fd2b403620fe832950cd2699966d439fccf8",
+      "bytes": 2453
+    },
+    {
+      "path": "prompts\\generate_interactive_component.md",
+      "sha256": "88656081566fb833fc188f1d24ab09d84e9ef95beabb0e342570fc63ed0a95a3",
+      "bytes": 5564
+    },
+    {
+      "path": "prompts\\generate_local_blueprint.md",
+      "sha256": "3157d74cabfeae518a957b8645d4428dcabc3e990c1915256bc43691716432bc",
+      "bytes": 3515
+    },
+    {
+      "path": "prompts\\generate_quiz_artifact.md",
+      "sha256": "0869f9dea132e6eff8d80e0e95aa9e7f7f89079be8d2ad499899f394d53c85c8",
+      "bytes": 1821
+    },
+    {
+      "path": "prompts\\load_or_create_blueprint.md",
+      "sha256": "d40bfba901ff837ab06b196e0c056b894d26f4beaef2d6932419b9a1260dcb7d",
+      "bytes": 1777
+    },
+    {
+      "path": "prompts\\plan_content_tasks.md",
+      "sha256": "53096357e8449f1fdefb6520be6e4584a649ed173fcf9f26afcf3549aa7e122a",
+      "bytes": 2160
+    },
+    {
+      "path": "prompts\\quiz_retrieval.md",
+      "sha256": "8e4b83dc452e05dea72d3cf23cd7abde1e5a75a460a56cdcd58941efb0b14a1f",
+      "bytes": 1390
+    },
+    {
+      "path": "prompts\\regenerate_quiz_for_fact_check.md",
+      "sha256": "bd1a95606559c77301d7c9fd716f9cc6b9d82c24433f206c77984b46d1304370",
+      "bytes": 1122
+    },
+    {
+      "path": "prompts\\revise_blueprint.md",
+      "sha256": "884414c49c2468f289ddbf3624701946df0b44c5988895ba87e0b85fa3e84f5a",
+      "bytes": 2154
+    },
+    {
+      "path": "prompts\\revise_content_artifact.md",
+      "sha256": "3f9721fb4985952f56844c6574b0ce5c144051525be81ed1679a6d36a345954c",
+      "bytes": 2551
+    },
+    {
+      "path": "prompts\\revise_content_for_fact_check.md",
+      "sha256": "9ae8c85d2d42b7b8e22fd4e18787933299c502c9c9db444a545d39a8e26d3ed7",
+      "bytes": 979
+    },
+    {
+      "path": "prompts\\revise_interactive_component.md",
+      "sha256": "b9f8aaa4c1572740b02384d9565187d82f2c1e1eb8ed61ebb551b57994b1a152",
+      "bytes": 5939
+    },
+    {
+      "path": "prompts\\shared\\content_rules.md",
+      "sha256": "cfdc0858d9cd55e854145220fb75aafed5d25a43bdc6cc4dd79b584b92c56244",
+      "bytes": 1286
+    },
+    {
+      "path": "prompts\\shared\\notation_contract.md",
+      "sha256": "2007577fcc9afd71d628a25f8c0d4bcf14b089bc6b5f4a4b784460d5977dcac3",
+      "bytes": 1073
+    },
+    {
+      "path": "prompts\\shared\\quiz_rules.md",
+      "sha256": "86648eb172d6d26f44065b2481dde0e6e7cd4ceb6163896587dc9c68cda18688",
+      "bytes": 1465
+    },
+    {
+      "path": "prompts\\shared\\trust_boundary.md",
+      "sha256": "37113b84543cdc608a095bee1c493eea1a0b75652c533576ed4f2d0e7edc3166",
+      "bytes": 319
+    }
+  ]
+}

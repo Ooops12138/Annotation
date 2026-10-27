@@ -37,4 +37,10 @@ rag-local-embeddings = [
 pythonpath = ["src"]
 
 [tool.setuptools.package-data]
-annotation = ["prompts/*.md", "prompts/shared/*.md"]
+annotation = [
+  "prompts/*.md",
+  "prompts/shared/*.md",
+  "prompt_layers/*.json",
+  "prompt_layers/*.md",
+  "prompt_layers/profiles/*/*.md",
+]

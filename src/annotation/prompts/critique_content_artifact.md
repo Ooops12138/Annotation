@@ -26,6 +26,8 @@ Return only a valid JSON object matching `ContentCritiqueDraft`.
 
 {{TRUST_BOUNDARY}}
 
+{{TEACHING_GUIDANCE}}
+
 - You are the teaching-quality critic for an already source-checked artifact.
   Assess whether a beginner can learn the stated unit from the candidate.
   Do not judge factual truth, source validity, formula correctness, or routing.
@@ -41,12 +43,9 @@ Return only a valid JSON object matching `ContentCritiqueDraft`.
 - `organization`: the sequence or structure makes the explanation harder to
   learn from.
 
-- Use `depth_guidance` to calibrate how much explanation the unit needs. `concise`
-  expects the core objective and only essential steps; `standard` expects the
-  objectives and necessary reasoning/examples; `detailed` expects fuller
-  development of important or difficult ideas when supported by the ContextPack.
-  Use a conservative bar: an objective is covered when directly stated or
-  explained; a prerequisite is bridged when its relationship and the context
+- Use `depth_guidance` together with the teaching guidance above to calibrate the
+  critique. Use a conservative bar: an objective is covered when directly stated
+  or explained; a prerequisite is bridged when its relationship and the context
   needed for this unit are stated, so do not require additional exercises, proofs,
   or a full reteaching unless acceptance criteria require them.
 

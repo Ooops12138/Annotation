@@ -174,7 +174,7 @@ export function renderMarkdown(content: string): string {
 
 /**
  * Render text that is embedded in an existing inline element (for example a
- * heading or a quiz option). Using renderInline avoids introducing paragraph
+ * heading). Using renderInline avoids introducing paragraph
  * elements while preserving the same math and sanitization rules.
  */
 export function renderMarkdownInline(content: string): string {

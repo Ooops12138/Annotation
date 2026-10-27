@@ -37,6 +37,9 @@ from annotation.workflow.helpers import response_metadata, provider_metadata
 from annotation.workflow.models import ContentDraft, ContentReflectionState, RetrievalDecision
 from annotation.config import model_max_output_tokens
 
+CONTENT_RETRIEVAL_PROMPT_VERSION = "content_agent_retrieval:v2:retrieval-profile"
+CONTENT_CRITIC_PROMPT_VERSION = "critique_content_artifact:v2:mathematics-teaching-profile"
+
 def build_content_reflection_subgraph(
     provider: ModelProvider,
     *,
@@ -94,6 +97,7 @@ def build_content_reflection_subgraph(
             else:
                 prompt = load_prompt(
                     "content_agent_retrieval",
+                    profile="retrieval",
                     KNOWLEDGE_UNIT_CONTEXT=_content_prompt_unit(unit),
                     CONTENT_TASK=_content_prompt_task(task),
                     RETRIEVAL_CONTEXT=render_context_pack(pack),
@@ -108,7 +112,7 @@ def build_content_reflection_subgraph(
                     prompt=prompt,
                     schema=RetrievalDecision,
                     max_output_tokens=response_limit(900),
-                    metadata={"agent": "content_agent", "phase": "retrieval_decision", "run_id": state["run_id"], "task_id": task.task_id, "attempt": int(state.get("attempt", 0)) + 1, "round": round_number + 1},
+                    metadata={"agent": "content_agent", "phase": "retrieval_decision", "prompt_version": CONTENT_RETRIEVAL_PROMPT_VERSION, "run_id": state["run_id"], "task_id": task.task_id, "attempt": int(state.get("attempt", 0)) + 1, "round": round_number + 1},
                 ))
                 plan = RetrievalDecision.model_validate(response.value.model_dump(mode="python"))
             if plan.action == "write":
@@ -176,6 +180,7 @@ def build_content_reflection_subgraph(
         if is_revision:
             prompt = load_prompt(
                 "revise_content_artifact",
+                profile="mathematics",
                 KNOWLEDGE_UNIT_CONTEXT=_content_prompt_unit(unit),
                 CONTENT_TASK=_content_prompt_task(task),
                 CONTEXT_PACK=render_context_pack(pack),
@@ -194,17 +199,18 @@ def build_content_reflection_subgraph(
                 GENERATION_ERROR=str(state.get("generation_error") or ""),
             )
             agent = "revise_content_artifact"
-            prompt_version = "revise_content_artifact:v2"
+            prompt_version = "revise_content_artifact:v3:mathematics-profile"
         else:
             prompt = load_prompt(
                 "generate_content_artifact",
+                profile="mathematics",
                 KNOWLEDGE_UNIT_CONTEXT=_content_prompt_unit(unit),
                 CONTENT_TASK=_content_prompt_task(task),
                 CONTEXT_PACK=render_context_pack(pack),
                 ACCEPTANCE_CRITERIA=json.dumps(task.acceptance_criteria, ensure_ascii=False),
             )
             agent = "generate_content_artifact"
-            prompt_version = "generate_content_artifact:v2"
+            prompt_version = "generate_content_artifact:v3:mathematics-profile"
         result: dict[str, Any] = {
             "attempt": attempt,
             "generation_stage": "revision" if is_revision else "initial",
@@ -324,6 +330,7 @@ def build_content_reflection_subgraph(
         candidate = state.get("candidate_artifact")
         prompt = load_prompt(
             "critique_content_artifact",
+            profile="mathematics",
             KNOWLEDGE_UNIT_CONTEXT=_content_prompt_unit(unit),
             DEPTH_GUIDANCE=task.depth_guidance,
             ACCEPTANCE_CRITERIA=json.dumps(task.acceptance_criteria, ensure_ascii=False),
@@ -357,6 +364,7 @@ def build_content_reflection_subgraph(
                     max_output_tokens=response_limit(1200),
                     metadata={
                         "agent": "critique_content_artifact",
+                        "prompt_version": CONTENT_CRITIC_PROMPT_VERSION,
                         "run_id": state["run_id"],
                         "task_id": task.task_id,
                         "knowledge_unit_id": unit.artifact_id,
@@ -367,6 +375,7 @@ def build_content_reflection_subgraph(
                 critique = ContentCritiqueDraft.model_validate(response.value.model_dump(mode="python"))
                 metadata = response_metadata(response)
                 metadata["agent"] = "critique_content_artifact"
+                metadata["prompt_version"] = CONTENT_CRITIC_PROMPT_VERSION
                 raw_output = response.raw_text
             feedback = _critic_review_issues(
                 critique,

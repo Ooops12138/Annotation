@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "profiles": {
+    "mathematics": {
+      "slots": {
+        "DOMAIN_RULES": "profiles/mathematics/domain_rules.md",
+        "TEACHING_GUIDANCE": "profiles/mathematics/teaching_guidance.md"
+      }
+    },
+    "mathematics_quiz": {
+      "slots": {
+        "DOMAIN_RULES": "profiles/mathematics_quiz/domain_rules.md"
+      }
+    },
+    "retrieval": {
+      "slots": {
+        "RETRIEVAL_RULES": "profiles/retrieval/retrieval_rules.md"
+      }
+    },
+    "mathematics_fact_check": {
+      "slots": {
+        "DOMAIN_RULES": "profiles/mathematics_fact_check/domain_rules.md"
+      }
+    },
+    "coordination": {
+      "slots": {
+        "EVIDENCE_RULES": "profiles/coordination/evidence_rules.md"
+      }
+    },
+    "blueprint": {
+      "slots": {
+        "TEACHING_GUIDANCE": "profiles/blueprint/teaching_guidance.md"
+      }
+    },
+    "interactive": {
+      "slots": {
+        "INTERACTIVE_CRITIQUE_RULES": "profiles/interactive/interactive_critique_rules.md"
+      }
+    }
+  },
+  "agents": {
+    "generate_content_artifact": {
+      "default_profile": "mathematics",
+      "reads": [
+        "DOMAIN_RULES",
+        "TEACHING_GUIDANCE"
+      ]
+    },
+    "revise_content_artifact": {
+      "default_profile": "mathematics",
+      "reads": [
+        "DOMAIN_RULES",
+        "TEACHING_GUIDANCE"
+      ]
+    },
+    "generate_quiz_artifact": {
+      "default_profile": "mathematics_quiz",
+      "reads": ["DOMAIN_RULES"]
+    },
+    "content_agent_retrieval": {
+      "default_profile": "retrieval",
+      "reads": ["RETRIEVAL_RULES"]
+    },
+    "revise_content_for_fact_check": {
+      "default_profile": "mathematics_fact_check",
+      "reads": ["DOMAIN_RULES"]
+    },
+    "assess_fact_check_claims": {
+      "default_profile": "mathematics_fact_check",
+      "reads": ["DOMAIN_RULES"]
+    },
+    "extract_fact_check_claims": {
+      "default_profile": "mathematics_fact_check",
+      "reads": ["DOMAIN_RULES"]
+    },
+    "fact_check_retrieval": {
+      "default_profile": "retrieval",
+      "reads": ["RETRIEVAL_RULES"]
+    },
+    "quiz_retrieval": {
+      "default_profile": "retrieval",
+      "reads": ["RETRIEVAL_RULES"]
+    },
+    "regenerate_quiz_for_fact_check": {
+      "default_profile": "mathematics_quiz",
+      "reads": ["DOMAIN_RULES"]
+    },
+    "coordinate_blueprint": {
+      "default_profile": "coordination",
+      "reads": ["EVIDENCE_RULES"]
+    },
+    "critique_content_artifact": {
+      "default_profile": "mathematics",
+      "reads": ["TEACHING_GUIDANCE"]
+    },
+    "critique_interactive_component": {
+      "default_profile": "interactive",
+      "reads": ["INTERACTIVE_CRITIQUE_RULES"]
+    },
+    "generate_local_blueprint": {
+      "default_profile": "blueprint",
+      "reads": ["TEACHING_GUIDANCE"]
+    },
+    "load_or_create_blueprint": {
+      "default_profile": "blueprint",
+      "reads": ["TEACHING_GUIDANCE"]
+    },
+    "plan_content_tasks": {
+      "default_profile": "blueprint",
+      "reads": ["TEACHING_GUIDANCE"]
+    },
+    "revise_blueprint": {
+      "default_profile": "blueprint",
+      "reads": ["TEACHING_GUIDANCE"]
+    },
+    "generate_interactive_component": {
+      "default_profile": "",
+      "reads": []
+    },
+    "revise_interactive_component": {
+      "default_profile": "",
+      "reads": []
+    }
+  }
+}
