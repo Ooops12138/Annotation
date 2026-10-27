@@ -12,7 +12,7 @@ Return only a valid JSON object matching `RetrievalDecision`.
 
 ```json
 {
-  "action": "search|write",
+  "action": "write",
   "textbook_queries": [],
   "web_queries": [],
   "reason": "brief explanation of the decision"
@@ -23,6 +23,8 @@ Return only a valid JSON object matching `RetrievalDecision`.
 
 {{TRUST_BOUNDARY}}
 
+- Use the textbook's language and terminology for `textbook_queries`, preserving its notation and theorem names. Do not translate textbook terms merely because these instructions are in English; for a Chinese textbook, use Chinese queries. Web queries may use another language when useful for external evidence.
+- `action` must be exactly `search` or `write`. Use at most four textbook queries and two web queries. The skeleton above illustrates `write`; change the action and queries together when searching. Do not add fields outside the skeleton.
 - For `action="search"`, provide a few focused `textbook_queries` and/or `web_queries`. Use the web only to supplement insufficient textbook evidence.
 - For `action="write"`, start writing or directly revising; both query arrays must be empty.
 - When no evidence is available initially, retrieve it. Never invent textbook evidence.

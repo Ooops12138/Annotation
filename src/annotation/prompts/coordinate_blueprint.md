@@ -12,11 +12,11 @@ Return only a valid JSON object matching `CoordinationDecision`.
 
 ```json
 {
-  "action": "read|finalize",
+  "action": "read",
   "requests": [
     {
-      "tool": "read_units|search_units|read_sources",
-      "ids": [],
+      "tool": "read_units",
+      "ids": ["existing-unit-id"],
       "query": "",
       "offset": 0
     }
@@ -29,12 +29,38 @@ Return only a valid JSON object matching `CoordinationDecision`.
 }
 ```
 
-Each unit update has `unit_id` and optional `prerequisites`, `related_unit_ids`, and `before_id`. Each merge has `duplicate_id`, `canonical_id`, and `reason`.
+For `action="finalize"`, use this shape instead. The nested records illustrate optional changes; use empty `unit_updates` and `merges` arrays when no changes are justified. Replace example IDs with IDs from the supplied groups or tools.
+
+```json
+{
+  "action": "finalize",
+  "requests": [],
+  "group_order": ["existing-group-id"],
+  "unit_updates": [
+    {
+      "unit_id": "existing-unit-id",
+      "prerequisites": ["existing-prerequisite-id"],
+      "related_unit_ids": [],
+      "before_id": null
+    }
+  ],
+  "merges": [
+    {
+      "duplicate_id": "existing-duplicate-id",
+      "canonical_id": "existing-canonical-id",
+      "reason": "These units repeat the same teaching content at the same depth."
+    }
+  ],
+  "summary": "brief coordinated teaching plan",
+  "representative_unit_ids": ["existing-unit-id"]
+}
+```
 
 ## Hard Rules
 
 {{TRUST_BOUNDARY}}
 
+- `action` must be exactly `read` or `finalize`. For `read`, provide one to three requests and leave finalization arrays empty. Each `tool` must be exactly `read_units`, `search_units` or `read_sources`: use up to eight existing unit IDs for `read_units`, a nonblank concept query of at most 200 characters for `search_units`, or up to eight exact source IDs for `read_sources`. `offset` is a nonnegative integer. For `finalize`, leave `requests` empty. Do not add fields outside the illustrated shapes.
 - You coordinate existing local teaching plans for Annotation. Return
   CoordinationDecision. The groups below are summaries, not an exhaustive list of
   units. Every descendant unit is retained by the program unless you explicitly

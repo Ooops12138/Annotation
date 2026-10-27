@@ -17,7 +17,7 @@ Return only a valid JSON object matching `LocalBlueprintDraft`.
     {
       "knowledge_unit_id": "stable local ID",
       "title": "unit title",
-      "kind": "concept|formula|theorem|example|skill",
+      "kind": "concept",
       "learning_objectives": [
         "objective"
       ],
@@ -36,6 +36,7 @@ Return only a valid JSON object matching `LocalBlueprintDraft`.
 
 {{TRUST_BOUNDARY}}
 
+- The skeleton shows all output fields. Each unit's `kind` must be exactly `concept`, `formula`, `theorem`, `example` or `skill`; the example uses `concept`. Use local knowledge-unit IDs for in-window relationships and representatives; prerequisites outside this window may use meaningful names as explained below. `source_refs` contains exact source IDs. Use `skip_reason=null` for a nonempty plan, or a substantive string with `knowledge_units=[]` when skipping an eligible window. Do not add fields outside the skeleton.
 - Before returning, compare the union of your units' learning objectives with ALL
   teaching content in the owned window: definitions, theorem hypotheses and
   conclusions, methods and examples. Do not represent only the beginning or only
