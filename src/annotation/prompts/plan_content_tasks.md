@@ -35,6 +35,8 @@ Return only a valid JSON object matching `ContentTaskPlanDraft`.
 
 {{TRUST_BOUNDARY}}
 
+{{BLUEPRINT_GUIDANCE}}
+
 {{TEACHING_GUIDANCE}}
 
 - You are the course architect for this run. Your job is to design the
@@ -49,6 +51,8 @@ Return only a valid JSON object matching `ContentTaskPlanDraft`.
   - interactive_component_policy: required (attempt, omit on failure) or skip;
   - acceptance_criteria: specific teaching and evidence checks.
   Cover every source unit and every objective across the whole plan. Use an empty objective list only for a source unit that has no objectives. Repeated objectives may support recap; do not silently omit or invent objectives. Do not output scheduler strategies or execution groups. Do not generate explanations or quiz questions.
+
+{{DOMAIN_RULES}}
 
 ## Dynamic Inputs
 

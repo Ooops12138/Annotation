@@ -37,8 +37,8 @@ from annotation.workflow.helpers import response_metadata, provider_metadata
 from annotation.workflow.models import ContentDraft, ContentReflectionState, RetrievalDecision
 from annotation.config import model_max_output_tokens
 
-CONTENT_RETRIEVAL_PROMPT_VERSION = "content_agent_retrieval:v2:retrieval-profile"
-CONTENT_CRITIC_PROMPT_VERSION = "critique_content_artifact:v2:mathematics-teaching-profile"
+CONTENT_RETRIEVAL_PROMPT_VERSION = "content_agent_retrieval:v3:optional-subject"
+CONTENT_CRITIC_PROMPT_VERSION = "critique_content_artifact:v3:optional-subject"
 
 def build_content_reflection_subgraph(
     provider: ModelProvider,
@@ -97,7 +97,6 @@ def build_content_reflection_subgraph(
             else:
                 prompt = load_prompt(
                     "content_agent_retrieval",
-                    profile="retrieval",
                     KNOWLEDGE_UNIT_CONTEXT=_content_prompt_unit(unit),
                     CONTENT_TASK=_content_prompt_task(task),
                     RETRIEVAL_CONTEXT=render_context_pack(pack),
@@ -180,7 +179,6 @@ def build_content_reflection_subgraph(
         if is_revision:
             prompt = load_prompt(
                 "revise_content_artifact",
-                profile="mathematics",
                 KNOWLEDGE_UNIT_CONTEXT=_content_prompt_unit(unit),
                 CONTENT_TASK=_content_prompt_task(task),
                 CONTEXT_PACK=render_context_pack(pack),
@@ -199,18 +197,17 @@ def build_content_reflection_subgraph(
                 GENERATION_ERROR=str(state.get("generation_error") or ""),
             )
             agent = "revise_content_artifact"
-            prompt_version = "revise_content_artifact:v3:mathematics-profile"
+            prompt_version = "revise_content_artifact:v4:optional-subject"
         else:
             prompt = load_prompt(
                 "generate_content_artifact",
-                profile="mathematics",
                 KNOWLEDGE_UNIT_CONTEXT=_content_prompt_unit(unit),
                 CONTENT_TASK=_content_prompt_task(task),
                 CONTEXT_PACK=render_context_pack(pack),
                 ACCEPTANCE_CRITERIA=json.dumps(task.acceptance_criteria, ensure_ascii=False),
             )
             agent = "generate_content_artifact"
-            prompt_version = "generate_content_artifact:v3:mathematics-profile"
+            prompt_version = "generate_content_artifact:v4:optional-subject"
         result: dict[str, Any] = {
             "attempt": attempt,
             "generation_stage": "revision" if is_revision else "initial",
@@ -330,7 +327,6 @@ def build_content_reflection_subgraph(
         candidate = state.get("candidate_artifact")
         prompt = load_prompt(
             "critique_content_artifact",
-            profile="mathematics",
             KNOWLEDGE_UNIT_CONTEXT=_content_prompt_unit(unit),
             DEPTH_GUIDANCE=task.depth_guidance,
             ACCEPTANCE_CRITERIA=json.dumps(task.acceptance_criteria, ensure_ascii=False),

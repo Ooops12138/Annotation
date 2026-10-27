@@ -515,7 +515,7 @@ def test_quiz_prompt_allows_agent_to_select_count() -> None:
     assert '"question_count"' not in prompt
     assert "exactly `2` questions" not in prompt
     assert "{{CONTEXT_PACK}}" not in prompt
-    assert "### Domain rules: mathematics quiz" in prompt
+    assert "### Domain rules: mathematics" not in prompt
     assert "{{DOMAIN_RULES}}" not in prompt
 
 

@@ -37,6 +37,7 @@ from annotation.workflow.concurrency import workflow_max_workers
 from annotation.workflow.context import RunResources, WorkflowContext
 from annotation.workflow.control import ControlledPort, RunControl, RunStopped
 from annotation.workflow.models import WorkflowState
+from annotation.prompt_loader import prompt_profile_scope, validate_prompt_profile
 from annotation.workflow.persistence import persist_workflow_snapshots
 
 
@@ -187,18 +188,23 @@ def tracked_node(
     if progress_callback:
         progress_callback(name, state, "started")
     try:
-        if runtime.context is None:
-            # Direct compiled-graph callers may opt out of cross-node client reuse.
-            with RunResources() as resources:
-                update = node(replace(ctx, resources=resources), state)
-        else:
-            update = node(replace(ctx, resources=runtime.context), state)
+        with prompt_profile_scope(state.get("prompt_profile")):
+            update = _invoke_node(ctx, node, state, runtime)
     except RunStopped:
         interrupt({"reason": "user_requested_stop", "stage": name})
         raise
     if progress_callback:
         progress_callback(name, {**state, **update}, "completed")
     return update
+
+
+def _invoke_node(ctx: WorkflowContext, node: Callable[..., Any], state: WorkflowState,
+                 runtime: Runtime[RunResources]) -> dict[str, Any]:
+    if runtime.context is None:
+        # Direct compiled-graph callers may opt out of cross-node client reuse.
+        with RunResources() as resources:
+            return node(replace(ctx, resources=resources), state)
+    return node(replace(ctx, resources=runtime.context), state)
 
 
 def build_minimal_graph(
@@ -275,11 +281,13 @@ def run_minimal_workflow(
     progress_callback: Callable[[str, WorkflowState, str], None] | None = None,
     run_control: RunControl | None = None,
     resume_checkpoint: dict[str, Any] | None = None,
+    prompt_profile: str | None = None,
 ) -> WorkflowState:
     if resume_checkpoint and resume_checkpoint.get("run_id") != run_id:
         raise ValueError("native resume must keep the original run_id")
     initial: WorkflowState = {
         "run_id": run_id,
+        "prompt_profile": validate_prompt_profile(prompt_profile),
         "blueprint_attempts": [],
         "blueprint_trace_id": f"trace-{uuid.uuid4().hex[:12]}",
     }
@@ -311,6 +319,7 @@ def run_minimal_workflow(
         if resume_checkpoint:
             config = resume_checkpoint["config"]
             snapshot = graph.get_state(config)
+            validate_prompt_profile(snapshot.values.get("prompt_profile"))
             value = (
                 Command(resume=True)
                 if any(task.interrupts for task in snapshot.tasks)

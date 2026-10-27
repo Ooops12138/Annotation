@@ -24,8 +24,8 @@ from annotation.workflow.blueprint_checks import validate_blueprint
 from annotation.workflow.budget import PromptBudget, positive_setting
 from annotation.workflow.models import BlueprintDraft
 
-COORDINATION_PROMPT_VERSION = "coordinate_blueprint:v2:coordination-profile"
-LOCAL_BLUEPRINT_PROMPT_VERSION = "generate_local_blueprint:v2:blueprint-profile"
+COORDINATION_PROMPT_VERSION = "coordinate_blueprint:v3:optional-subject"
+LOCAL_BLUEPRINT_PROMPT_VERSION = "generate_local_blueprint:v3:optional-subject"
 
 class LocalBlueprintDraft(BlueprintDraft):
     model_config = ConfigDict(extra="forbid")
@@ -91,7 +91,7 @@ def render_slices(slices: list[SourceSlice], blocks: dict[str, SourceBlock]) -> 
 
 
 def window_prompt(window: BlueprintWindow, blocks: dict[str, SourceBlock], feedback: str = "") -> str:
-    return load_prompt("generate_local_blueprint", profile="blueprint", WINDOW=_json({
+    return load_prompt("generate_local_blueprint", WINDOW=_json({
         "window_id": window.window_id, "section_id": window.node_id, "path": window.path,
         "owned": render_slices(window.slices, blocks),
         "context_only": render_slices(window.context_slices, blocks),
@@ -407,7 +407,7 @@ class BlueprintEngine:
 
         for step in range(self.tool_steps):
             decision = self.generate("coordinate_blueprint", f"{scope_id}:step-{step + 1}", CoordinationDecision,
-                lambda feedback: load_prompt("coordinate_blueprint", profile="coordination", GROUPS=_json(cards), TOOL_RESULT=_json(tool_result), FEEDBACK=feedback), check)
+                lambda feedback: load_prompt("coordinate_blueprint", GROUPS=_json(cards), TOOL_RESULT=_json(tool_result), FEEDBACK=feedback), check)
             if decision.action == "read":
                 tool_result = []
                 for request in decision.requests:
@@ -416,7 +416,7 @@ class BlueprintEngine:
                     tool_result.append(result)
                 # Tool results cannot overflow the next request. Return an explicit
                 # narrowing request, never silently truncate source evidence.
-                prompt = load_prompt("coordinate_blueprint", profile="coordination", GROUPS=_json(cards), TOOL_RESULT=_json(tool_result), FEEDBACK="")
+                prompt = load_prompt("coordinate_blueprint", GROUPS=_json(cards), TOOL_RESULT=_json(tool_result), FEEDBACK="")
                 if not self.budget.fits(prompt, CoordinationDecision):
                     tool_result = {"error": "tool_result_over_budget; request fewer IDs or use read_sources with offsets"}
                 # Retain earlier useful reads while they fit. Dropping the first
@@ -424,7 +424,7 @@ class BlueprintEngine:
                 # very ID the agent needed to resolve a cross-chapter relation.
                 current = tool_result if isinstance(tool_result, list) else [tool_result]
                 candidate_history = [*history, *current]
-                prompt = load_prompt("coordinate_blueprint", profile="coordination", GROUPS=_json(cards), TOOL_RESULT=_json(candidate_history), FEEDBACK="")
+                prompt = load_prompt("coordinate_blueprint", GROUPS=_json(cards), TOOL_RESULT=_json(candidate_history), FEEDBACK="")
                 if self.budget.fits(prompt, CoordinationDecision):
                     history = candidate_history
                 else:
@@ -507,7 +507,7 @@ class BlueprintEngine:
                         if not batches:
                             batches.append([])
                         candidate = [*batches[-1], group]
-                        prompt = load_prompt("coordinate_blueprint", profile="coordination", GROUPS=_json([self._card(g) for g in candidate]), TOOL_RESULT="[]", FEEDBACK="")
+                        prompt = load_prompt("coordinate_blueprint", GROUPS=_json([self._card(g) for g in candidate]), TOOL_RESULT="[]", FEEDBACK="")
                         if len(candidate) > 4 or not PromptBudget(max(0, self.budget.input_tokens - 1800), self.budget.output_tokens).fits(prompt, CoordinationDecision):
                             batches.append([group])
                         else:

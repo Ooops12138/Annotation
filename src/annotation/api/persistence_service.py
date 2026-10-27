@@ -367,6 +367,7 @@ def persist_workflow_result(
             origin=origin,
             error="; ".join([*state.get("errors", []), *incomplete]) or None,
             metadata={
+                "prompt_profile": state.get("prompt_profile"),
                 "artifact_ids": {kind: item["artifact_id"] for kind, item in artifacts.items()},
                 "warnings": list(state.get("warnings", [])),
                 "provider_metadata": dict(state.get("provider_metadata", {})),
@@ -389,6 +390,7 @@ def persist_workflow_result(
             origin=origin,
             error="; ".join(state.get("errors", [])) or None,
             metadata={
+                "prompt_profile": state.get("prompt_profile"),
                 "artifact_ids": {kind: item["artifact_id"] for kind, item in artifacts.items()},
                 "warnings": list(state.get("warnings", [])),
                 "provider_metadata": dict(state.get("provider_metadata", {})),
@@ -441,6 +443,7 @@ def persist_workflow_result(
         origin=origin,
         error="; ".join(state.get("errors", [])) or None,
         metadata={
+            "prompt_profile": state.get("prompt_profile"),
             "artifact_ids": {kind: item["artifact_id"] for kind, item in artifacts.items()},
             "document_version_id": db_version["document_version_id"],
             "warnings": list(state.get("warnings", [])),

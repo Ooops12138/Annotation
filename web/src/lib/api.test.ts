@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getDocument, getLibrary, startRun, uploadBook } from './api'
+import { getDocument, getLibrary, getPromptProfiles, startRun, uploadBook } from './api'
 
 function response(payload: unknown, status = 200): Response {
   return {
@@ -16,6 +16,19 @@ afterEach(() => {
 })
 
 describe('document library API boundary', () => {
+  it('lists local subjects and sends the selected package only for a new run', async () => {
+    const profiles = [{ id: 'custom', label: 'Custom subject' }]
+    const fetchMock = vi.fn().mockResolvedValueOnce(response({ profiles }))
+      .mockResolvedValueOnce(response({ status: 'succeeded', run_id: 'run-custom' }))
+      .mockResolvedValueOnce(response({ status: 'succeeded', run_id: 'run-custom' }))
+    vi.stubGlobal('fetch', fetchMock)
+    expect(await getPromptProfiles()).toEqual(profiles)
+    await startRun('book-1', undefined, undefined, 'custom')
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).prompt_profile).toBe('custom')
+    await startRun('book-1', undefined, 'run-custom', 'mathematics')
+    expect(fetchMock.mock.calls[2]).toEqual(['http://127.0.0.1:8000/api/runs/run-custom', undefined])
+  })
+
   it('polls queued and running snapshots until the document is available', async () => {
     vi.useFakeTimers()
     vi.stubGlobal('window', { setTimeout })

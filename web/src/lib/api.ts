@@ -179,15 +179,24 @@ export async function getRun(runId: string): Promise<WorkflowRunResult> {
   return payload as WorkflowRunResult
 }
 
+export async function getPromptProfiles(): Promise<Array<{ id: string; label: string }>> {
+  const response = await fetchApi('/api/prompt-profiles')
+  const payload = await readJson<any>(response, '学科选项加载失败')
+  if (!Array.isArray(payload?.profiles) || !payload.profiles.every((item: any) =>
+    typeof item?.id === 'string' && typeof item?.label === 'string')) throw new Error('学科选项格式无效')
+  return payload.profiles
+}
+
 export async function startRun(
   bookId: string,
   onSnapshot?: (snapshot: WorkflowRunResult) => void,
   existingRunId?: string,
+  promptProfile?: string,
 ): Promise<WorkflowRunResult> {
   const response = existingRunId ? await fetchApi(`/api/runs/${encodeURIComponent(existingRunId)}`) : await fetchApi('/api/runs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ book_id: bookId, async_run: true, run_id: existingRunId }),
+    body: JSON.stringify({ book_id: bookId, async_run: true, run_id: existingRunId, prompt_profile: promptProfile }),
   })
   let payload = await readJson<any>(response, '学习文档生成失败')
   if (!isRecord(payload) || typeof payload.status !== 'string') throw new Error('运行响应格式无效')

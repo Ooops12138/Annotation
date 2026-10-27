@@ -116,8 +116,8 @@ def test_split_task_critic_receives_only_its_assigned_objectives():
     assert json.loads(context)["learning_objectives"] == [original.objective_context()[0]]
     assert "other task objective" not in critic.prompt
     assert "Judge only the learning objectives" in critic.prompt
-    assert "### Domain teaching guidance: mathematics" in critic.prompt
-    assert critic.metadata["prompt_version"] == "critique_content_artifact:v2:mathematics-teaching-profile"
+    assert "### General teaching guidance" in critic.prompt
+    assert critic.metadata["prompt_version"] == "critique_content_artifact:v3:optional-subject"
     assert result["route"] == "accept"
 
 

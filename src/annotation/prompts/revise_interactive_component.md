@@ -89,6 +89,10 @@ Or:
 
 - Repair the supplied hard-check, sandbox and semantic issues. If a safe, useful and evidence-backed component cannot be produced, return `spec=null` with a specific reason.
 
+{{DOMAIN_RULES}}
+
+{{TEACHING_GUIDANCE}}
+
 ## Dynamic Inputs
 
 ### Previous generation error, if any

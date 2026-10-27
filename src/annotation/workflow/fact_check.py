@@ -48,10 +48,10 @@ from annotation.workflow.models import (
 from annotation.workflow.quiz import validate_quiz_artifact, quiz_draft_issues, accepted_content_context
 
 
-EXTRACT_CLAIMS_PROMPT_VERSION = "extract_fact_check_claims:v2:mathematics-fact-check-profile"
-FACT_CHECK_ASSESS_PROMPT_VERSION = "assess_fact_check_claims:v2:mathematics-fact-check-profile"
-FACT_CHECK_RETRIEVAL_PROMPT_VERSION = "fact_check_retrieval:v2:retrieval-profile"
-REGENERATE_QUIZ_PROMPT_VERSION = "regenerate_quiz_for_fact_check:v4:mathematics-quiz-profile"
+EXTRACT_CLAIMS_PROMPT_VERSION = "extract_fact_check_claims:v3:optional-subject"
+FACT_CHECK_ASSESS_PROMPT_VERSION = "assess_fact_check_claims:v3:optional-subject"
+FACT_CHECK_RETRIEVAL_PROMPT_VERSION = "fact_check_retrieval:v3:optional-subject"
+REGENERATE_QUIZ_PROMPT_VERSION = "regenerate_quiz_for_fact_check:v5:optional-subject"
 
 
 def _dump(value: Any) -> Any:
@@ -172,7 +172,6 @@ def _extract_claims(
     by_id = {target["target_id"]: target for target in targets}
     prompt = load_prompt(
         "extract_fact_check_claims",
-        profile="mathematics_fact_check",
         MAX_CLAIMS=policy.max_claims_per_unit,
         KNOWLEDGE_UNIT=json.dumps(_dump(unit), ensure_ascii=False, indent=2),
         TARGETS=json.dumps(targets, ensure_ascii=False, indent=2),
@@ -264,7 +263,6 @@ def _assess_claims(
 
     prompt = load_prompt(
         "assess_fact_check_claims",
-        profile="mathematics_fact_check",
         CLAIMS=json.dumps([
             {"claim_id": claim.claim_id, "target_id": claim.target_id, "role": claim.role, "text": claim.text, "query": claim.query}
             for claim in claims
@@ -404,7 +402,6 @@ def _correct_content(
 ) -> tuple[ContentArtifact | None, str | None]:
     prompt = load_prompt(
         "revise_content_for_fact_check",
-        profile="mathematics_fact_check",
         KNOWLEDGE_UNIT_CONTEXT=json.dumps(_dump(unit), ensure_ascii=False, indent=2),
         CONTEXT_PACK=render_context_pack(context_pack),
         CANDIDATE_ARTIFACT=json.dumps(_dump(content), ensure_ascii=False, indent=2),
@@ -416,7 +413,7 @@ def _correct_content(
             prompt=prompt,
             schema=ContentDraft,
             max_output_tokens=_output_limit(provider, 2400),
-            metadata={"agent": "revise_content_for_fact_check", "prompt_version": "revise_content_for_fact_check:v4:mathematics-fact-check-profile", "task_id": task.task_id, "revision_of": content.artifact_id},
+            metadata={"agent": "revise_content_for_fact_check", "prompt_version": "revise_content_for_fact_check:v5:optional-subject", "task_id": task.task_id, "revision_of": content.artifact_id},
         ))
         draft = ContentDraft.model_validate(_dump(response.value))
     except ProviderError as exc:
@@ -432,7 +429,7 @@ def _correct_content(
         run_id=content.run_id,
         provider_name=str(getattr(provider, "provider", "unknown")),
         attempt=content.version + 1,
-        prompt_version="revise_content_for_fact_check:v4:mathematics-fact-check-profile",
+        prompt_version="revise_content_for_fact_check:v5:optional-subject",
     )
     check = _content_hard_check(
         task=task,
@@ -460,7 +457,6 @@ def _correct_quiz(
 ) -> tuple[QuizArtifact | None, str | None]:
     prompt = load_prompt(
         "regenerate_quiz_for_fact_check",
-        profile="mathematics_quiz",
         KNOWLEDGE_UNIT_CONTEXT=json.dumps(_dump(unit), ensure_ascii=False, indent=2),
         CONTEXT_PACK=render_context_pack(context_pack),
         QUIZ_ARTIFACT=json.dumps(_dump(quiz), ensure_ascii=False, indent=2),
@@ -558,7 +554,6 @@ def _fact_check_retrieval_decision(
         return workflow_capabilities.fact_check_retrieval_decision()
     prompt = load_prompt(
         "fact_check_retrieval",
-        profile="retrieval",
         CLAIM=json.dumps(_dump(claim), ensure_ascii=False, indent=2),
         CONTEXT=json.dumps([_dump(item) for item in _context_pack_evidence(context_pack)[0]], ensure_ascii=False),
     )

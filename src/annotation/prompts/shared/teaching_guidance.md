@@ -1,4 +1,4 @@
-### Domain teaching guidance: mathematics
+### General teaching guidance
 
 - For `concise`, focus on the core objective and include only the explanation, steps, or examples needed to understand it.
 - For `standard`, fully explain the objectives, including the necessary reasoning and useful examples.

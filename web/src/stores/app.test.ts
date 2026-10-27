@@ -139,6 +139,15 @@ describe('document library store', () => {
     expect(store.document).toEqual(document)
     expect(store.selectedDocumentId).toBe('doc-1')
   })
+  it('uses the selected local subject when explicitly generating a new document', async () => {
+    vi.mocked(getLibrary).mockResolvedValue(library)
+    vi.mocked(startRun).mockResolvedValue({ status: 'succeeded', document })
+    const store = useAppStore()
+    store.promptProfile = 'custom'
+    await store.generate('book-1')
+    expect(startRun).toHaveBeenCalledWith('book-1', expect.any(Function), undefined, 'custom')
+  })
+
   it('clears a previously open document when a new run is blocked', async () => {
     vi.mocked(getLibrary).mockResolvedValue(library)
     vi.mocked(startRun).mockResolvedValue({ status: 'blocked', document: null })

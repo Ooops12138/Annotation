@@ -38,8 +38,8 @@ from annotation.workflow.models import QuizRetrievalDecision
 from annotation.workflow.content_support import _markdown_formula_format_issues
 
 
-QUIZ_PROMPT_VERSION = "generate_quiz_artifact:v8:mathematics-quiz-profile"
-QUIZ_RETRIEVAL_PROMPT_VERSION = "quiz_retrieval:v2:retrieval-profile"
+QUIZ_PROMPT_VERSION = "generate_quiz_artifact:v9:optional-subject"
+QUIZ_RETRIEVAL_PROMPT_VERSION = "quiz_retrieval:v3:optional-subject"
 logger = logging.getLogger(__name__)
 # There is intentionally no default or minimum quiz size.  The agent decides
 # how many evidence-supported items are useful for a unit, including zero.
@@ -644,7 +644,6 @@ def build_quiz_prompt(
     }
     return load_prompt(
         "generate_quiz_artifact",
-        profile="mathematics_quiz",
         KNOWLEDGE_UNIT_CONTEXT=_unit_context(unit),
         CONTEXT_PACK=render_context_pack(context_pack),
         TARGET_OBJECTIVES=json.dumps(unit.objective_context(), ensure_ascii=False),
@@ -705,7 +704,6 @@ def retrieve_quiz_context(
         return context_pack
     prompt = load_prompt(
         "quiz_retrieval",
-        profile="retrieval",
         UNIT=json.dumps(_unit_context(unit), ensure_ascii=False),
         CONTEXT=render_context_pack(context_pack),
     )

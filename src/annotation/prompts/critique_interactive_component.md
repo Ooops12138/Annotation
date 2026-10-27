@@ -32,6 +32,8 @@ Return only a valid JSON object matching `InteractiveComponentCritiqueDraft`.
 - Do not add sources.
 - The shared renderer's control limits are acceptance requirements: `interval_line` supports only the optional `show-supremum` toggle, which displays a supremum marker. It does not switch endpoint types, interval ranges or maxima. `complex_plane` and `function_graph` currently support no controls.
 
+{{DOMAIN_RULES}}
+
 ## Dynamic Inputs
 
 ### Knowledge unit

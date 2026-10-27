@@ -504,7 +504,6 @@ def build_interactive_component_subgraph(
         candidate = state.get("candidate_artifact")
         prompt = load_prompt(
             "critique_interactive_component",
-            profile="interactive",
             KNOWLEDGE_UNIT_CONTEXT=_interactive_prompt_unit(state["unit"]),
             ACCEPTED_CONTENT=_interactive_prompt_content(state["content_artifact"]),
             CONTEXT_PACK=render_context_pack(state["context_pack"]),
@@ -535,7 +534,7 @@ def build_interactive_component_subgraph(
                     max_output_tokens=output_limit(1400),
                     metadata={
                         "agent": "critique_interactive_component",
-                        "prompt_version": "critique_interactive_component:v2:interactive-critique-profile",
+                        "prompt_version": "critique_interactive_component:v3:optional-subject",
                         "run_id": state["run_id"],
                         "task_id": task.task_id,
                         "knowledge_unit_id": task.knowledge_unit_id,
@@ -546,7 +545,7 @@ def build_interactive_component_subgraph(
                 critique = InteractiveComponentCritiqueDraft.model_validate(response.value.model_dump(mode="python"))
                 metadata = response_metadata(response)
                 metadata["agent"] = "critique_interactive_component"
-                metadata["prompt_version"] = "critique_interactive_component:v2:interactive-critique-profile"
+                metadata["prompt_version"] = "critique_interactive_component:v3:optional-subject"
                 raw_output = response.raw_text
             result.update({
                 "critic_status": "succeeded",
@@ -569,14 +568,14 @@ def build_interactive_component_subgraph(
                 "critic_error": str(exc),
                 "critic_error_category": category,
                 "critic_retryable": bool(getattr(exc, "retryable", False) or category == "schema"),
-                "critic_provider_metadata": {**provider_metadata(provider), "agent": "critique_interactive_component", "prompt_version": "critique_interactive_component:v2:interactive-critique-profile"},
+                "critic_provider_metadata": {**provider_metadata(provider), "agent": "critique_interactive_component", "prompt_version": "critique_interactive_component:v3:optional-subject"},
             })
         except Exception as exc:
             result.update({
                 "critic_status": "provider_error",
                 "critic_error": str(exc),
                 "critic_error_category": "runtime",
-                "critic_provider_metadata": {**provider_metadata(provider), "agent": "critique_interactive_component", "prompt_version": "critique_interactive_component:v2:interactive-critique-profile"},
+                "critic_provider_metadata": {**provider_metadata(provider), "agent": "critique_interactive_component", "prompt_version": "critique_interactive_component:v3:optional-subject"},
             })
         return result
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import {
   BookOpen,
   CircleAlert,
@@ -12,9 +12,11 @@ import LearningDocumentRenderer from './LearningDocumentRenderer.vue'
 import { useAppStore } from '../../stores/app'
 import { normalizeLearningDocument, normalizeReviewReport } from '../../lib/documentAdapter'
 import { reviewStatusLabel } from '../../lib/document'
-import type { LibraryBook, LibraryDocumentSummary } from '../../lib/api'
+import { getPromptProfiles, type LibraryBook, type LibraryDocumentSummary } from '../../lib/api'
 
 const app = useAppStore()
+const promptProfiles = ref<Array<{ id: string; label: string }>>([])
+const profileError = ref('')
 const document = computed(() => normalizeLearningDocument(app.document, app.reviewReport))
 const selectedBook = computed(() => app.selectedBook)
 const selectedSummary = computed(() => app.selectedDocumentSummary)
@@ -121,6 +123,9 @@ onMounted(() => {
   // Library loading is read-only. No model-triggering request occurs here.
   app.loadLibrary().catch(() => undefined)
   app.resumeRun()
+  getPromptProfiles().then((profiles) => { promptProfiles.value = profiles }).catch(() => {
+    profileError.value = '学科增强选项暂不可用，仍可使用通用模式。'
+  })
 })
 
 watch(() => app.error, (error) => {
@@ -220,6 +225,13 @@ watch(blocked, (isBlocked) => {
             <h2>{{ bookTitle(selectedBook) }}</h2>
             <p class="library-content-meta">{{ bookMeta(selectedBook) }}</p>
           </div>
+          <label class="subject-select">
+            <span>学科增强（可选）</span>
+            <select v-model="app.promptProfile" :disabled="app.generating" aria-label="学科增强">
+              <option value="">通用 · 不指定学科</option>
+              <option v-for="profile in promptProfiles" :key="profile.id" :value="profile.id">{{ profile.label }}</option>
+            </select>
+          </label>
           <button type="button" class="generate-button" :disabled="app.generating" @click="generateSelected">
             <LoaderCircle v-if="app.generating" class="spin" :size="16" stroke-width="1.7" aria-hidden="true" />
             <Sparkles v-else :size="16" stroke-width="1.7" aria-hidden="true" />
@@ -230,6 +242,7 @@ watch(blocked, (isBlocked) => {
           </button>
         </header>
 
+        <p v-if="profileError" class="library-content-meta" role="status">{{ profileError }}</p>
         <div v-if="app.error" class="annotation-error" role="alert">
           <CircleAlert :size="16" stroke-width="1.5" aria-hidden="true" />
           <span>{{ app.error }}</span>
@@ -267,6 +280,10 @@ watch(blocked, (isBlocked) => {
 </template>
 
 <style scoped>
+.subject-select { display: grid; gap: .35rem; flex: 0 1 auto; min-width: 0; color: #55514b; font-size: .75rem; }
+.subject-select select { max-width: 100%; padding: .5rem .6rem; border: 1px solid #c9c5bd; border-radius: .25rem; background: #faf9f6; color: #171717; font: inherit; }
+.subject-select select:focus-visible { outline: 2px solid #8b2e24; outline-offset: 2px; }
+
 .annotation-masthead { display: flex; align-items: flex-start; justify-content: space-between; gap: 2rem; }
 .annotation-title-block { max-width: 46rem; }
 .annotation-kicker { margin: 0 0 .85rem; color: #8b2e24; font: 600 .7rem/1.2 "IBM Plex Mono", "SFMono-Regular", Consolas, monospace; letter-spacing: .18em; }

@@ -26,6 +26,8 @@ Return only a valid JSON object matching `ContentCritiqueDraft`.
 
 {{TRUST_BOUNDARY}}
 
+{{GENERAL_TEACHING_GUIDANCE}}
+
 {{TEACHING_GUIDANCE}}
 
 - You are the teaching-quality critic for an already source-checked artifact.

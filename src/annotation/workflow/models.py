@@ -299,6 +299,7 @@ class ContentReflectionState(TypedDict, total=False):
 
 
 class WorkflowState(TypedDict, total=False):
+    prompt_profile: str | None
     run_id: str
     document_id: str
     pdf_path: str

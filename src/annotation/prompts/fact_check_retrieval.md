@@ -39,6 +39,8 @@ Return only a valid JSON object matching `FactCheckRetrievalDecision`.
 - Do not decide whether the assertion is true here. Choose tools and focused
   queries; the assessor will judge the returned evidence.
 
+{{DOMAIN_RULES}}
+
 ## Dynamic Inputs
 
 ### Assertion

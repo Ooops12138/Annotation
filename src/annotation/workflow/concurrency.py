@@ -1,6 +1,7 @@
 """Bounded task execution with stable ordering and explicit batch barriers."""
 
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from threading import RLock
 from typing import Callable, Iterable, TypeVar
 import os
@@ -30,7 +31,9 @@ def ordered_batches(function: Callable[[T], R], items: Iterable[T], *, workers: 
         return results
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="annotation-unit") as executor:
         for offset in range(0, len(pending), workers):
-            batch = list(executor.map(function, pending[offset:offset + workers]))
+            futures = [executor.submit(copy_context().run, function, item)
+                       for item in pending[offset:offset + workers]]
+            batch = [future.result() for future in futures]
             results.extend(batch)
             if any(stop(result) for result in batch):
                 break

@@ -42,5 +42,5 @@ annotation = [
   "prompts/shared/*.md",
   "prompt_layers/*.json",
   "prompt_layers/*.md",
-  "prompt_layers/profiles/*/*.md",
+  "prompt_layers/*/*.md",
 ]

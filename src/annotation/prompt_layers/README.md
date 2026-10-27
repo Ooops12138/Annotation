@@ -1,30 +1,34 @@
-# Prompt layer migration
+# 可选学科增强
 
-This directory is the additive layer for the prompt migration.
+`../prompts/` 提供独立完整的基础流程。这里仅存放可选的学科规则与教学方法，当前内置 mathematics（数学）。未选择学科时，提示词加载不读取此目录的配置或规则。
 
-- `manifest.json` declares profiles and which slots each agent may read.
-- Profile rules are editable Markdown and are injected only into prompts that declare the slot in the manifest.
-- Existing shared contracts and Pydantic-generated output schemas remain owned by `src/annotation/prompt_loader.py`.
-- `profile=None` uses an agent's manifest default. `profile=""` disables profile injection for comparison or rollback testing.
-- This layer is currently piloted by the content authoring, quiz, retrieval, and
-  fact-check agents. The two content authoring agents read the mathematics
-  profile; the quiz author and fact-check quiz correction read only the separate
-  `mathematics_quiz` domain-rules profile; the three retrieval agents read only
-  the generic `retrieval` profile; and the claim extractor, fact-check revision
-  agent, and fact-check assessor read only the separate
-  `mathematics_fact_check` domain-rules profile. Evidence assignment and
-  verdict normalization remain workflow-owned contracts. The blueprint
-  coordinator reads only the generic `coordination` `EVIDENCE_RULES` profile;
-  tool protocol remains core/workflow owned. The content critic reads only
-  `TEACHING_GUIDANCE` from the mathematics profile; issue routing and evidence
-  boundaries remain core/workflow owned.
-- The local blueprint, blueprint loader/reviser and course architect read only
-  `TEACHING_GUIDANCE` from the separate `blueprint` profile. Blueprint schema,
-  objective identity, window bounds, coverage and skip policies remain
-  core/workflow contracts.
-- Interactive component generation and revision read no profile. Renderer and
-  sandbox capabilities, component schema, source bindings and revision routing
-  remain core/workflow contracts.
-- `migration_plan.json` records completed migrations and candidate agents. A
-  candidate is not enabled in the runtime manifest until its open choice is
-  confirmed.
+## 使用
+
+- 页面：生成前在“学科增强”中选择“通用 · 不指定学科”或已注册学科。
+- API：GET /api/prompt-profiles 列出本地学科；POST /api/runs 可传 `"prompt_profile": "mathematics"`，省略或传 null 为通用模式。
+- Python：`run_minimal_workflow(..., prompt_profile="mathematics")`；单个提示词使用 `load_prompt(..., profile="mathematics")`。
+- 选择按运行保存，续跑读取原生检查点中的原选择，不受页面当前选择影响。
+
+## 添加自定义学科
+
+新建目录，例如 physics/，放入 domain_rules.md 和/或 teaching_guidance.md。在 manifest.json 的 profiles 中注册如下条目：
+
+```json
+{
+  "physics": {
+    "label": "物理",
+    "slots": {
+      "DOMAIN_RULES": "physics/domain_rules.md",
+      "TEACHING_GUIDANCE": "physics/teaching_guidance.md"
+    }
+  }
+}
+```
+
+以上是添加到 profiles 中的条目；完整 manifest 保留 `"version": 2`。刷新页面后新学科会出现在选择列表，无需修改工作流代码。
+
+两个槽位均可省略。只有模板声明的槽位会注入；正文教学 Critic 仅接收教学指导，继续只评教学质量。缺少槽位沿用通用提示词；声明的文件丢失、非法槽位、未知学科或路径越界则报错。规则按原文注入，`{{...}}` 不再次展开。
+
+DOMAIN_RULES 描述本学科跨阶段适用的约束，必要时写明“生成时”“核查时”等适用条件；TEACHING_GUIDANCE 描述本学科特有的讲解、规划和教学评价方法。通用深度档位、来源边界、检索语言、输出 schema、工具/渲染协议及审核路由仍归 prompts/ 和程序所有。自定义规则不能改变程序校验和发布门。
+
+一次运行最多选择一个包，不支持代码执行、继承、多包叠加或在线安装。效果需另行通过教材对照评估。

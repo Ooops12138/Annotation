@@ -236,7 +236,7 @@ def test_coordinator_tools_resolve_cross_chapter_prerequisite_and_read_source():
     assert [t["request"]["tool"] for t in engine.trace.tool_calls] == ["search_units", "read_sources"]
     coordination_calls = [call for call in engine.provider.calls if call.schema == CoordinationDecision]
     assert coordination_calls and all("### Evidence and dependency rules" in call.prompt for call in coordination_calls)
-    assert coordination_calls[0].metadata["prompt_version"] == "coordinate_blueprint:v2:coordination-profile"
+    assert coordination_calls[0].metadata["prompt_version"] == "coordinate_blueprint:v3:optional-subject"
 
 
 def test_explicit_merge_preserves_provenance_and_learning_objectives():

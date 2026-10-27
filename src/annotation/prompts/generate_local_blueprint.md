@@ -36,6 +36,8 @@ Return only a valid JSON object matching `LocalBlueprintDraft`.
 
 {{TRUST_BOUNDARY}}
 
+{{BLUEPRINT_GUIDANCE}}
+
 {{TEACHING_GUIDANCE}}
 
 - The skeleton shows all output fields. Each unit's `kind` must be exactly `concept`, `formula`, `theorem`, `example` or `skill`; the example uses `concept`. Use local knowledge-unit IDs for in-window relationships and representatives; prerequisites outside this window may use meaningful names as explained below. `source_refs` contains exact source IDs. Use `skip_reason=null` for a nonempty plan, or a substantive string with `knowledge_units=[]` when skipping an eligible window. Do not add fields outside the skeleton.
@@ -66,6 +68,8 @@ Return only a valid JSON object matching `LocalBlueprintDraft`.
   missing context or unreadable evidence. Those are issues to report, not exclusions.
 
 - Return new learning objectives as text strings. The program binds stable `objective_id` values after assigning the final knowledge-unit ID; do not invent objective IDs.
+
+{{DOMAIN_RULES}}
 
 ## Dynamic Inputs
 

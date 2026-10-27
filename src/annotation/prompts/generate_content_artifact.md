@@ -44,6 +44,8 @@ Return only a valid JSON object matching `ContentDraft` and this JSON Schema:
 
 {{DOMAIN_RULES}}
 
+{{GENERAL_TEACHING_GUIDANCE}}
+
 {{TEACHING_GUIDANCE}}
 
 ## Dynamic Inputs

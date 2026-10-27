@@ -49,8 +49,9 @@ def sandbox(*args, **kwargs):
         "assemble",
     ],
 )
+@pytest.mark.parametrize("prompt_profile", [None, "mathematics"])
 def test_native_resume_rebuilds_resources_without_repeating_completed_nodes(
-    monkeypatch, tmp_path, stage
+    monkeypatch, tmp_path, stage, prompt_profile
 ):
     _install_source_fixture(monkeypatch)
     control = RunControl(f"resume-{uuid.uuid4().hex[:8]}", root=tmp_path)
@@ -67,6 +68,7 @@ def test_native_resume_rebuilds_resources_without_repeating_completed_nodes(
             provider=OfflineFixtureProvider(),
             run_id=control.run_id,
             run_control=control,
+            prompt_profile=prompt_profile,
             progress_callback=progress,
             interactive_component_sandbox_runner=sandbox,
         )
@@ -76,6 +78,7 @@ def test_native_resume_rebuilds_resources_without_repeating_completed_nodes(
     with workflow_checkpointer(control.run_id, tmp_path) as saver:
         saved = saver.get_tuple(descriptor["config"])
         assert "content_retrieval_connection" not in saved.checkpoint["channel_values"]
+        assert saved.checkpoint["channel_values"]["prompt_profile"] == prompt_profile
     result = run_minimal_workflow(
         provider=OfflineFixtureProvider(),
         run_id=control.run_id,
@@ -86,6 +89,12 @@ def test_native_resume_rebuilds_resources_without_repeating_completed_nodes(
         ),
         interactive_component_sandbox_runner=sandbox,
     )
+    assert result["prompt_profile"] == prompt_profile
+    for trace in result["content_loop_traces"]:
+        for attempt in trace.attempts:
+            assert ("### Domain rules: mathematics" in attempt.generation_prompt) == bool(prompt_profile)
+            if attempt.critic_prompt:
+                assert ("### Domain teaching guidance: mathematics" in attempt.critic_prompt) == bool(prompt_profile)
     assert result["document"].run_id == control.run_id
     assert result["document"].status in {"accepted", "published"}
     assert (

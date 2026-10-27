@@ -32,6 +32,8 @@ Return only a valid JSON object matching `QuizRetrievalDecision`.
 
 - Use empty query arrays for `use_context`; for `search`, provide at least one and at most three focused textbook queries.
 
+{{DOMAIN_RULES}}
+
 ## Dynamic Inputs
 
 ### Unit and objectives

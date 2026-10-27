@@ -24,6 +24,15 @@ Annotation 是一个教材驱动的 AI 学习文档生成项目。
 
 ## 本地运行
 
+### 可选学科增强
+
+`prompts/` 提供完整的通用流程；`prompt_layers/` 只提供可选学科规则和教学方法。
+生成前可在页面选择“通用 · 不指定学科”或“数学”，默认通用。API 的 `POST /api/runs`
+可传 `"prompt_profile": "mathematics"`，省略或传 null 则不加载学科包；
+`GET /api/prompt-profiles` 列出可选包。Python 入口支持同名 `prompt_profile` 参数。
+选择随运行和检查点保存，续跑沿用原选择。自定义包只需新增 Markdown 并注册 manifest，
+详见 [学科包说明](src/annotation/prompt_layers/README.md)。
+
 ### 任务并发
 
 讲解、可选练习、事实检查和可选组件保留阶段顺序，阶段内独立任务默认以 2 个 worker 并发。

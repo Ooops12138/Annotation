@@ -87,6 +87,8 @@ For `action="finalize"`, use this shape instead. The nested records illustrate o
   for the next level. These representatives do not replace the complete units.
   You may preserve all groups and units when no merge or reordering is justified.
 
+{{DOMAIN_RULES}}
+
 ## Dynamic Inputs
 
 ### Groups

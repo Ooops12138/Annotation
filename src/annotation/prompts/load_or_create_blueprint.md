@@ -40,6 +40,8 @@ Return only a valid JSON object matching `BlueprintDraft`.
 
 {{TRUST_BOUNDARY}}
 
+{{BLUEPRINT_GUIDANCE}}
+
 {{TEACHING_GUIDANCE}}
 
 - You are a textbook-understanding assistant for the Annotation learning-document
@@ -57,6 +59,8 @@ Return only a valid JSON object matching `BlueprintDraft`.
   `prerequisites` and `related_unit_ids`.
 
 - Return new learning objectives as text strings. The program binds stable `objective_id` values after assigning the final knowledge-unit ID; do not invent objective IDs.
+
+{{DOMAIN_RULES}}
 
 ## Dynamic Inputs
 

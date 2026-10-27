@@ -30,6 +30,7 @@ from annotation.api.persistence_service import (
     repository,
 )
 from annotation.providers import create_provider_from_env
+from annotation.prompt_loader import list_prompt_profiles, validate_prompt_profile
 from annotation.retrieval import index_source_blocks, search_source_blocks
 from annotation.workflow import run_minimal_workflow
 from annotation.workflow.control import RunControl, RunStopped
@@ -43,6 +44,7 @@ class RunRequest(BaseModel):
     book_id: str
     run_id: str | None = Field(default=None, min_length=1, max_length=160)
     async_run: bool = False
+    prompt_profile: str | None = Field(default=None, max_length=80)
 
 
 _run_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="annotation-run")
@@ -163,7 +165,7 @@ def _run_response_from_state(result: dict[str, Any], state: dict[str, Any]) -> d
     }
 
 
-def _execute_run(*, book: dict[str, Any], requested_run_id: str | None = None, origin: str = "workflow", allow_existing_running: bool = False, run_control: RunControl | None = None, resume_from_run_id: str | None = None) -> dict[str, Any]:
+def _execute_run(*, book: dict[str, Any], requested_run_id: str | None = None, origin: str = "workflow", allow_existing_running: bool = False, run_control: RunControl | None = None, resume_from_run_id: str | None = None, prompt_profile: str | None = None) -> dict[str, Any]:
     repo = repository()
     try:
         run_id = requested_run_id or new_run_id()
@@ -176,6 +178,7 @@ def _execute_run(*, book: dict[str, Any], requested_run_id: str | None = None, o
             raise HTTPException(status_code=409, detail=f"运行正在进行：{run_id}")
         if not resume_from_run_id and existing and existing.get("status") in {"failed", "blocked", "cancelled", "interrupted"}:
             run_id = new_run_id(_safe_run_id(run_id))
+            existing = None
 
         resume_checkpoint = None
         if resume_from_run_id:
@@ -190,7 +193,7 @@ def _execute_run(*, book: dict[str, Any], requested_run_id: str | None = None, o
         if resume_from_run_id:
             repo.update_run(run_id, status="running", error=None)
         else:
-            repo.create_run(book["book_id"], run_id=run_id, origin=origin)
+            repo.create_run(book["book_id"], run_id=run_id, origin=origin, metadata={"prompt_profile": prompt_profile})
         try:
             provider = create_provider_from_env()
             repo.update_run(
@@ -221,6 +224,7 @@ def _execute_run(*, book: dict[str, Any], requested_run_id: str | None = None, o
                 progress_callback=lambda stage, snapshot, phase: _publish_run_progress(repo, run_id, stage, snapshot, phase),
                 run_control=run_control,
                 resume_checkpoint=resume_checkpoint,
+                prompt_profile=(existing.get("metadata") or {}).get("prompt_profile") if existing else prompt_profile,
             )
             from contextlib import nullcontext
             with run_control.lock if run_control else nullcontext():
@@ -363,6 +367,11 @@ def get_run_metadata() -> RunMetadata:
     )
 
 
+@router.get("/api/prompt-profiles")
+def get_prompt_profiles() -> dict[str, Any]:
+    return {"profiles": list_prompt_profiles()}
+
+
 @router.get("/api/library")
 def get_library() -> dict[str, Any]:
     repo = repository()
@@ -412,6 +421,10 @@ async def upload_book(file: UploadFile = File(...)) -> dict[str, Any]:
 
 @router.post("/api/runs")
 def create_run(request: RunRequest) -> dict[str, Any]:
+    try:
+        selected_profile = validate_prompt_profile(request.prompt_profile)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     repo = repository()
     try:
         book = _book_for_run(repo, request.book_id)
@@ -429,7 +442,7 @@ def create_run(request: RunRequest) -> dict[str, Any]:
                 return loaded or {"status": "succeeded", "run_id": run_id, "run": existing}
             if existing:
                 run_id = new_run_id(_safe_run_id(run_id))
-            repo.create_run(book["book_id"], run_id=run_id, metadata={"progress": {"stage": "queued", "label": "等待开始", "completed": 0, "total": len(_RUN_STAGES), "status": "queued"}})
+            repo.create_run(book["book_id"], run_id=run_id, metadata={"prompt_profile": selected_profile, "progress": {"stage": "queued", "label": "等待开始", "completed": 0, "total": len(_RUN_STAGES), "status": "queued"}})
             created = repo.get_run(run_id)
         finally:
             repo.close()
@@ -437,7 +450,7 @@ def create_run(request: RunRequest) -> dict[str, Any]:
             _run_controls[run_id] = RunControl(run_id)
         _run_executor.submit(_background_run, book, run_id)
         return {"status": "running", "run_id": run_id, "run": created, "progress": (created or {}).get("metadata", {}).get("progress")}
-    execution = _execute_run(book=book, requested_run_id=request.run_id)
+    execution = _execute_run(book=book, requested_run_id=request.run_id, prompt_profile=selected_profile)
     if execution.get("stored"):
         loaded = execution["payload"]
         content_row = next(

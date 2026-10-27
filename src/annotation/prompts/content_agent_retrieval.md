@@ -34,6 +34,8 @@ Return only a valid JSON object matching `RetrievalDecision`.
 - During revision, use the candidate and feedback to decide whether new evidence is necessary. Wording issues can be revised directly.
 - At most two retrieval rounds are allowed. When the budget is exhausted, do not pretend the evidence is sufficient.
 
+{{DOMAIN_RULES}}
+
 ## Dynamic Inputs
 
 ### Knowledge unit

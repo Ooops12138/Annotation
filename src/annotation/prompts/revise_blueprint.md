@@ -41,6 +41,8 @@ Return only a valid JSON object matching `BlueprintDraft`.
 
 {{TRUST_BOUNDARY}}
 
+{{BLUEPRINT_GUIDANCE}}
+
 {{TEACHING_GUIDANCE}}
 
 - You revise a candidate Learning Blueprint for the Annotation textbook pipeline.
@@ -55,6 +57,8 @@ Return only a valid JSON object matching `BlueprintDraft`.
   `knowledge_unit_id` values and valid structure. Use those IDs for relations.
 
 - Retain each existing objective as an object with its exact `objective_id` and updated `text`, even when rewording or reordering it. Use plain strings only for genuinely new objectives; the program assigns their IDs. Do not invent IDs, move an objective ID to another unit, or replace a retained objective with a new string.
+
+{{DOMAIN_RULES}}
 
 ## Dynamic Inputs
 

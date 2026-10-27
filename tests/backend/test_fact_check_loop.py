@@ -81,9 +81,9 @@ def test_fact_content_correction_keeps_depth_and_rejects_escape_damage():
     assert "detailed" in provider.request.prompt
     assert "Do not put source IDs" in provider.request.prompt
     assert "Escape every LaTeX backslash" in provider.request.prompt
-    assert "### Domain rules: mathematics fact check" in provider.request.prompt
+    assert "### Domain rules: mathematics" not in provider.request.prompt
     assert "### Domain teaching guidance: mathematics" not in provider.request.prompt
-    assert provider.request.metadata["prompt_version"] == "revise_content_for_fact_check:v4:mathematics-fact-check-profile"
+    assert provider.request.metadata["prompt_version"] == "revise_content_for_fact_check:v5:optional-subject"
 
 
 class ScriptedFactCheckProvider:
@@ -354,11 +354,11 @@ def test_direct_textbook_contradiction_revises_content_then_rechecks() -> None:
     assert result["fact_check_status"] == "accepted"
     assert result["fact_check_issues"] == []
     claim_calls = [call for call in provider.calls if call.schema.__name__ == "FactCheckClaimsDraft"]
-    assert claim_calls and "### Domain rules: mathematics fact check" in claim_calls[0].prompt
-    assert claim_calls[0].metadata["prompt_version"] == "extract_fact_check_claims:v2:mathematics-fact-check-profile"
+    assert claim_calls and "### Domain rules: mathematics" not in claim_calls[0].prompt
+    assert claim_calls[0].metadata["prompt_version"] == "extract_fact_check_claims:v3:optional-subject"
     assessment_calls = [call for call in provider.calls if call.schema.__name__ == "FactCheckAssessmentsDraft"]
-    assert assessment_calls and "### Domain rules: mathematics fact check" in assessment_calls[0].prompt
-    assert assessment_calls[0].metadata["prompt_version"] == "assess_fact_check_claims:v2:mathematics-fact-check-profile"
+    assert assessment_calls and "### Domain rules: mathematics" not in assessment_calls[0].prompt
+    assert assessment_calls[0].metadata["prompt_version"] == "assess_fact_check_claims:v3:optional-subject"
 
 
 def test_direct_textbook_contradiction_regenerates_only_the_quiz() -> None:
@@ -381,8 +381,8 @@ def test_direct_textbook_contradiction_regenerates_only_the_quiz() -> None:
         call for call in provider.calls
         if call.schema.__name__ == "QuizDraft" and call.metadata.get("agent") == "regenerate_quiz_for_fact_check"
     ]
-    assert quiz_correction_calls and "### Domain rules: mathematics quiz" in quiz_correction_calls[0].prompt
-    assert quiz_correction_calls[0].metadata["prompt_version"] == "regenerate_quiz_for_fact_check:v4:mathematics-quiz-profile"
+    assert quiz_correction_calls and "### Domain rules: mathematics" not in quiz_correction_calls[0].prompt
+    assert quiz_correction_calls[0].metadata["prompt_version"] == "regenerate_quiz_for_fact_check:v5:optional-subject"
     assert trace.rounds[0].route == "regenerate_quiz"
     assert trace.final_quiz_artifact_id == quiz.artifact_id
 

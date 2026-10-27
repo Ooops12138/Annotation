@@ -43,6 +43,7 @@ export const useAppStore = defineStore('app', {
     books: [] as LibraryBook[],
     documents: [] as LibraryDocumentSummary[],
     selectedBookId: null as string | null,
+    promptProfile: '',
     selectedDocumentId: null as string | null,
     document: null as any,
     sourceLocations: {} as SourceLocations,
@@ -166,11 +167,14 @@ export const useAppStore = defineStore('app', {
       this.error = ''
       this.selectedBookId = bookId
       try {
-        const result = await startRun(bookId, (snapshot) => {
+        const onSnapshot = (snapshot: WorkflowRunResult) => {
           this.run = snapshot
           this.progress = snapshot.progress || this.progress
           if (snapshot.run_id) saveActiveRun({ run_id: snapshot.run_id, book_id: bookId })
-        })
+        }
+        const result = this.promptProfile
+          ? await startRun(bookId, onSnapshot, undefined, this.promptProfile)
+          : await startRun(bookId, onSnapshot)
         clearActiveRun()
         this.progress = result.progress || null
         this.sourceLocations = result.source_locations ?? {}
