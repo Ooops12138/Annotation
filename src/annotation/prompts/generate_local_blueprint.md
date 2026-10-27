@@ -63,6 +63,8 @@ Return only a valid JSON object matching `LocalBlueprintDraft`.
   knowledge_units=[] with a substantive skip_reason; never skip difficult content,
   missing context or unreadable evidence. Those are issues to report, not exclusions.
 
+- Return new learning objectives as text strings. The program binds stable `objective_id` values after assigning the final knowledge-unit ID; do not invent objective IDs.
+
 ## Dynamic Inputs
 
 ### Location and source window

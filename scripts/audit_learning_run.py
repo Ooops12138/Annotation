@@ -136,7 +136,7 @@ def audit_run(manifest_path: Path, database: Path | None = None) -> tuple[dict, 
                     if question.get("knowledge_unit_id") != unit_id:
                         issue("question_unit", qid, "题目绑定了不同单元。")
                     objectives = set(question.get("target_objectives", []))
-                    if not objectives or not objectives.issubset(units.get(unit_id, {}).get("learning_objectives", [])):
+                    if not objectives or not objectives.issubset({o["objective_id"] for o in units.get(unit_id, {}).get("learning_objectives", []) if isinstance(o, dict) and "objective_id" in o}):
                         issue("question_objective", qid, "题目目标为空或不属于知识单元。")
                     options = question.get("options", [])
                     if len(options) < 2 or len(set(options)) != len(options) or options.count(question.get("answer")) != 1:

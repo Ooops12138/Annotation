@@ -19,7 +19,8 @@ Return only a valid JSON object matching `BlueprintDraft`.
       "title": "string",
       "kind": "concept|formula|theorem|example|skill",
       "learning_objectives": [
-        "string"
+        {"objective_id": "existing objective ID", "text": "revised objective wording"},
+        "new objective text"
       ],
       "prerequisites": [
         "stable knowledge_unit_id"
@@ -51,6 +52,8 @@ Return only a valid JSON object matching `BlueprintDraft`.
 
 - Repair the listed blocking problems while preserving stable
   `knowledge_unit_id` values and valid structure. Use those IDs for relations.
+
+- Retain each existing objective as an object with its exact `objective_id` and updated `text`, even when rewording or reordering it. Use plain strings only for genuinely new objectives; the program assigns their IDs. Do not invent IDs, move an objective ID to another unit, or replace a retained objective with a new string.
 
 ## Dynamic Inputs
 

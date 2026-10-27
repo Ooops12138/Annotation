@@ -34,10 +34,10 @@ def test_fact_quiz_correction_enforces_generation_contract(change):
     blueprint, task, pack, content, quizzes, _ = _fixture(with_quiz=True)
     task.quiz_count = 1
     task.depth_guidance = "detailed"
-    draft = QuizDraft(knowledge_unit_id="unit-1", target_objectives=["理解上确界"], questions=quizzes[0].questions)
+    draft = QuizDraft(knowledge_unit_id="unit-1", target_objectives=["unit-1-o1"], questions=quizzes[0].questions)
     if change == "count":
         draft.questions = []
-        draft.omitted_questions = [OmittedQuestion(objective="理解上确界", reason="not supported")]
+        draft.omitted_questions = [OmittedQuestion(objective_id="unit-1-o1", reason="not supported")]
     elif change == "unit":
         draft.knowledge_unit_id = "wrong-unit"
     elif change == "objective":
@@ -119,7 +119,7 @@ class ScriptedFactCheckProvider:
             payload = {
                 "tasks": [{
                     "title": unit["title"],
-                    "covered_objectives": {unit["knowledge_unit_id"]: unit["learning_objectives"]},
+                    "covered_objectives": {unit["knowledge_unit_id"]: [o["objective_id"] for o in unit["learning_objectives"]]},
                     "quiz_count": 0,
                     "depth_guidance": "standard",
                     "interactive_component_policy": "skip",
@@ -168,11 +168,11 @@ class ScriptedFactCheckProvider:
         elif schema_name == "QuizDraft":
             payload = {
                 "knowledge_unit_id": "unit-1",
-                "target_objectives": ["理解上确界"],
+                "target_objectives": ["unit-1-o1"],
                 "questions": [{
                     "question_id": "quiz-1-corrected",
                     "knowledge_unit_id": "unit-1",
-                    "target_objectives": ["理解上确界"],
+                    "target_objectives": ["unit-1-o1"],
                     "question": "上确界是什么？",
                     "options": ["最小上界", "最大上界"],
                     "answer": "最小上界",
@@ -289,7 +289,7 @@ def _fixture(*, with_quiz: bool = False) -> tuple[
         question = QuizQuestion(
             question_id="quiz-1",
             knowledge_unit_id=unit.artifact_id,
-            target_objectives=list(unit.learning_objectives),
+            target_objectives=list(unit.objective_ids),
             question="上确界是什么？",
             options=["最小上界", "最大上界"],
             answer="最大上界",
@@ -304,7 +304,7 @@ def _fixture(*, with_quiz: bool = False) -> tuple[
             source_refs=["src-1"],
             created_by="test",
             knowledge_unit_ids=[unit.artifact_id],
-            target_objectives=list(unit.learning_objectives),
+            target_objectives=list(unit.objective_ids),
             questions=[question],
 
             task_id=task.task_id,
@@ -570,19 +570,19 @@ def test_top_level_workflow_runs_fact_check_before_document_assembly(monkeypatch
         "run_id": run_id,
         "knowledge_units": [
             base_unit.model_copy(update={"run_id": run_id}),
-            base_unit.model_copy(update={
+            KnowledgeUnit.model_validate({**base_unit.model_dump(),
                 "artifact_id": "unit-2",
                 "run_id": run_id,
                 "title": "补充定理",
                 "kind": "theorem",
-                "learning_objectives": ["理解补充定理"],
+                "learning_objectives": [{"objective_id": "unit-2-o1", "text": "理解补充定理"}],
             }),
-            base_unit.model_copy(update={
+            KnowledgeUnit.model_validate({**base_unit.model_dump(),
                 "artifact_id": "unit-3",
                 "run_id": run_id,
                 "title": "补充例题",
                 "kind": "example",
-                "learning_objectives": ["理解补充例题"],
+                "learning_objectives": [{"objective_id": "unit-3-o1", "text": "理解补充例题"}],
             }),
         ],
     })

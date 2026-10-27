@@ -39,7 +39,7 @@ from annotation.workflow.models import QuizRetrievalDecision
 from annotation.workflow.content_support import math_control_issues, _markdown_formula_format_issues
 
 
-QUIZ_PROMPT_VERSION = "generate_quiz_artifact:v5"
+QUIZ_PROMPT_VERSION = "generate_quiz_artifact:v6"
 logger = logging.getLogger(__name__)
 # There is intentionally no default or minimum quiz size.  The agent decides
 # how many evidence-supported items are useful for a unit, including zero.
@@ -194,9 +194,9 @@ def validate_quiz_artifact(
     issues: list[ReviewIssue] = []
     valid_ids: list[str] = []
     unit_id = unit.artifact_id if unit else (artifact.knowledge_unit_ids[0] if artifact.knowledge_unit_ids else None)
-    objective_set = set(unit.learning_objectives) if unit else set()
+    objective_set = set(unit.objective_ids) if unit else set()
     for index, omission in enumerate(artifact.omitted_questions):
-        if unit is not None and omission.objective not in objective_set:
+        if unit is not None and omission.objective_id not in objective_set:
             issues.append(_issue(f"quiz-invalid-omission-{artifact.artifact_id}-{index}",
                 category="coverage", severity="blocking", message="省略题目的目标不属于当前任务。", target_id=artifact.artifact_id))
     # The chapter source set proves that a ref exists, while the ContextPack
@@ -261,7 +261,7 @@ def validate_quiz_artifact(
             target_id=artifact.artifact_id,
             suggested_action="补充题目覆盖的蓝图学习目标。",
         ))
-    elif objective_set:
+    elif unit is not None:
         invalid_artifact_objectives = [objective for objective in artifact.target_objectives if objective not in objective_set]
         if invalid_artifact_objectives:
             issues.append(_issue(
@@ -270,7 +270,7 @@ def validate_quiz_artifact(
                 severity="blocking",
                 message=f"题目 artifact 声明了不存在的学习目标：{'、'.join(invalid_artifact_objectives)}。",
                 target_id=artifact.artifact_id,
-                suggested_action="只引用当前知识单元中稳定的学习目标文本。",
+                suggested_action="只引用当前知识单元中稳定的 objective_id。",
             ))
 
     # An empty agent-selected quiz has no learner-facing claim that needs a
@@ -372,7 +372,7 @@ def validate_quiz_artifact(
                 target_id=question_id,
                 suggested_action="补充该题对应的蓝图学习目标；目标缺口本轮不单独阻塞发布。",
             ))
-        elif objective_set:
+        elif unit is not None:
             invalid_objectives = [objective for objective in question.target_objectives if objective not in objective_set]
             if invalid_objectives:
                 question_issues.append(_issue(
@@ -596,7 +596,7 @@ def validate_quiz_coverage(
             if question.question_id in checks[entry["quiz_artifact_id"]].valid_question_ids
             for objective in question.target_objectives
         )
-        gaps = [objective for objective in unit.learning_objectives if objective not in covered_objectives]
+        gaps = [objective for objective in unit.objective_ids if objective not in covered_objectives]
         if gaps:
             objective_gaps[unit.artifact_id] = gaps
             issues.append(_issue(
@@ -641,6 +641,7 @@ def _unit_context(unit: KnowledgeUnit) -> str:
     return json.dumps({
         "knowledge_unit_id": unit.artifact_id,
         "title": unit.title,
+        "learning_objectives": unit.objective_context(),
     }, ensure_ascii=False, separators=(",", ":"))
 
 
@@ -668,7 +669,7 @@ def build_quiz_prompt(
         "generate_quiz_artifact",
         KNOWLEDGE_UNIT_CONTEXT=_unit_context(unit),
         CONTEXT_PACK=render_context_pack(context_pack),
-        TARGET_OBJECTIVES=json.dumps(unit.learning_objectives, ensure_ascii=False),
+        TARGET_OBJECTIVES=json.dumps(unit.objective_context(), ensure_ascii=False),
         COURSE_ARCHITECT_DECISION=json.dumps(decision, ensure_ascii=False, indent=2),
         REVISION_FEEDBACK=(
             "### Required revision\n\nThe previous quiz failed deterministic validation. "
@@ -814,7 +815,7 @@ def blocked_quiz_artifact(
         source_refs=_context_refs(context_pack),
         created_by=f"provider:{provider_name}",
         knowledge_unit_ids=[unit.artifact_id],
-        target_objectives=list(unit.learning_objectives),
+        target_objectives=list(unit.objective_ids),
         task_id=task.task_id,
         context_pack_id=context_pack.context_pack_id,
         prompt_version=QUIZ_PROMPT_VERSION,
@@ -848,7 +849,7 @@ def generate_quiz_artifact(
         return QuizArtifact(
             artifact_id=f"quiz-{task.task_id}", run_id=run_id or task.run_id, version=1, status="accepted",
             source_refs=[], created_by=f"provider:{provider_name}", knowledge_unit_ids=[unit.artifact_id],
-            target_objectives=list(unit.learning_objectives), questions=[], task_id=task.task_id,
+            target_objectives=list(unit.objective_ids), questions=[], task_id=task.task_id,
             context_pack_id=context_pack.context_pack_id, prompt_version=QUIZ_PROMPT_VERSION,
             generation_metadata={"question_count": 0, "stop_reason": "not_requested"},
         )

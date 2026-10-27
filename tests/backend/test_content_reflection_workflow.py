@@ -37,9 +37,7 @@ class WorkflowContentProvider:
                 "tasks": [
                     {
                         "title": f"测试单元 {index}",
-                        "covered_objectives": {unit_id: [
-                            {"unit-1": "理解概念", "unit-2": "理解定理", "unit-3": "理解例题"}[unit_id]
-                        ]},
+                        "covered_objectives": {unit_id: [f"{unit_id}-o1"]},
                         "quiz_count": 0,
                         "depth_guidance": "standard",
                         "interactive_component_policy": "skip",

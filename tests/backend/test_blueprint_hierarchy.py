@@ -253,6 +253,10 @@ def test_explicit_merge_preserves_provenance_and_learning_objectives():
     assert set(unit.source_refs) == {"src-0", "src-1"}
     assert len(unit.structure_node_ids) == 2
     assert len(engine.trace.merges) == 1
+    duplicate_id = next(iter(engine.trace.merges))
+    assert unit.objective_ids == [f"{unit.artifact_id}-o1", f"{duplicate_id}-o1"]
+    assert len(unit.objective_texts) == 2
+    assert unit.objective_texts[0] == unit.objective_texts[1]
 
 
 @pytest.mark.parametrize("failure", ["drop_group", "cycle", "unknown_reference", "tools_exhausted", "authentication", "call_budget"])

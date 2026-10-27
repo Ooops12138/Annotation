@@ -422,7 +422,7 @@ def _correct_content(
         run_id=content.run_id,
         provider_name=str(getattr(provider, "provider", "unknown")),
         attempt=content.version + 1,
-        prompt_version="revise_content_for_fact_check:v2",
+        prompt_version="revise_content_for_fact_check:v3",
     )
     check = _content_hard_check(
         task=task,
@@ -484,7 +484,7 @@ def _correct_quiz(
         omitted_questions=list(draft.omitted_questions),
         task_id=task.task_id,
         context_pack_id=context_pack.context_pack_id,
-        prompt_version="regenerate_quiz_for_fact_check:v2",
+        prompt_version="regenerate_quiz_for_fact_check:v3",
         generation_metadata={"agent": "regenerate_quiz_for_fact_check", "revision_of": quiz.artifact_id, "prompt": prompt},
         raw_response=str(getattr(response, "raw_text", "") or draft.model_dump_json()),
     )

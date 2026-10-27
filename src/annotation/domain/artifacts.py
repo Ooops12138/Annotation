@@ -63,16 +63,71 @@ class SourceBlock(ArtifactBase):
     run_metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class LearningObjective(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    objective_id: str = Field(min_length=1)
+    text: str = Field(min_length=1)
+
+
+def bind_learning_objectives(
+    unit_id: str,
+    values: list[str | LearningObjective | dict[str, str]],
+    reserved_ids: set[str] | None = None,
+) -> list[LearningObjective]:
+    """Bind new text once; retain explicit identities regardless of wording/order."""
+    reserved = set(reserved_ids or ())
+    if not isinstance(values, list):
+        raise ValueError("learning_objectives must be a list")
+    normalized = [v if isinstance(v, str) else LearningObjective.model_validate(v) for v in values]
+    reserved.update(v.objective_id for v in normalized if isinstance(v, LearningObjective))
+    result: list[LearningObjective] = []
+    next_index = 1
+    for value in normalized:
+        if isinstance(value, str):
+            while f"{unit_id}-o{next_index}" in reserved:
+                next_index += 1
+            objective_id = f"{unit_id}-o{next_index}"
+            reserved.add(objective_id)
+            value = LearningObjective(objective_id=objective_id, text=value)
+        else:
+            value = LearningObjective.model_validate(value)
+        result.append(value)
+    if len({v.objective_id for v in result}) != len(result):
+        raise ValueError("duplicate objective_id")
+    return result
+
+
 class KnowledgeUnit(ArtifactBase):
     title: str
     kind: Literal["concept", "formula", "theorem", "example", "skill"]
-    learning_objectives: list[str] = Field(default_factory=list)
+    learning_objectives: list[LearningObjective] = Field(default_factory=list)
     prerequisites: list[str] = Field(default_factory=list)
     related_unit_ids: list[str] = Field(default_factory=list)
     structure_node_ids: list[str] = Field(default_factory=list)
 
+    @model_validator(mode="before")
+    @classmethod
+    def bind_legacy_objective_text(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "artifact_id" in data:
+            data = dict(data)
+            data["learning_objectives"] = bind_learning_objectives(
+                data["artifact_id"], data.get("learning_objectives", []))
+        return data
+
+    @property
+    def objective_ids(self) -> list[str]:
+        return [objective.objective_id for objective in self.learning_objectives]
+
+    @property
+    def objective_texts(self) -> list[str]:
+        return [objective.text for objective in self.learning_objectives]
+
+    def objective_context(self) -> list[dict[str, str]]:
+        return [objective.model_dump(mode="json") for objective in self.learning_objectives]
+
 
 class LearningBlueprint(ArtifactBase):
+    objective_id_history: list[str] = Field(default_factory=list)
     title: str
     knowledge_units: list[KnowledgeUnit] = Field(default_factory=list)
 
@@ -108,7 +163,7 @@ class QuizQuestion(BaseModel):
     model_config = ConfigDict(extra="forbid")
     question_id: str
     knowledge_unit_id: str
-    target_objectives: list[str] = Field(default_factory=list)
+    target_objectives: list[str] = Field(default_factory=list, description="Assigned objective_id references, never objective text.")
     question: str
     options: list[str] = Field(default_factory=list)
     answer: str
@@ -151,7 +206,7 @@ class OmittedQuestion(BaseModel):
     """An auditable reason for not writing a question for a task objective."""
 
     model_config = ConfigDict(extra="forbid")
-    objective: str = Field(min_length=1)
+    objective_id: str = Field(min_length=1)
     reason: str = Field(min_length=1)
 
 
@@ -160,7 +215,7 @@ class QuizDraft(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     knowledge_unit_id: str
-    target_objectives: list[str] = Field(default_factory=list)
+    target_objectives: list[str] = Field(default_factory=list, description="Assigned objective_id references, never objective text.")
     questions: list[QuizQuestion] = Field(default_factory=list)
     omitted_questions: list[OmittedQuestion] = Field(default_factory=list)
 
@@ -170,7 +225,7 @@ class QuizArtifact(ArtifactBase):
 
     content_type: Literal["quiz"] = "quiz"
     knowledge_unit_ids: list[str] = Field(default_factory=list)
-    target_objectives: list[str] = Field(default_factory=list)
+    target_objectives: list[str] = Field(default_factory=list, description="Assigned objective_id references, never objective text.")
     questions: list[QuizQuestion] = Field(default_factory=list)
     omitted_questions: list[OmittedQuestion] = Field(default_factory=list)
     task_id: str | None = None
@@ -200,7 +255,7 @@ class ContentTask(BaseModel):
     blueprint_version: str
     knowledge_unit_id: str
     title: str = ""
-    covered_objectives: dict[str, list[str]] = Field(default_factory=dict)
+    covered_objectives: dict[str, list[str]] = Field(default_factory=dict, description="Original knowledge_unit_id to assigned objective_id references.")
     content_types: list[Literal["explanation", "quiz"]] = Field(
         default_factory=lambda: ["explanation", "quiz"]
     )

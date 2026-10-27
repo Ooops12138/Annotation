@@ -61,7 +61,7 @@ def _compact(text: str, limit: int = 1400) -> str:
 
 
 def _terms(unit: KnowledgeUnit) -> list[str]:
-    values = [unit.title, *unit.learning_objectives]
+    values = [unit.title, *unit.objective_texts]
     terms: list[str] = []
     for value in values:
         for term in re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z]{3,}|\d+", value):
@@ -134,7 +134,7 @@ def build_context_pack(
     char_budget = input_budget * 3
     ordered_blocks = sorted(blocks, key=lambda block: (block.page_number, block.block_index))
     tool = search_tool or InMemoryTextbookSearchTool(ordered_blocks)
-    raw_queries = retrieval_queries if retrieval_queries is not None else [unit.title, *unit.learning_objectives]
+    raw_queries = retrieval_queries if retrieval_queries is not None else [unit.title, *unit.objective_texts]
     queries: list[tuple[str, str]] = []
     for item in raw_queries:
         source, query = (item if isinstance(item, tuple) and len(item) == 2 else ("textbook", item))

@@ -104,8 +104,8 @@ def test_split_task_critic_receives_only_its_assigned_objectives():
     from annotation.domain.artifacts import LearningBlueprint
     from annotation.workflow.course_architect import teaching_blueprint
     state = _state()
-    original = state["unit"].model_copy(update={"learning_objectives": ["assigned objective", "other task objective"]})
-    task = state["task"].model_copy(update={"covered_objectives": {original.artifact_id: ["assigned objective"]}})
+    original = type(state["unit"]).model_validate({**state["unit"].model_dump(), "learning_objectives": ["assigned objective", "other task objective"]})
+    task = state["task"].model_copy(update={"covered_objectives": {original.artifact_id: [original.objective_ids[0]]}})
     blueprint = LearningBlueprint(artifact_id="bp", run_id=state["run_id"], version=1, status="accepted", created_by="test", title="Book", knowledge_units=[original])
     state["unit"] = teaching_blueprint(blueprint, [task]).knowledge_units[0]
     state["task"] = task
@@ -113,7 +113,7 @@ def test_split_task_critic_receives_only_its_assigned_objectives():
     result = build_content_reflection_subgraph(provider, max_attempts=3).invoke(state)
     critic = next(call for call in provider.calls if call.schema.__name__ == "ContentCritiqueDraft")
     context = critic.prompt.split("### Knowledge unit", 1)[1].split("```json", 1)[1].split("```", 1)[0]
-    assert json.loads(context)["learning_objectives"] == ["assigned objective"]
+    assert json.loads(context)["learning_objectives"] == [original.objective_context()[0]]
     assert "other task objective" not in critic.prompt
     assert "Judge only the learning objectives" in critic.prompt
     assert result["route"] == "accept"

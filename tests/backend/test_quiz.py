@@ -45,12 +45,12 @@ def test_quiz_omissions_persist_and_cannot_reference_another_task_objective(tmp_
     from annotation.workflow.persistence import write_quiz_artifact
     unit = _unit()
     artifact = _artifact(unit, questions=[])
-    artifact.omitted_questions = [OmittedQuestion(objective=unit.learning_objectives[0], reason="No unambiguous evidence")]
+    artifact.omitted_questions = [OmittedQuestion(objective_id=unit.objective_ids[0], reason="No unambiguous evidence")]
     path = write_quiz_artifact({"run_id": unit.run_id, "quiz_artifacts": [artifact]}, root=tmp_path)
     saved = json.loads(path.read_text(encoding="utf-8"))["quiz_artifacts"][0]
     assert saved["omitted_questions"][0]["reason"] == "No unambiguous evidence"
     assert validate_quiz_artifact(artifact, unit=unit, context_pack=_pack(unit)).status == "accepted"
-    artifact.omitted_questions[0].objective = "other task objective"
+    artifact.omitted_questions[0].objective_id = "other task objective"
     assert validate_quiz_artifact(artifact, unit=unit, context_pack=_pack(unit)).status == "blocked"
 
 
@@ -68,7 +68,7 @@ def test_workflow_quiz_receives_accepted_explanation_and_callouts(monkeypatch):
         provider = "test"
         def generate_structured(self, request):
             self.prompt = request.prompt
-            draft = QuizDraft(knowledge_unit_id=unit.artifact_id, target_objectives=unit.learning_objectives, questions=[_question(unit, "q1")])
+            draft = QuizDraft(knowledge_unit_id=unit.artifact_id, target_objectives=unit.objective_ids, questions=[_question(unit, "q1")])
             return SimpleNamespace(value=draft, raw_text=draft.model_dump_json())
     provider = Provider()
     monkeypatch.setattr(content_nodes, "retrieve_quiz_context", lambda *args, **kwargs: kwargs["context_pack"])
@@ -127,7 +127,7 @@ def _question(unit: KnowledgeUnit, question_id: str, *, source_refs: list[str] |
     return QuizQuestion(
         question_id=question_id,
         knowledge_unit_id=unit.artifact_id,
-        target_objectives=[unit.learning_objectives[0]],
+        target_objectives=[unit.objective_ids[0]],
         question="下列哪项说法正确？",
         options=["教材支持的说法", "未被教材支持的说法"],
         answer="教材支持的说法",
@@ -150,12 +150,45 @@ def _artifact(unit: KnowledgeUnit, *, questions: list[QuizQuestion] | None = Non
         created_by="test",
         source_refs=source_refs or ["src-1"],
         knowledge_unit_ids=[unit.artifact_id],
-        target_objectives=list(unit.learning_objectives),
+        target_objectives=list(unit.objective_ids),
         questions=question_items,
         task_id=f"task-{unit.artifact_id}",
         context_pack_id=f"ctx-{unit.artifact_id}",
         prompt_version="generate_quiz_artifact:v3",
     )
+
+
+def test_quiz_references_survive_objective_rewording_and_round_trip():
+    unit = _unit()
+    artifact = QuizArtifact.model_validate_json(_artifact(unit).model_dump_json())
+    revised = unit.model_copy(update={"learning_objectives": [
+        objective.model_copy(update={"text": "Changed wording and punctuation!"})
+        for objective in unit.learning_objectives]})
+    check = validate_quiz_artifact(artifact, unit=revised, context_pack=_pack(revised))
+    assert check.status == "accepted"
+    prompt = build_quiz_prompt(_task(revised), revised, _pack(revised))
+    assert '"objective_id": "ku-1-o1"' in prompt
+    assert "Changed wording and punctuation!" in prompt
+
+
+@pytest.mark.parametrize("reference", ["ku-1-o99", "ku-2-o1", "Original objective text"])
+def test_quiz_rejects_unknown_foreign_and_text_references(reference):
+    unit = _unit()
+    artifact = _artifact(unit)
+    artifact.target_objectives = [reference]
+    artifact.questions[0].target_objectives = [reference]
+    check = validate_quiz_artifact(artifact, unit=unit, context_pack=_pack(unit))
+    assert check.status == "blocked"
+    assert any("invalid-artifact-objectives" in i.issue_id for i in check.issues)
+    assert any("invalid-objective" in i.issue_id for i in check.issues)
+
+
+def test_quiz_cannot_invent_an_objective_when_unit_has_none():
+    unit = _unit()
+    artifact = _artifact(unit)
+    empty_unit = unit.model_copy(update={"learning_objectives": []})
+    check = validate_quiz_artifact(artifact, unit=empty_unit, context_pack=_pack(unit))
+    assert check.status == "blocked"
 
 
 def test_question_model_rejects_duplicate_options_and_non_option_answer() -> None:
@@ -312,7 +345,7 @@ def test_empty_quiz_artifact_is_a_warning_only_coverage_result() -> None:
 
     assert report.status == "passed"
     assert report.missing_unit_ids == []
-    assert report.objective_gaps[unit.artifact_id] == unit.learning_objectives
+    assert report.objective_gaps[unit.artifact_id] == unit.objective_ids
     assert report.matrix[0].question_count == 0
     assert report.matrix[0].valid_question_count == 0
     assert all(issue.severity == "warning" for issue in report.issues)
@@ -385,7 +418,7 @@ def test_provider_draft_unit_mismatch_blocks_artifact() -> None:
                 {
                     "question_id": "q-1",
                     "knowledge_unit_id": unit.artifact_id,
-                    "target_objectives": [unit.learning_objectives[0]],
+                    "target_objectives": [unit.objective_ids[0]],
                     "question": "问题一",
                     "options": ["A", "B"],
                     "answer": "A",
@@ -395,7 +428,7 @@ def test_provider_draft_unit_mismatch_blocks_artifact() -> None:
                 {
                     "question_id": "q-2",
                     "knowledge_unit_id": unit.artifact_id,
-                    "target_objectives": [unit.learning_objectives[0]],
+                    "target_objectives": [unit.objective_ids[0]],
                     "question": "问题二",
                     "options": ["A", "B"],
                     "answer": "A",
@@ -444,7 +477,7 @@ def test_architect_question_count_mismatch_blocks_artifact() -> None:
             draft = QuizDraft(
                 knowledge_unit_id=unit.artifact_id,
 
-                target_objectives=[unit.learning_objectives[0]],
+                target_objectives=[unit.objective_ids[0]],
                 questions=[_question(unit, "q-count-1")],
             )
             return type(

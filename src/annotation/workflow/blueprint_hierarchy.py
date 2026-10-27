@@ -280,6 +280,8 @@ class BlueprintEngine:
                 raise ValueError("unknown representative unit ID")
             if any(not u.title.strip() or not u.learning_objectives for u in draft.knowledge_units):
                 raise ValueError("units require a title and learning objectives")
+            if any(not isinstance(o, str) for u in draft.knowledge_units for o in u.learning_objectives):
+                raise ValueError("new local objectives must be text; the program assigns objective IDs")
             title_ids = {u.title: u.knowledge_unit_id or u.title for u in draft.knowledge_units}
             dependencies = {u.knowledge_unit_id or u.title: {title_ids.get(r, r) for r in u.prerequisites} & set(ids) for u in draft.knowledge_units}
             _topological_ids(ids, dependencies)
@@ -322,8 +324,8 @@ class BlueprintEngine:
             if not query:
                 return {**result, "error": "query is required"}
             terms = query.split()
-            ranked = sorted(self.units.values(), key=lambda u: sum(t in (u.title + " " + " ".join(u.learning_objectives)).casefold() for t in terms), reverse=True)
-            matching = [u for u in ranked if any(t in (u.title + " " + " ".join(u.learning_objectives)).casefold() for t in terms)]
+            ranked = sorted(self.units.values(), key=lambda u: sum(t in (u.title + " " + " ".join(u.objective_texts)).casefold() for t in terms), reverse=True)
+            matching = [u for u in ranked if any(t in (u.title + " " + " ".join(u.objective_texts)).casefold() for t in terms)]
             selected = matching[request.offset:request.offset + 5]
             result["items"] = [{"unit_id": u.artifact_id, "title": u.title, "structure_node_ids": u.structure_node_ids} for u in selected]
             result["next_offset"] = request.offset + len(selected) if request.offset + len(selected) < len(matching) else None
@@ -437,8 +439,9 @@ class BlueprintEngine:
             for merge in decision.merges:
                 duplicate = self.units.pop(merge.duplicate_id)
                 canonical = self.units[merge.canonical_id]
-                for field in ("source_refs", "structure_node_ids", "learning_objectives", "prerequisites", "related_unit_ids"):
+                for field in ("source_refs", "structure_node_ids", "prerequisites", "related_unit_ids"):
                     setattr(canonical, field, list(dict.fromkeys([*getattr(canonical, field), *getattr(duplicate, field)])))
+                canonical.learning_objectives = [*canonical.learning_objectives, *duplicate.learning_objectives]
                 self.trace.merges[merge.duplicate_id] = merge.canonical_id
             for unit in self.units.values():
                 for field in ("prerequisites", "related_unit_ids"):

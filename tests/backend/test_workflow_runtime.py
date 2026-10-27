@@ -260,7 +260,7 @@ def test_quiz_retrieval_persists_original_sources_and_updated_evidence(monkeypat
         "quiz_draft",
         lambda unit, pack, count: QuizDraft(
             knowledge_unit_id=unit.artifact_id,
-            target_objectives=unit.learning_objectives,
+            target_objectives=unit.objective_ids,
             questions=[_question(unit, "extra-q", source_refs=["src-2"])],
         ),
     )

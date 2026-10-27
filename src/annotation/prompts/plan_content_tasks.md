@@ -17,7 +17,7 @@ Return only a valid JSON object matching `ContentTaskPlanDraft`.
       "title": "teaching section title",
       "covered_objectives": {
         "original knowledge_unit_id": [
-          "exact original objective"
+          "exact original objective_id"
         ]
       },
       "quiz_count": null,
@@ -41,7 +41,7 @@ Return only a valid JSON object matching `ContentTaskPlanDraft`.
 
 - Return tasks in the intended teaching order. You may split a difficult source unit into several tasks or combine related units into one task. Each task must contain:
   - title: a teaching section title;
-  - covered_objectives: object mapping original knowledge_unit_id to the exact original objective strings covered by this task;
+  - covered_objectives: object mapping original knowledge_unit_id to the exact original `objective_id` values covered by this task;
   - quiz_count: exact count or null to let the quiz agent decide, including zero;
   - depth_guidance: concise, standard or detailed;
   - interactive_component_policy: required (attempt, omit on failure) or skip;

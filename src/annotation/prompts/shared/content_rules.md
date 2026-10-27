@@ -4,3 +4,5 @@
 - Preserve domains, quantifiers, signs, nonzero hypotheses and equality conditions in proofs, summaries and callouts. Test zero and degenerate cases; an ordered-real proof does not establish a complex extension.
 - Put every intentional mathematical expression in `$...$` or `$$...$$`, including in callouts. Keep surrounding prose outside delimiters. Do not leave formulas as bare text or Unicode superscripts/subscripts.
 - Escape every LaTeX backslash in JSON strings. For example, valid JSON is `{"content":"$\\frac{a}{b} \\neq 0$"}`; after JSON decoding the Markdown contains single LaTeX backslashes. A Markdown-only example is not a JSON serialization example. Never emit unescaped LaTeX commands such as backslash-f, backslash-n, backslash-t, backslash-b or backslash-r: JSON interprets those as control characters. Never insert control characters into mathematical expressions; serialize intentional paragraph breaks outside math as `\n`.
+
+- Learning objectives contain `objective_id` and `text`. Teach their text, and use their IDs only for internal task alignment. Do not print objective IDs in learner-facing content.

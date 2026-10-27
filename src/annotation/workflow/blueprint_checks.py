@@ -15,6 +15,12 @@ def validate_blueprint(
     unit_ids = {unit.artifact_id for unit in blueprint.knowledge_units}
     unit_titles = {unit.title for unit in blueprint.knowledge_units}
     covered_kinds = sorted({unit.kind for unit in blueprint.knowledge_units})
+    objective_ids = [oid for unit in blueprint.knowledge_units for oid in unit.objective_ids]
+    if len(objective_ids) != len(set(objective_ids)):
+        issues.append(ReviewIssue(
+            issue_id="blueprint-duplicate-objective-id", category="logic", severity="blocking",
+            message="Learning Blueprint 的 objective_id 必须全局唯一。", target_id=blueprint.artifact_id,
+        ))
 
     if not blueprint.knowledge_units:
         issues.append(

@@ -84,7 +84,7 @@ def _issue(
 
 
 def _component_score(unit: KnowledgeUnit, artifact: ContentArtifact) -> int:
-    text = " ".join([unit.title, *unit.learning_objectives, artifact.content]).lower()
+    text = " ".join([unit.title, *unit.objective_texts, artifact.content]).lower()
     score = 0
     for token in ("上确界", "区间", "函数", "复数", "数轴", "supremum", "interval", "function", "complex"):
         if token in text:

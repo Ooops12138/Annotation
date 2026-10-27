@@ -26,6 +26,7 @@ from annotation.domain.artifacts import (
     InteractiveComponentSpec,
     InteractiveComponentTask,
     KnowledgeUnit,
+    LearningObjective,
     LearningBlueprint,
     LearningDocument,
     QuizArtifact,
@@ -40,7 +41,7 @@ class BlueprintDraftUnit(BaseModel):
     knowledge_unit_id: str | None = None
     title: str
     kind: Literal["concept", "formula", "theorem", "example", "skill"] = "concept"
-    learning_objectives: list[str] = Field(default_factory=list)
+    learning_objectives: list[str | LearningObjective] = Field(default_factory=list)
     prerequisites: list[str] = Field(default_factory=list)
     source_refs: list[str] = Field(default_factory=list)
     related_unit_ids: list[str] = Field(default_factory=list)
@@ -102,7 +103,7 @@ class ContentTaskDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str = Field(min_length=1)
-    covered_objectives: dict[str, list[str]] = Field(min_length=1)
+    covered_objectives: dict[str, list[str]] = Field(min_length=1, description="Original knowledge_unit_id to assigned objective_id references, never objective text.")
     quiz_count: int | None = Field(default=None, ge=0)
     depth_guidance: Literal["concise", "standard", "detailed"]
     source_refs: list[str] = Field(default_factory=list)

@@ -20,7 +20,7 @@ def saved_run(tmp_path):
         return str(path)
 
     common = dict(run_id="r", source_refs=["s"])
-    question = dict(question_id="q", knowledge_unit_id="u", target_objectives=["goal"],
+    question = dict(question_id="q", knowledge_unit_id="u", target_objectives=["u-o1"],
                     question="Question", options=["yes", "no"], answer="yes", explanation="Because", source_refs=["s"])
     explanation = dict(common, artifact_id="c", task_id="t", context_pack_id="p",
                        knowledge_unit_ids=["u"], status="accepted", content="Explanation")
@@ -29,7 +29,7 @@ def saved_run(tmp_path):
     paths = {
         "source_json": put("source", dict(blocks=[dict(common, source_ref="s", page_number=1, text="Source")])),
         "blueprint": put("blueprint", dict(blueprint=dict(common, artifact_id="b", version=1,
-                            knowledge_units=[dict(common, artifact_id="u", title="Unit", learning_objectives=["goal"])]))),
+                            knowledge_units=[dict(common, artifact_id="u", title="Unit", learning_objectives=[dict(objective_id="u-o1", text="goal")])]))),
         "content": put("content", dict(common, blueprint_version="b:v1", tasks=[dict(common, task_id="t",
                            knowledge_unit_id="u", blueprint_version="b:v1", content_types=["explanation", "quiz"])],
                            context_packs=[dict(common, context_pack_id="p", task_id="t", knowledge_unit_id="u")],

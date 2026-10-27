@@ -82,7 +82,7 @@ def test_course_architect_generates_structured_content_tasks() -> None:
         "tasks": [
             {
                 "title": "上确界",
-                "covered_objectives": {"ku-sup": ["理解上确界"]},
+                "covered_objectives": {"ku-sup": ["ku-sup-o1"]},
                 "quiz_count": 2,
                 "depth_guidance": "detailed",
                 "interactive_component_policy": "required",
@@ -90,7 +90,7 @@ def test_course_architect_generates_structured_content_tasks() -> None:
             },
             {
                 "title": "基础概念",
-                "covered_objectives": {"ku-basic": ["理解基础概念"]},
+                "covered_objectives": {"ku-basic": ["ku-basic-o1"]},
                 "quiz_count": 0,
                 "depth_guidance": "concise",
                 "interactive_component_policy": "skip",
@@ -106,7 +106,7 @@ def test_course_architect_generates_structured_content_tasks() -> None:
     assert [task.knowledge_unit_id for task in tasks] == ["ku-sup", "ku-basic"]
     assert tasks[0].quiz_count == 2
     assert tasks[0].interactive_component_policy == "required"
-    assert tasks[0].covered_objectives == {"ku-sup": ["理解上确界"]}
+    assert tasks[0].covered_objectives == {"ku-sup": ["ku-sup-o1"]}
     assert tasks[0].source_refs == []
     assert not any("dropped_source_refs" in warning for warning in result["warnings"])
     assert "说明上确界与最大元的差别。" in tasks[0].acceptance_criteria
@@ -120,7 +120,7 @@ def test_large_blueprint_task_planning_batches_without_losing_global_order(monke
     class BatchProvider(ArchitectProvider):
         def generate_structured(self, request):
             context = json.loads(request.prompt.split("## Learning Blueprint", 1)[1].split("```json", 1)[1].split("```", 1)[0])
-            self.payload = {"tasks": [{"title": u["title"], "covered_objectives": {u["knowledge_unit_id"]: u["learning_objectives"]},
+            self.payload = {"tasks": [{"title": u["title"], "covered_objectives": {u["knowledge_unit_id"]: [o["objective_id"] for o in u["learning_objectives"]]},
                 "quiz_count": 0, "depth_guidance": "detailed"} for u in context["knowledge_units"]]}
             return super().generate_structured(request)
 
@@ -139,7 +139,7 @@ def test_large_blueprint_task_planning_batches_without_losing_global_order(monke
 
 def test_oversized_single_architect_unit_blocks_without_a_model_call(monkeypatch) -> None:
     blueprint = _blueprint()
-    blueprint.knowledge_units[0].learning_objectives = ["很长的目标" * 10000]
+    blueprint.knowledge_units[0].learning_objectives = [blueprint.knowledge_units[0].learning_objectives[0].model_copy(update={"text": "很长的目标" * 10000})]
     provider = ArchitectProvider({"tasks": []})
     result = plan_content_tasks_with_architect(provider, run_id="oversized-plan", blueprint=blueprint)
     assert provider.calls == []
@@ -148,9 +148,9 @@ def test_oversized_single_architect_unit_blocks_without_a_model_call(monkeypatch
 
 def test_duplicate_architect_tasks_require_revision() -> None:
     provider = ArchitectProvider({"tasks": [
-        {"title": "Supremum A", "covered_objectives": {"ku-sup": ["理解上确界"]}, "depth_guidance": "standard"},
-        {"title": "Supremum B", "covered_objectives": {"ku-sup": ["理解上确界"]}, "depth_guidance": "standard"},
-        {"title": "Basic", "covered_objectives": {"ku-basic": ["理解基础概念"]}, "depth_guidance": "standard"},
+        {"title": "Supremum A", "covered_objectives": {"ku-sup": ["ku-sup-o1"]}, "depth_guidance": "standard"},
+        {"title": "Supremum B", "covered_objectives": {"ku-sup": ["ku-sup-o1"]}, "depth_guidance": "standard"},
+        {"title": "Basic", "covered_objectives": {"ku-basic": ["ku-basic-o1"]}, "depth_guidance": "standard"},
     ]})
     result = plan_content_tasks_with_architect(provider, run_id="duplicate-plan", blueprint=_blueprint())
     assert result["content_task_planning_metadata"]["status"] == "succeeded"

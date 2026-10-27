@@ -33,7 +33,7 @@ Return only a valid JSON object matching `QuizDraft` and this JSON Schema:
 
 - Each answer must occur exactly once in its options. All learner-facing fields
   must be supported by cited ContextPack references, and `target_objectives` must
-  use the exact unit objective strings.
+  use the exact unit `objective_id` values.
 
 ### Formula output contract
 

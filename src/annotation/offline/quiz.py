@@ -13,9 +13,9 @@ def quiz_draft(
         *context_pack.source_refs,
         *(excerpt.source_ref for excerpt in context_pack.excerpts),
     ]))
-    objectives = list(unit.learning_objectives)
+    objectives = list(unit.objective_ids)
     count = max(0, requested_count) if requested_count is not None else (len(objectives) if refs else 0)
-    target_one = objectives[0] if objectives else f"理解{unit.title}"
+    target_one = objectives[0] if objectives else ""
     target_two = objectives[1] if len(objectives) > 1 else target_one
     questions: list[QuizQuestion] = []
     for index in range(count):

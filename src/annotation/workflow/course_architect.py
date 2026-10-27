@@ -25,7 +25,7 @@ def _blueprint_context(blueprint: LearningBlueprint) -> str:
                     "knowledge_unit_id": unit.artifact_id,
                     "title": unit.title,
                     "kind": unit.kind,
-                    "learning_objectives": list(unit.learning_objectives),
+                    "learning_objectives": unit.objective_context(),
                     "prerequisites": list(unit.prerequisites),
                     "related_unit_ids": list(unit.related_unit_ids),
                 }
@@ -79,7 +79,7 @@ def _tasks_from_draft(
     for index, item in enumerate(draft.tasks, 1):
         invalid = False
         for key, objectives in item.covered_objectives.items():
-            if key not in units or not set(objectives).issubset(units[key].learning_objectives):
+            if key not in units or not set(objectives).issubset(units[key].objective_ids):
                 warnings.append(f"course_architect_revision_required:{key}:unknown_unit_or_objective")
                 invalid = True
                 continue
@@ -104,7 +104,7 @@ def _tasks_from_draft(
                 *item.acceptance_criteria,
             ])))
     for key, unit in units.items():
-        if key not in covered or set(unit.learning_objectives) - covered[key]:
+        if key not in covered or set(unit.objective_ids) - covered[key]:
             warnings.append(f"course_architect_revision_required:{key}:missing_objectives")
     return tasks, warnings
 
@@ -115,7 +115,9 @@ def teaching_blueprint(blueprint: LearningBlueprint, tasks: list[ContentTask]) -
     units = []
     for task in tasks:
         selected = [originals[key] for key in task.covered_objectives]
-        objectives = _unique(o for values in task.covered_objectives.values() for o in values)
+        objective_map = {o.objective_id: o for u in selected for o in u.learning_objectives}
+        objectives = [objective_map[oid] for oid in _unique(
+            o for values in task.covered_objectives.values() for o in values)]
         prerequisites = _unique(p for u in selected for p in u.prerequisites if p not in task.covered_objectives)
         units.append(KnowledgeUnit(artifact_id=task.knowledge_unit_id, run_id=task.run_id,
             version=1, status="accepted", created_by="course_architect",

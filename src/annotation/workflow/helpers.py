@@ -16,6 +16,7 @@ from annotation.domain.artifacts import (
     InteractiveComponentArtifact,
     InteractiveComponentNode,
     KnowledgeUnit,
+    bind_learning_objectives,
     LearningBlueprint,
     LearningDocument,
     MarkdownNode,
@@ -345,6 +346,10 @@ def blueprint_from_draft(
     units: list[KnowledgeUnit] = []
     adapted = False
     used_unit_ids: set[str] = set()
+    previous = state.get("blueprint")
+    previous_units = {u.artifact_id: u for u in previous.knowledge_units} if previous else {}
+    reserved_ids = set(previous.objective_id_history) if previous else set()
+    reserved_ids.update(o.objective_id for u in previous_units.values() for o in u.learning_objectives)
     for index, unit in enumerate(draft.knowledge_units, start=1):
         if workflow_capabilities is not None:
             refs, refs_adapted = workflow_capabilities.blueprint_source_refs(unit, state)
@@ -356,6 +361,12 @@ def blueprint_from_draft(
         if stable_id in used_unit_ids:
             raise ProviderError(f"duplicate knowledge unit id: {stable_id}", category="schema")
         used_unit_ids.add(stable_id)
+        known_ids = set(previous_units[stable_id].objective_ids) if stable_id in previous_units else set()
+        for objective in unit.learning_objectives:
+            if not isinstance(objective, str) and objective.objective_id not in known_ids:
+                raise ProviderError(f"unknown retained objective_id: {objective.objective_id}", category="schema")
+        objectives = bind_learning_objectives(stable_id, list(unit.learning_objectives), reserved_ids)
+        reserved_ids.update(o.objective_id for o in objectives)
         units.append(KnowledgeUnit(
             artifact_id=stable_id,
             run_id=state["run_id"],
@@ -365,7 +376,7 @@ def blueprint_from_draft(
             created_by=f"provider:{provider_name}",
             title=unit.title,
             kind=unit.kind,
-            learning_objectives=list(unit.learning_objectives),
+            learning_objectives=objectives,
             prerequisites=list(unit.prerequisites),
             related_unit_ids=list(unit.related_unit_ids),
             structure_node_ids=[state["textbook_structure"].nodes[0].node_id] if state.get("textbook_structure") else [],
@@ -383,6 +394,7 @@ def blueprint_from_draft(
         created_by=f"provider:{provider_name}",
         title=draft.title or state["source_document"].title,
         knowledge_units=units,
+        objective_id_history=sorted(reserved_ids),
     )
     return blueprint, adapted
 

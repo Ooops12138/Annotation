@@ -16,7 +16,7 @@ def content_draft(unit: KnowledgeUnit, pack: ContextPack) -> ContentDraft:
         content=(
             "## 讲解\n\n"
             f"本节围绕“{unit.title}”展开。{prerequisite_note}"
-            f"学习目标是：{'；'.join(unit.learning_objectives) or '掌握本单元的基本含义和用法'}。"
+            f"学习目标是：{'；'.join(unit.objective_texts) or '掌握本单元的基本含义和用法'}。"
             f"教材证据摘录：{evidence or '当前没有可用的教材摘录，需要人工审核。'}"
         ),
         source_refs=refs,

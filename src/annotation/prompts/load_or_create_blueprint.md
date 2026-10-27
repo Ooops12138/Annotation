@@ -55,6 +55,8 @@ Return only a valid JSON object matching `BlueprintDraft`.
 - Give each unit a stable `knowledge_unit_id`; reference those IDs in
   `prerequisites` and `related_unit_ids`.
 
+- Return new learning objectives as text strings. The program binds stable `objective_id` values after assigning the final knowledge-unit ID; do not invent objective IDs.
+
 ## Dynamic Inputs
 
 ### Textbook excerpts
