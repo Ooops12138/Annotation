@@ -8,10 +8,11 @@ const host = ref<HTMLElement | null>(null)
 const unavailable = ref(false)
 let handle: InteractiveComponentRenderHandle | null = null
 
-onMounted(() => {
+onMounted(async () => {
   if (!host.value) return
   try {
     handle = renderInteractiveComponent(host.value, props.spec)
+    await handle.ready
   } catch (error) {
     unavailable.value = true
     console.error('[Annotation] 交互组件规格未通过 renderer 边界:', error)

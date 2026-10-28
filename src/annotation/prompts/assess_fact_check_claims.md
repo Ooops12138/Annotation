@@ -31,10 +31,10 @@ Return only a valid JSON object matching `FactCheckAssessmentsDraft`.
 
 - Evidence is supplied as a deduplicated records table with per-claim evidence_ids.
   Only records assigned to that claim may support its judgement. Nonempty evidence
-  is not necessarily relevant: headings alone cannot support a theorem. An explicit
+  is not necessarily relevant: headings alone cannot support a substantive claim. An explicit
   counterexample derived from the supplied textbook definitions is a locatable
-  contradiction; explain the substitution and the relevant source_ref. Do not
-  classify a false mathematical statement as a stance.
+  contradiction; explain the reasoning and the relevant source_ref. Do not
+  classify a false factual statement as a stance.
   If the source wording itself is ambiguous, mark insufficient and identify the
   ambiguity rather than silently treating a repaired statement as supported.
 

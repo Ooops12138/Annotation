@@ -9,8 +9,6 @@ from annotation.domain.artifacts import (
     ContentTask,
     ContextExcerpt,
     ContextPack,
-    FunctionDomainSpec,
-    FunctionGraphSpec,
     GeneratedHtmlSpec,
     InteractiveComponentArtifact,
     InteractiveComponentPlan,
@@ -136,7 +134,7 @@ def _interval_draft(request: StructuredGenerationRequest[Any], *, refs: list[str
         "knowledge_unit_id": request.metadata["knowledge_unit_id"],
         "context_pack_id": request.metadata["context_pack_id"],
         "spec": {
-            "component_type": "interval_line",
+            "component_type": "generated_html",
             "component_id": "interval-supremum",
             "title": "观察区间 [0,1)",
             "learning_objective": "区分上确界 1 与不存在的最大元。",
@@ -149,12 +147,10 @@ def _interval_draft(request: StructuredGenerationRequest[Any], *, refs: list[str
             "controls": [{"kind": "toggle", "control_id": "show-supremum", "label": "标出上确界", "default_value": False}],
             "test_actions": [{"action": "toggle", "control_id": "show-supremum", "value": True, "expected_text": "上确界"}],
             "annotations": [],
-            "interval_start": 0,
-            "interval_end": 1,
-            "left_endpoint": "closed",
-            "right_endpoint": "open",
-            "supremum": 1,
-            "maximum": None,
+            "html": '<label><input type="checkbox" data-component-control="show-supremum">观察</label><p id="observation"></p>',
+            "css": "",
+            "javascript": "document.querySelector('input').onchange = () => document.querySelector('#observation').textContent = '上确界';",
+
         },
     }
 
@@ -181,29 +177,18 @@ def test_valid_component_is_accepted_after_shared_sandbox_and_critic() -> None:
     assert [call.schema.__name__ for call in provider.calls] == ["InteractiveComponentDraft", "InteractiveComponentCritiqueDraft"]
     assert "json" in provider.calls[0].prompt.lower()
     assert "json" in provider.calls[1].prompt.lower()
-    assert "show-supremum" in provider.calls[0].prompt
+    assert "data-component-control" in provider.calls[0].prompt
     assert '"issues"' in provider.calls[1].prompt
+    for retired in ("interval_line", "complex_plane", "function_graph", "show-supremum"):
+        assert retired not in provider.calls[0].prompt
+    assert "factual_mismatch" in provider.calls[1].prompt
     assert "Do not output fields outside the schema" in provider.calls[1].prompt
 
 
-def test_unsupported_control_revises_before_browser_sandbox() -> None:
-    def unsupported_control(request: StructuredGenerationRequest[Any]) -> dict[str, Any]:
+def test_untested_control_revises_before_browser_sandbox() -> None:
+    def untested_control(request: StructuredGenerationRequest[Any]) -> dict[str, Any]:
         draft = _interval_draft(request)
-        draft["spec"]["controls"] = [{
-            "kind": "range",
-            "control_id": "right-endpoint-toggle",
-            "label": "切换右端点",
-            "minimum": 0,
-            "maximum": 1,
-            "step": 1,
-            "default_value": 1,
-        }]
-        draft["spec"]["test_actions"] = [{
-            "action": "set_range",
-            "control_id": "right-endpoint-toggle",
-            "value": 0,
-            "expected_text": "右端点变为实心点。",
-        }]
+        draft["spec"]["test_actions"] = []
         return draft
 
     sandbox_calls: list[int] = []
@@ -212,14 +197,14 @@ def test_unsupported_control_revises_before_browser_sandbox() -> None:
         sandbox_calls.append(1)
         return _sandbox_ok()
 
-    provider = ScriptedComponentProvider([unsupported_control, _interval_draft, {"issues": []}])
+    provider = ScriptedComponentProvider([untested_control, _interval_draft, {"issues": []}])
     result = build_interactive_component_subgraph(provider, max_attempts=3, sandbox_runner=sandbox).invoke(_state())
 
     trace = result["interactive_component_loop_trace"]
     assert [attempt.route for attempt in trace.attempts] == ["revise", "accept"]
     assert trace.attempts[0].sandbox_report is None
     assert trace.attempts[0].hard_check is not None
-    assert "show-supremum" in trace.attempts[0].hard_check.issues[0].message
+    assert "测试动作" in trace.attempts[0].hard_check.issues[0].message
     assert sandbox_calls == [1]
 
 
@@ -299,58 +284,21 @@ def test_browser_infrastructure_error_fails_without_silent_degradation() -> None
     assert len(trace.attempts) == 1
 
 
-def test_function_domain_probes_reject_sqrt_and_unexcluded_hole() -> None:
-    state = _state()
-    task = state["task"]
-    pack = state["context_pack"]
-    common = {
-        "component_id": "function-test",
-        "title": "函数图像",
-        "learning_objective": "观察函数定义域。",
-        "source_refs": ["src-1"],
-        "accessibility": ComponentAccessibility(aria_label="函数图像", description="定义域图像", observation="观察定义域。"),
-        "controls": [],
-        "test_actions": [],
-        "annotations": [],
-    }
-    sqrt_spec = FunctionGraphSpec(
-        **common,
-        formula="sqrt(x-2)",
-        domain=FunctionDomainSpec(start=0, end=4),
-        sample_points=[0, 2, 4],
-    )
-    hole_spec = FunctionGraphSpec(
-        **common,
-        formula="1/(x-1)",
-        domain=FunctionDomainSpec(start=0, end=2),
-        sample_points=[0, 1, 2],
-    )
-    for spec in (sqrt_spec, hole_spec):
-        artifact = InteractiveComponentArtifact(
-            artifact_id=f"artifact-{spec.component_id}-{spec.formula[0]}",
-            run_id=task.run_id,
-            version=1,
-            status="checking",
-            source_refs=["src-1"],
-            created_by="test",
-            plan_id=task.plan_id,
-            task_id=task.task_id,
-            knowledge_unit_id=task.knowledge_unit_id,
-            accepted_content_artifact_id=task.accepted_content_artifact_id,
-            context_pack_id=task.context_pack_id,
-            spec=spec,
-        )
-        check = interactive_component_hard_check(
-            task=task,
-            context_pack=pack,
-            valid_source_refs={"src-1"},
-            candidate_artifact=artifact,
-        )
-        assert check.status == "needs_revision"
-        assert check.issues[0].category == "formula"
+def test_retired_component_types_are_rejected() -> None:
+    import pytest
+    from pydantic import ValidationError
+    valid = GeneratedHtmlSpec(
+        component_id="process", title="Process", learning_objective="Observe a process",
+        source_refs=["src-1"],
+        accessibility=ComponentAccessibility(aria_label="Process", description="Steps", observation="Observe"),
+        html="<p>Step one</p>",
+    ).model_dump()
+    for component_type in ("interval_line", "complex_plane", "function_graph"):
+        with pytest.raises(ValidationError):
+            GeneratedHtmlSpec.model_validate({**valid, "component_type": component_type})
 
 
-def test_generated_html_component_is_source_bound_and_keeps_legacy_renderer_rules() -> None:
+def test_generated_html_component_is_source_bound_and_uses_code_only_contract() -> None:
     state = _state()
     task = state["task"]
     spec = GeneratedHtmlSpec(
@@ -418,7 +366,7 @@ def test_component_snapshot_keeps_full_trace_but_manifest_only_has_summary(tmp_p
     path = write_interactive_component_artifact(state, root=tmp_path / "components")
     assert path is not None
     snapshot = json.loads(path.read_text(encoding="utf-8"))
-    assert snapshot["schema_version"] == "interactive-components-v1"
+    assert snapshot["schema_version"] == "interactive-components-v2"
     assert snapshot["loop_trace"]["final_status"] == "not_needed"
     state["interactive_component_artifact_path"] = str(path.resolve())
     manifest_path = write_run_manifest(state, blueprint_path=None, document_path=None, root=tmp_path / "runs")
@@ -426,3 +374,16 @@ def test_component_snapshot_keeps_full_trace_but_manifest_only_has_summary(tmp_p
     assert manifest["schema_version"] == "run-manifest-v4"
     assert manifest["interactive_component_summary"]["final_status"] == "not_needed"
     assert "loop_trace" not in manifest["interactive_component_summary"]
+
+
+def test_component_library_allowlist_rejects_unknown_and_duplicate_names() -> None:
+    import pytest
+    from pydantic import ValidationError
+    base = dict(component_id="library", title="Library", learning_objective="Compare states",
+                source_refs=["src-1"], html="<p>State</p>",
+                accessibility=dict(aria_label="State", description="States", observation="Compare"))
+    for libraries in ([], ["jsxgraph"], ["echarts"], ["d3"], ["jsxgraph", "echarts", "d3"]):
+        assert GeneratedHtmlSpec(**base, libraries=libraries).libraries == libraries
+    for libraries in (["remote"], ["d3", "d3"], ["echarts"] * 4):
+        with pytest.raises(ValidationError):
+            GeneratedHtmlSpec(**base, libraries=libraries)

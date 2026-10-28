@@ -11,21 +11,26 @@ declare global {
 
 const root = document.querySelector<HTMLElement>('#sandbox-root')
 
-try {
-  if (!root) throw new Error('sandbox root is unavailable')
-  const spec = window.__ANNOTATION_COMPONENT_SPEC__
-  if (!isInteractiveComponentSpec(spec)) throw new Error('sandbox received an invalid interactive component spec')
-  renderInteractiveComponent(root, spec)
-  window.__annotationInteractiveSandbox = { ready: true }
-} catch (error) {
-  const message = error instanceof Error ? error.message : String(error)
-  if (root) {
-    root.replaceChildren()
-    const alert = document.createElement('p')
-    alert.setAttribute('role', 'alert')
-    alert.textContent = '互动图示暂不可用。'
-    root.append(alert)
+async function mountSandbox() {
+  try {
+    if (!root) throw new Error('sandbox root is unavailable')
+    const spec = window.__ANNOTATION_COMPONENT_SPEC__
+    if (!isInteractiveComponentSpec(spec)) throw new Error('sandbox received an invalid interactive component spec')
+    await renderInteractiveComponent(root, spec).ready
+    window.__annotationInteractiveSandbox = { ready: true }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (root) {
+      root.replaceChildren()
+      const alert = document.createElement('p')
+      alert.setAttribute('role', 'alert')
+      alert.textContent = '互动图示暂不可用。'
+      root.append(alert)
+    }
+    window.__annotationInteractiveSandbox = { ready: false, error: message }
+    console.error('[Annotation sandbox] interactive component render failed:', error)
   }
-  window.__annotationInteractiveSandbox = { ready: false, error: message }
-  console.error('[Annotation sandbox] interactive component render failed:', error)
+
 }
+
+void mountSandbox()

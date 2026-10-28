@@ -619,7 +619,7 @@ class BlueprintLoopTrace(BaseModel):
     artifact_path: str | None = None
 
 
-ComponentType = Literal["interval_line", "complex_plane", "function_graph", "generated_html"]
+ComponentType = Literal["generated_html"]
 
 
 class InteractiveComponentPlan(BaseModel):
@@ -634,7 +634,7 @@ class InteractiveComponentPlan(BaseModel):
     accepted_content_artifact_id: str | None = None
     source_refs: list[str] = Field(default_factory=list)
     allowed_component_types: list[ComponentType] = Field(
-        default_factory=lambda: ["interval_line", "complex_plane", "function_graph", "generated_html"]
+        default_factory=lambda: ["generated_html"]
     )
     reason: str = Field(min_length=1)
 
@@ -661,7 +661,7 @@ class InteractiveComponentTask(BaseModel):
     context_pack_id: str
     source_refs: list[str] = Field(min_length=1)
     allowed_component_types: list[ComponentType] = Field(
-        default_factory=lambda: ["interval_line", "complex_plane", "function_graph", "generated_html"]
+        default_factory=lambda: ["generated_html"]
     )
     acceptance_criteria: list[str] = Field(default_factory=list)
     status: Literal["planned", "generating", "accepted", "needs_revision", "blocked", "not_needed"] = "planned"
@@ -736,7 +736,7 @@ class ComponentAnnotation(BaseModel):
 
 
 class InteractiveComponentSpecBase(BaseModel):
-    """Fields rendered as text or controlled JSXGraph primitives only."""
+    """Subject-neutral metadata and browser test protocol."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -769,82 +769,6 @@ class InteractiveComponentSpecBase(BaseModel):
         return self
 
 
-class IntervalLineSpec(InteractiveComponentSpecBase):
-    component_type: Literal["interval_line"] = "interval_line"
-    interval_start: float = Field(allow_inf_nan=False)
-    interval_end: float = Field(allow_inf_nan=False)
-    left_endpoint: Literal["open", "closed"]
-    right_endpoint: Literal["open", "closed"]
-    supremum: float = Field(allow_inf_nan=False)
-    maximum: float | None = Field(default=None, allow_inf_nan=False)
-
-    @model_validator(mode="after")
-    def validate_interval_semantics(self) -> "IntervalLineSpec":
-        if self.interval_start >= self.interval_end:
-            raise ValueError("interval_start must be below interval_end")
-        if self.supremum != self.interval_end:
-            raise ValueError("an interval-line supremum must equal interval_end")
-        expected_maximum = self.interval_end if self.right_endpoint == "closed" else None
-        if self.maximum != expected_maximum:
-            raise ValueError("interval-line maximum must match the right endpoint inclusion")
-        return self
-
-
-class ComplexPlanePoint(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    point_id: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
-    real: float = Field(allow_inf_nan=False)
-    imaginary: float = Field(allow_inf_nan=False)
-    label: str = Field(min_length=1, max_length=120)
-
-
-class ComplexPlaneSpec(InteractiveComponentSpecBase):
-    component_type: Literal["complex_plane"] = "complex_plane"
-    points: list[ComplexPlanePoint] = Field(min_length=1, max_length=24)
-
-    @model_validator(mode="after")
-    def validate_points(self) -> "ComplexPlaneSpec":
-        point_ids = [point.point_id for point in self.points]
-        if len(point_ids) != len(set(point_ids)):
-            raise ValueError("complex-plane point ids must be unique")
-        return self
-
-
-class FunctionDomainSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    start: float = Field(allow_inf_nan=False)
-    end: float = Field(allow_inf_nan=False)
-    start_endpoint: Literal["open", "closed"] = "closed"
-    end_endpoint: Literal["open", "closed"] = "closed"
-
-    @model_validator(mode="after")
-    def validate_domain(self) -> "FunctionDomainSpec":
-        if self.start >= self.end:
-            raise ValueError("function domain start must be below end")
-        return self
-
-
-class FunctionGraphSpec(InteractiveComponentSpecBase):
-    component_type: Literal["function_graph"] = "function_graph"
-    formula: str = Field(min_length=1, max_length=500)
-    domain: FunctionDomainSpec
-    sample_points: list[float] = Field(min_length=2, max_length=80)
-    excluded_points: list[float] = Field(default_factory=list, max_length=24)
-    sample_count: int = Field(default=120, ge=20, le=400)
-
-    @model_validator(mode="after")
-    def validate_sampling(self) -> "FunctionGraphSpec":
-        if any(point < self.domain.start or point > self.domain.end for point in self.sample_points):
-            raise ValueError("function sample points must stay in the declared domain")
-        if len(set(self.excluded_points)) != len(self.excluded_points):
-            raise ValueError("function excluded points must be unique")
-        if any(point <= self.domain.start or point >= self.domain.end for point in self.excluded_points):
-            raise ValueError("function excluded points must be strictly inside the declared domain")
-        return self
-
-
 class GeneratedHtmlSpec(InteractiveComponentSpecBase):
     """A source-bound HTML/CSS/JS learning component rendered in a sandboxed iframe.
 
@@ -854,13 +778,15 @@ class GeneratedHtmlSpec(InteractiveComponentSpecBase):
     """
 
     component_type: Literal["generated_html"] = "generated_html"
-    libraries: list[Literal["jsxgraph"]] = Field(default_factory=list, max_length=4)
+    libraries: list[Literal["jsxgraph", "echarts", "d3"]] = Field(default_factory=list, max_length=3)
     html: str = Field(min_length=1, max_length=20_000)
     css: str = Field(default="", max_length=12_000)
     javascript: str = Field(default="", max_length=20_000)
 
     @model_validator(mode="after")
     def validate_fragments(self) -> "GeneratedHtmlSpec":
+        if len(set(self.libraries)) != len(self.libraries):
+            raise ValueError("component libraries must be unique")
         lowered_html = self.html.lower()
         if any(token in lowered_html for token in ("<script", "<style", "<iframe", "<object", "<embed")):
             raise ValueError("generated_html html must be a markup fragment without executable or nested browsing tags")
@@ -872,10 +798,7 @@ class GeneratedHtmlSpec(InteractiveComponentSpecBase):
         return self
 
 
-InteractiveComponentSpec = Annotated[
-    Union[IntervalLineSpec, ComplexPlaneSpec, FunctionGraphSpec, GeneratedHtmlSpec],
-    Field(discriminator="component_type"),
-]
+InteractiveComponentSpec = GeneratedHtmlSpec
 
 
 class InteractiveComponentArtifact(ArtifactBase):
@@ -906,7 +829,7 @@ class InteractiveComponentCriticIssueDraft(BaseModel):
     code: Literal[
         "objective_mismatch",
         "source_mismatch",
-        "mathematical_mismatch",
+        "factual_mismatch",
         "interaction_mismatch",
         "accessibility",
     ]

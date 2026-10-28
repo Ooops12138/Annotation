@@ -307,7 +307,7 @@ def write_interactive_component_artifact(state: Mapping[str, Any], *, root: str 
     path = _immutable_path(
         Path(root or (STORAGE_DIR / "artifacts" / "interactive_components"))
         / _safe_run_id(run_id)
-        / "interactive-components-v1.json"
+        / "interactive-components-v2.json"
     )
     artifact_path = str(path.resolve())
     if trace is not None and hasattr(trace, "artifact_path"):
@@ -322,7 +322,7 @@ def write_interactive_component_artifact(state: Mapping[str, Any], *, root: str 
         elif isinstance(artifact, dict):
             artifact["artifact_path"] = artifact_path
     payload = {
-        "schema_version": "interactive-components-v1",
+        "schema_version": "interactive-components-v2",
         "run_id": run_id,
         "status": state.get("interactive_component_status") or (
             trace_payload.get("final_status") if isinstance(trace_payload, Mapping) else None

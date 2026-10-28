@@ -92,53 +92,18 @@ export interface BaseInteractiveComponentSpec {
   annotations: ComponentAnnotation[]
 }
 
-export interface IntervalLineSpec extends BaseInteractiveComponentSpec {
-  component_type: 'interval_line'
-  interval_start: number
-  interval_end: number
-  left_endpoint: 'open' | 'closed'
-  right_endpoint: 'open' | 'closed'
-  supremum: number
-  maximum: number | null
-}
-
-export interface ComplexPlanePoint {
-  point_id: string
-  real: number
-  imaginary: number
-  label: string
-}
-
-export interface ComplexPlaneSpec extends BaseInteractiveComponentSpec {
-  component_type: 'complex_plane'
-  points: ComplexPlanePoint[]
-}
-
-export interface FunctionDomainSpec {
-  start: number
-  end: number
-  start_endpoint: 'open' | 'closed'
-  end_endpoint: 'open' | 'closed'
-}
-
-export interface FunctionGraphSpec extends BaseInteractiveComponentSpec {
-  component_type: 'function_graph'
-  formula: string
-  domain: FunctionDomainSpec
-  sample_points: number[]
-  excluded_points: number[]
-  sample_count: number
-}
+export const componentLibraries = ['jsxgraph', 'echarts', 'd3'] as const
+export type ComponentLibrary = (typeof componentLibraries)[number]
 
 export interface GeneratedHtmlSpec extends BaseInteractiveComponentSpec {
   component_type: 'generated_html'
-  libraries?: Array<'jsxgraph'>
+  libraries?: ComponentLibrary[]
   html: string
   css: string
   javascript: string
 }
 
-export type InteractiveComponentSpec = IntervalLineSpec | ComplexPlaneSpec | FunctionGraphSpec | GeneratedHtmlSpec
+export type InteractiveComponentSpec = GeneratedHtmlSpec
 
 export interface InteractiveComponentNode {
   type: 'interactive_component'
@@ -278,44 +243,8 @@ function isBaseComponentSpec(value: unknown): value is Record<string, unknown> &
 
 export function isInteractiveComponentSpec(value: unknown): value is InteractiveComponentSpec {
   if (!isBaseComponentSpec(value)) return false
-  if (value.component_type === 'interval_line') {
-    const maximum = value.maximum
-    return isFiniteNumber(value.interval_start)
-      && isFiniteNumber(value.interval_end)
-      && value.interval_start < value.interval_end
-      && (value.left_endpoint === 'open' || value.left_endpoint === 'closed')
-      && (value.right_endpoint === 'open' || value.right_endpoint === 'closed')
-      && isFiniteNumber(value.supremum)
-      && value.supremum === value.interval_end
-      && (maximum === null || isFiniteNumber(maximum))
-      && (value.right_endpoint === 'closed' ? maximum === value.interval_end : maximum === null)
-  }
-  if (value.component_type === 'complex_plane') {
-    return Array.isArray(value.points) && value.points.length > 0 && value.points.every((point) => (
-      isRecord(point) && isString(point.point_id) && isFiniteNumber(point.real) && isFiniteNumber(point.imaginary) && isString(point.label)
-    ))
-  }
-  if (value.component_type === 'function_graph') {
-    const domain = value.domain
-    return isString(value.formula)
-      && isRecord(domain)
-      && isFiniteNumber(domain.start)
-      && isFiniteNumber(domain.end)
-      && domain.start < domain.end
-      && (domain.start_endpoint === 'open' || domain.start_endpoint === 'closed')
-      && (domain.end_endpoint === 'open' || domain.end_endpoint === 'closed')
-      && Array.isArray(value.sample_points)
-      && value.sample_points.length >= 2
-      && value.sample_points.every(isFiniteNumber)
-      && Array.isArray(value.excluded_points)
-      && value.excluded_points.every(isFiniteNumber)
-      && isFiniteNumber(value.sample_count)
-      && Number.isInteger(value.sample_count)
-      && value.sample_count >= 20
-      && value.sample_count <= 400
-  }
   if (value.component_type === 'generated_html') {
-    if (value.libraries !== undefined && (!Array.isArray(value.libraries) || value.libraries.some((library) => library !== 'jsxgraph'))) return false
+    if (value.libraries !== undefined && (!Array.isArray(value.libraries) || value.libraries.length > componentLibraries.length || new Set(value.libraries).size !== value.libraries.length || value.libraries.some((library) => !componentLibraries.includes(library as ComponentLibrary)))) return false
     if (!isString(value.html) || typeof value.css !== 'string' || typeof value.javascript !== 'string') return false
     if (value.html.length > 20_000 || value.css.length > 12_000 || value.javascript.length > 20_000) return false
     const htmlSource = value.html

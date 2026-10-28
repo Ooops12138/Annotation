@@ -110,6 +110,7 @@ def load_prompt(agent: str, *, profile: str | None = None, **values: object) -> 
         "BLUEPRINT_GUIDANCE": "blueprint_guidance",
         "GENERAL_TEACHING_GUIDANCE": "teaching_guidance",
         "INTERACTIVE_CRITIQUE_RULES": "interactive_critique_rules",
+        "COMPONENT_CODE_RULES": "component_code_rules",
     }.items():
         if "{{" + key + "}}" in template:
             template = template.replace("{{" + key + "}}", (_PROMPTS_DIR / "shared" / f"{filename}.md").read_text(encoding="utf-8").strip())

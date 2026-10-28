@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isDocumentNode, isSupportedDocumentNodeType, reviewStatusLabel, supportedDocumentNodeTypes } from './document'
+import { isInteractiveComponentSpec, isDocumentNode, isSupportedDocumentNodeType, reviewStatusLabel, supportedDocumentNodeTypes } from './document'
 import { collectRejectedNodes, rejectedNodeToReviewIssue } from './documentRegistry'
 import { normalizeLearningDocument, normalizeReviewReport } from './documentAdapter'
 
@@ -26,9 +26,9 @@ describe('Document IR presentation contract', () => {
     expect(isDocumentNode({
       type: 'interactive_component', id: 'ic-1', artifact_id: 'artifact-1',
       spec: {
-        component_type: 'interval_line', component_id: 'line-1', title: '区间', learning_objective: '区分上确界与最大元', source_refs: ['src-1'],
+        component_type: 'generated_html', component_id: 'line-1', title: '区间', learning_objective: '区分上确界与最大元', source_refs: ['src-1'],
         accessibility: { aria_label: '区间数轴', description: '右端点开放', observation: '没有最大元' }, controls: [], test_actions: [], annotations: [],
-        interval_start: 0, interval_end: 1, left_endpoint: 'closed', right_endpoint: 'open', supremum: 1, maximum: null,
+        html: '<p>学习观察</p>', css: '', javascript: '',
       },
     })).toBe(true)
     expect(isDocumentNode({ type: 'interactive_component', id: 'ic-unsafe', artifact_id: 'artifact-1', spec: { component_type: 'function_graph', formula: 'import("x")' } })).toBe(false)
@@ -140,5 +140,24 @@ describe('local integrity isolation', () => {
     const issue = { issue_id: 'shared', category: 'uncertainty', severity: 'warning', message: 'Verify this claim' }
     const result = normalizeLearningDocument({ ...root, issues: [issue], sections: [section(0)] }, { ...report, issues: [issue] })!
     expect(result.issues).toEqual([issue])
+  })
+})
+
+
+describe('component library boundary', () => {
+  const spec = {
+    component_type: 'generated_html', component_id: 'library', title: 'Observe', learning_objective: 'Compare',
+    source_refs: ['src-1'], accessibility: { aria_label: 'Compare', description: 'States', observation: 'Observe' },
+    controls: [], test_actions: [], annotations: [], html: '<div>State</div>', css: '', javascript: '',
+  }
+  it('accepts native, each local library and their combination', () => {
+    for (const libraries of [[], ['jsxgraph'], ['echarts'], ['d3'], ['jsxgraph', 'echarts', 'd3']]) {
+      expect(isInteractiveComponentSpec({ ...spec, libraries })).toBe(true)
+    }
+  })
+  it('rejects unknown and repeated libraries', () => {
+    for (const libraries of [['remote'], ['d3', 'd3'], ['echarts', 'https://example.com/script.js']]) {
+      expect(isInteractiveComponentSpec({ ...spec, libraries })).toBe(false)
+    }
   })
 })

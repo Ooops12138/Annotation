@@ -31,7 +31,7 @@ Return only a valid JSON object matching `ContentDraft` and this JSON Schema:
 - `content` and Callout `content` are learner-facing. Keep pipeline metadata and
   source IDs in their dedicated fields, not in the prose.
 
-- Support each definition, formula, theorem claim, and worked example with the
+- Support each definition, substantive claim, procedure, and worked example with the
   listed source references. Focus on the unit and its learning objectives.
 
 - Organize the explanation according to the needs of the knowledge unit. Use

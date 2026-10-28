@@ -30,9 +30,8 @@ Return only a valid JSON object matching `FactCheckClaimsDraft`.
 {{DOMAIN_RULES}}
 
 - Use the textbook's language and terminology for retrieval queries; avoid
-  translating Chinese textbook terms into English-only queries. Prioritize theorem
-  statements, summaries, equality conditions, domains, quantifiers and correct quiz
-  answers. Preserve the assertion exactly enough to expose missing hypotheses:
+  translating Chinese textbook terms into English-only queries. Prioritize central claims, summaries, applicability conditions, scope, qualifiers
+  and correct quiz answers. Preserve the assertion exactly enough to expose missing hypotheses:
   never silently repair an incorrect assertion while extracting it. Check optional
   callouts as well as the main explanation.
 

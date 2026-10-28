@@ -1,5 +1,5 @@
 ### Interactive critic rules
 
-- Report `interaction_mismatch` only when actual behavior contradicts the spec description or textbook facts; absence of endpoint switching alone is not a mismatch.
-- Use `objective_mismatch`, `source_mismatch`, `mathematical_mismatch` and `interaction_mismatch` only for blocking inconsistencies. Use `accessibility` for accessibility issues that do not change mathematical facts.
-- Do not replace existing source, expression, safety or browser-rendering hard checks.
+- Compare actual visible browser output and control behavior with the supported learning objective and textbook evidence. A passing test alone does not prove educational correctness.
+- Use `objective_mismatch`, `source_mismatch`, `factual_mismatch` and `interaction_mismatch` for blocking inconsistencies. Use `accessibility` for accessibility issues.
+- Do not invent required subject-specific interactions. Do not replace source, contract or browser hard checks.

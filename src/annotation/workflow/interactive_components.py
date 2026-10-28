@@ -1,4 +1,4 @@
-"""A-004 bounded generation loop for safe, data-only learning components."""
+"""A-004 bounded generation loop for sandboxed, source-bound learning components."""
 
 from __future__ import annotations
 
@@ -13,8 +13,6 @@ from typing import Any, Literal
 from langgraph.graph import END, START, StateGraph
 
 from annotation.domain.artifacts import (
-    ComponentAccessibility,
-    ComponentTestAction,
     ContentArtifact,
     ContentTask,
     ContextPack,
@@ -27,17 +25,14 @@ from annotation.domain.artifacts import (
     InteractiveComponentPlan,
     InteractiveComponentSandboxReport,
     InteractiveComponentTask,
-    IntervalLineSpec,
     KnowledgeUnit,
     ReviewIssue,
-    ToggleControlSpec,
 )
 from annotation.prompt_loader import load_prompt
 from annotation.providers import ModelProvider, ProviderError, StructuredGenerationRequest
 from annotation.workflow.content import render_context_pack
 from annotation.workflow.content_support import _interactive_prompt_content, _interactive_prompt_unit
 from annotation.workflow.helpers import response_metadata, provider_metadata
-from annotation.workflow.interactive_expression import function_domain_probe_errors
 from annotation.workflow.interactive_sandbox import run_interactive_component_sandbox
 from annotation.config import model_max_output_tokens
 from annotation.workflow.models import InteractiveComponentDraft, InteractiveComponentState
@@ -45,8 +40,8 @@ from annotation.workflow.models import InteractiveComponentDraft, InteractiveCom
 
 SandboxRunner = Callable[..., InteractiveComponentSandboxReport]
 
-INTERACTIVE_COMPONENT_PROMPT_VERSION = "generate_interactive_component:v2:core-contract"
-INTERACTIVE_COMPONENT_REVISION_PROMPT_VERSION = "revise_interactive_component:v2:core-contract"
+INTERACTIVE_COMPONENT_PROMPT_VERSION = "generate_interactive_component:v3:code-only"
+INTERACTIVE_COMPONENT_REVISION_PROMPT_VERSION = "revise_interactive_component:v3:code-only"
 
 
 def _unique(values: Iterable[str]) -> list[str]:
@@ -86,15 +81,6 @@ def _issue(
     )
 
 
-def _component_score(unit: KnowledgeUnit, artifact: ContentArtifact) -> int:
-    text = " ".join([unit.title, *unit.objective_texts, artifact.content]).lower()
-    score = 0
-    for token in ("上确界", "区间", "函数", "复数", "数轴", "supremum", "interval", "function", "complex"):
-        if token in text:
-            score += 1
-    return score
-
-
 def plan_interactive_component(
     *,
     run_id: str,
@@ -112,7 +98,7 @@ def plan_interactive_component(
     tasks_by_id = {task.task_id: task for task in tasks}
     packs_by_task = {pack.task_id: pack for pack in context_packs}
     units_by_id = {unit.artifact_id: unit for unit in units}
-    candidates: list[tuple[int, ContentTask, ContextPack, KnowledgeUnit, ContentArtifact, list[str]]] = []
+    candidates: list[tuple[ContentTask, ContextPack, KnowledgeUnit, ContentArtifact, list[str]]] = []
     for artifact in content_artifacts:
         if artifact.status != "accepted" or not artifact.task_id:
             continue
@@ -126,7 +112,7 @@ def plan_interactive_component(
         refs = _unique(ref for ref in artifact.source_refs if ref in set(pack.source_refs))
         if not refs:
             continue
-        candidates.append((_component_score(unit, artifact), task, pack, unit, artifact, refs))
+        candidates.append((task, pack, unit, artifact, refs))
     if not candidates:
         plan = InteractiveComponentPlan(
             plan_id=f"interactive-plan-{uuid.uuid4().hex[:12]}",
@@ -136,9 +122,9 @@ def plan_interactive_component(
         )
         return plan, None, None, None, None
     # Stable tie-breaking makes test runs auditable and repeatable.
-    _, content_task, pack, unit, artifact, refs = sorted(
+    content_task, pack, unit, artifact, refs = sorted(
         candidates,
-        key=lambda item: (-item[0], item[2].task_id, item[4].artifact_id),
+        key=lambda item: (item[0].task_id, item[3].artifact_id),
     )[0]
     plan = InteractiveComponentPlan(
         plan_id=f"interactive-plan-{uuid.uuid4().hex[:12]}",
@@ -158,10 +144,10 @@ def plan_interactive_component(
         context_pack_id=pack.context_pack_id,
         source_refs=refs,
         acceptance_criteria=[
-            "可选择受控 JSXGraph 规格，或输出由 renderer 在受限 iframe 中执行的 HTML/CSS/JavaScript 片段。",
+            "输出由 renderer 在受限 iframe 中执行的 HTML/CSS/JavaScript 片段。",
             "规格必须能用当前教材来源解释，并帮助初学者观察学习目标。",
             "生成式组件必须把可测试控件标为 data-component-control，且不得依赖网络、父页面或外部资源。",
-            "函数图像必须声明受限公式、定义域、端点、采样点和排除点。",
+            "每个声明的控件须提供测试动作，观察结果必须符合教材来源。",
         ],
     )
     return plan, task, unit, artifact, pack
@@ -202,7 +188,7 @@ def interactive_component_hard_check(
     valid_source_refs: set[str],
     candidate_artifact: InteractiveComponentArtifact | None,
 ) -> InteractiveComponentHardCheckResult:
-    """Reject unbound, unsafe, or mathematically undefined component specs."""
+    """Reject unbound components and untested declared controls."""
 
     if candidate_artifact is None:
         return InteractiveComponentHardCheckResult(status="needs_revision")
@@ -234,62 +220,13 @@ def interactive_component_hard_check(
         ))
     if set(candidate.source_refs) != set(spec_refs):
         issues.append(_issue(task=task, suffix="artifact-sources", category="source", severity="blocking", message="组件 artifact 来源与不可变规格不一致。", target_id=candidate.artifact_id))
-    controls = candidate.spec.controls
-    test_actions = candidate.spec.test_actions
-    supported_interval_toggle = (
-        candidate.spec.component_type == "interval_line"
-        and len(controls) == 1
-        and controls[0].kind == "toggle"
-        and controls[0].control_id == "show-supremum"
-        and candidate.spec.right_endpoint == "open"
-        and candidate.spec.maximum is None
-    )
-    supported_toggle_action = (
-        len(test_actions) == 1
-        and test_actions[0].action == "toggle"
-        and test_actions[0].control_id == "show-supremum"
-        and test_actions[0].value is True
-        and test_actions[0].expected_text == "上确界"
-    )
-    if candidate.spec.component_type == "interval_line" and (
-        (not controls and test_actions) or (controls and not (supported_interval_toggle and supported_toggle_action))
-    ):
+    tested = {action.control_id for action in candidate.spec.test_actions}
+    if any(control.control_id not in tested for control in candidate.spec.controls):
         issues.append(_issue(
-            task=task,
-            suffix="unsupported-control",
-            category="logic",
-            severity="blocking",
-            message=(
-                "当前渲染器只支持 interval_line 的 show-supremum 开关；它只能显示上确界标记，"
-                "不能改变区间端点或最大元。"
-            ),
+            task=task, suffix="untested-control", category="logic", severity="blocking",
+            message="每个声明的控件必须有对应的浏览器测试动作。",
             target_id=candidate.artifact_id,
-            suggested_action=(
-                "使用空 controls/test_actions，或仅使用 show-supremum toggle，"
-                "并提供 value=true、expected_text=上确界 的唯一测试动作。"
-            ),
         ))
-    if candidate.spec.component_type == "function_graph":
-        errors = function_domain_probe_errors(
-            candidate.spec.formula,
-            domain_start=candidate.spec.domain.start,
-            domain_end=candidate.spec.domain.end,
-            sample_points=list(candidate.spec.sample_points),
-            excluded_points=list(candidate.spec.excluded_points),
-        )
-        if errors:
-            issues.append(_issue(
-                task=task,
-                suffix="function-domain",
-                category="formula",
-                severity="blocking",
-                message="；".join(errors),
-                target_id=candidate.artifact_id,
-                source_refs=spec_refs,
-                suggested_action="将公式改为受限表达式，并使定义域、采样点和排除点与函数一致。",
-            ))
-        else:
-            candidate.metadata["formula_ast"] = "validated"
     return InteractiveComponentHardCheckResult(
         status="accepted" if not issues else "needs_revision",
         issues=issues,
@@ -305,11 +242,11 @@ def _critic_issues(
     categories: dict[str, Literal["fact", "logic", "formula", "coverage", "source"]] = {
         "objective_mismatch": "coverage",
         "source_mismatch": "source",
-        "mathematical_mismatch": "formula",
+        "factual_mismatch": "fact",
         "interaction_mismatch": "logic",
         "accessibility": "coverage",
     }
-    blocking = {"objective_mismatch", "source_mismatch", "mathematical_mismatch", "interaction_mismatch"}
+    blocking = {"objective_mismatch", "source_mismatch", "factual_mismatch", "interaction_mismatch"}
     result: list[ReviewIssue] = []
     for index, item in enumerate(critique.issues, start=1):
         result.append(_issue(

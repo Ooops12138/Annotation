@@ -135,7 +135,6 @@ try {
   }, spec)
   await page.goto(`${origin}/interactive-sandbox.html`, { waitUntil: 'domcontentloaded', timeout: timeoutMs })
   await page.waitForFunction(() => window.__annotationInteractiveSandbox?.ready === true, null, { timeout: timeoutMs })
-  const root = page.locator('#sandbox-root')
   const networkBlocked = await page.evaluate(async () => {
     try {
       await fetch('https://annotation-sandbox.invalid/network-check')
@@ -147,16 +146,15 @@ try {
   report.network_blocked = networkBlocked
   if (!networkBlocked) throw new Error('external network request was not blocked')
 
-  const generatedFrame = spec.component_type === 'generated_html'
-    ? page.frameLocator('iframe.interactive-component-frame')
-    : null
-  const generatedFramePage = spec.component_type === 'generated_html'
-    ? await (await page.locator('iframe.interactive-component-frame').elementHandle())?.contentFrame()
-    : null
+  const generatedFrame = page.frameLocator('iframe.interactive-component-frame')
+  const body = generatedFrame.locator('body')
+  await body.waitFor({ state: 'visible', timeout: timeoutMs })
+  const frameHandle = await page.locator('iframe.interactive-component-frame').elementHandle()
+  const generatedFramePage = await frameHandle?.contentFrame()
+  if (!generatedFramePage) throw new Error('render iframe is unavailable')
+  await generatedFramePage.waitForLoadState('load', { timeout: timeoutMs })
   for (const action of spec.test_actions || []) {
-    const control = generatedFrame
-      ? generatedFrame.locator(`[data-component-control="${action.control_id}"]`)
-      : page.locator(`[data-component-control="${action.control_id}"]`)
+    const control = generatedFrame.locator(`[data-component-control="${action.control_id}"]`)
     let passed = false
     let detail = ''
     try {
@@ -171,24 +169,18 @@ try {
       } else {
         throw new Error(`unsupported test action: ${action.action}`)
       }
-      if (generatedFrame) {
-        // Text locators are unreliable for dynamically-updated output nodes in
-        // a sandboxed srcdoc iframe. Poll the rendered frame DOM directly so
-        // the assertion observes the same text a learner sees.
-        await generatedFrame.locator('body').waitFor({ state: 'visible', timeout: timeoutMs })
-        if (!generatedFramePage) throw new Error('generated component iframe is unavailable')
-        const deadline = Date.now() + timeoutMs
-        let observed = ''
-        while (Date.now() < deadline) {
-          observed = (await generatedFrame.locator('body').textContent()) || ''
-          if (containsExpectedText(observed, action.expected_text)) break
-          await new Promise((resolve) => setTimeout(resolve, 50))
-        }
-        if (!containsExpectedText(observed, action.expected_text)) {
-          throw new Error(`expected text not found: ${action.expected_text}; observed: ${observed.slice(0, 500)} ... ${observed.slice(-500)}`)
-        }
-      } else {
-        await page.waitForFunction((expected) => document.querySelector('#interactive-observation')?.textContent?.includes(expected), action.expected_text, { timeout: timeoutMs })
+      // Text locators are unreliable for dynamically-updated output nodes in
+      // a sandboxed srcdoc iframe. Poll the rendered frame DOM directly so
+      // the assertion observes the same text a learner sees.
+      const deadline = Date.now() + timeoutMs
+      let observed = ''
+      while (Date.now() < deadline) {
+        observed = await generatedFrame.locator('body').innerText()
+        if (containsExpectedText(observed, action.expected_text)) break
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+      if (!containsExpectedText(observed, action.expected_text)) {
+        throw new Error(`expected text not found: ${action.expected_text}; observed: ${observed.slice(0, 500)} ... ${observed.slice(-500)}`)
       }
       passed = true
     } catch (error) {
@@ -196,11 +188,11 @@ try {
     }
     report.action_results.push({ action: action.action, control_id: action.control_id, passed, detail })
   }
-  report.dom_snapshot = stringSnapshot(await root.evaluate((element) => element.outerHTML))
+  report.dom_snapshot = stringSnapshot(await body.evaluate((element) => element.outerHTML))
   try {
-    report.accessibility_snapshot = stringSnapshot(await root.ariaSnapshot())
+    report.accessibility_snapshot = stringSnapshot(await body.ariaSnapshot())
   } catch {
-    report.accessibility_snapshot = stringSnapshot(await root.evaluate((element) => {
+    report.accessibility_snapshot = stringSnapshot(await body.evaluate((element) => {
       const collect = (node) => Array.from(node.children).map((child) => ({
         role: child.getAttribute('role'),
         label: child.getAttribute('aria-label'),
@@ -221,7 +213,7 @@ try {
   const message = error instanceof Error ? error.message : String(error)
   report.error = stringSnapshot(message)
   if (/Timeout|timeout/i.test(message)) report.status = 'timeout'
-  else if (/render|invalid interactive component|restricted math/i.test(message)) report.status = 'render_error'
+  else if (/render|invalid interactive component/i.test(message)) report.status = 'render_error'
   else report.status = 'browser_error'
 } finally {
   report.duration_ms = Date.now() - started

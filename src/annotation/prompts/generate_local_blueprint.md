@@ -42,8 +42,8 @@ Return only a valid JSON object matching `LocalBlueprintDraft`.
 
 - The skeleton shows all output fields. Each unit's `kind` must be exactly `concept`, `formula`, `theorem`, `example` or `skill`; the example uses `concept`. Use local knowledge-unit IDs for in-window relationships and representatives; prerequisites outside this window may use meaningful names as explained below. `source_refs` contains exact source IDs. Use `skip_reason=null` for a nonempty plan, or a substantive string with `knowledge_units=[]` when skipping an eligible window. Do not add fields outside the skeleton.
 - Before returning, compare the union of your units' learning objectives with ALL
-  teaching content in the owned window: definitions, theorem hypotheses and
-  conclusions, methods and examples. Do not represent only the beginning or only
+  teaching content in the owned window: definitions, central claims and their conditions,
+  methods and examples. Do not represent only the beginning or only
   the most familiar topic. A unit may combine related material, but its objectives
   must explicitly name what it covers. Context slices do not replace owned text.
   Do not skip a window because its subject is complex or outside earlier topics.
@@ -54,11 +54,11 @@ Return only a valid JSON object matching `LocalBlueprintDraft`.
 
 - Do not create a separate knowledge inventory. Return
   stable local knowledge_unit_id values. Use those IDs for local relationships;
-  Preserve important definitions, theorem conditions, methods and examples.
+  Preserve important definitions, claim conditions, methods and examples.
   use meaningful names for necessary prerequisites outside this window so the
   coordinator can locate them. Copy optional source_refs exactly from evidence.
   An overlap marked context_only supports boundary understanding; focus new units
-  on owned text. Do not assume a split proof ends where the window ends.
+  on owned text. Do not assume a split argument ends where the window ends.
 
 - Return a short summary (at most 600 characters) of this local teaching plan and
   up to 6 representative_unit_ids for higher-level coordination. All units remain
