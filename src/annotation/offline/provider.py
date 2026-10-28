@@ -77,7 +77,7 @@ class OfflineWorkflowCapabilities(WorkflowProviderCapabilities):
         return QuizRetrievalDecision(action="use_context")
 
     def fact_check_retrieval_decision(self) -> BaseModel:
-        from annotation.domain.artifacts import FactCheckRetrievalDecision
+        from annotation.workflow.models import FactCheckRetrievalDecision
         return FactCheckRetrievalDecision(action="use_context")
 
 class OfflineFixtureProvider:

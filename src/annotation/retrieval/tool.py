@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from dataclasses import replace
 from collections.abc import Iterable
 from itertools import zip_longest
 
@@ -79,31 +80,86 @@ class InMemoryTextbookSearchTool:
 
 
 class UnifiedRetrievalService:
-    """Routes textbook and optional web searches through one interface.
-
-    Content generation and fact checking can share this service while keeping
-    web access explicitly opt-in. It does not merge or rerank results; callers
-    receive the provider's bounded evidence records unchanged.
-    """
+    """Route explicit textbook modes and optional web searches with source auditing."""
 
     def __init__(
         self,
         textbook: TextbookSearchTool,
         web: WebResourceSearchSkill | None = None,
+        *,
+        blocks: Iterable[SourceBlock] = (),
     ) -> None:
         self.textbook = textbook
         self.web = web
+        self._source_refs = {b.source_ref: tuple(b.source_refs or [b.source_ref]) for b in blocks}
 
-    def search(self, query: str, *, source: str = "textbook", limit: int = 5):
-        if source == "textbook":
-            return self.textbook.search(query, limit=limit)
+    @property
+    def available_modes(self) -> list[str]:
+        modes = ["keyword", "hybrid"]
+        vector = self.textbook.vector_tool if isinstance(self.textbook, HybridTextbookSearchTool) else None
+        if vector is not None and not hasattr(vector, "error_type"):
+            modes.insert(1, "vector")
+        return modes
+
+    def search(self, query: str, *, source: str = "textbook", limit: int = 5,
+               mode: str = "hybrid", allowed_source_refs: Iterable[str] | None = None) -> SearchResult:
         if source == "web":
             if self.web is None:
                 from annotation.fact_checking import DisabledWebResourceSearchSkill
-
                 return DisabledWebResourceSearchSkill().search(query, limit=limit)
             return self.web.search(query, limit=limit)
-        raise ValueError("source must be 'textbook' or 'web'")
+        if source != "textbook":
+            raise ValueError("source must be 'textbook' or 'web'")
+        if mode not in {"keyword", "vector", "hybrid"}:
+            raise ValueError("mode must be 'keyword', 'vector' or 'hybrid'")
+        scope = None if allowed_source_refs is None else set(allowed_source_refs)
+        if scope == set():
+            return SearchResult(skill_name="textbook-search", skill_version="v1", query=query,
+                                status=SearchStatus.INVALID_REQUEST, error_code=SearchErrorCode.EMPTY_SOURCE_SCOPE,
+                                metadata={"requested_mode": mode, "actual_mode": "none"})
+        hybrid = self.textbook if isinstance(self.textbook, HybridTextbookSearchTool) else None
+        tool = self.textbook
+        if mode == "keyword" and hybrid:
+            tool = hybrid.keyword_tool
+        elif mode == "vector":
+            tool = hybrid.vector_tool if hybrid else None
+        if tool is None:
+            return SearchResult(skill_name="textbook-search", skill_version="v1", query=query,
+                                status=SearchStatus.DISABLED, available=False,
+                                error_code=SearchErrorCode.DISABLED_BY_CONFIGURATION,
+                                error_message="vector retrieval is not enabled",
+                                metadata={"requested_mode": mode, "actual_mode": "none"})
+        try:
+            result = tool.search(query, limit=limit)
+        except Exception as exc:
+            result = SearchResult(skill_name=tool.name, skill_version=tool.version, query=query,
+                                  status=SearchStatus.ERROR, available=False,
+                                  error_code=SearchErrorCode.PROVIDER_ERROR,
+                                  error_message=f"textbook retrieval failed: {type(exc).__name__}")
+        actual = mode
+        if mode == "hybrid":
+            if not hybrid or hybrid.vector_tool is None:
+                actual = "keyword"
+            elif result.metadata.get("degraded"):
+                actual = ("keyword" if result.metadata.get("branch_0_status") in {"ok", "no_results"}
+                          else "vector") if result.available else "none"
+        if result.status not in {SearchStatus.OK, SearchStatus.NO_RESULTS}:
+            actual = "none"
+        evidence = []
+        for item in result.evidence:
+            refs = self._source_refs.get(item.source_ref, item.source_refs or ((item.source_ref,) if item.source_ref else ()))
+            if scope is not None:
+                if not refs or None in refs or not set(refs).issubset(scope):
+                    continue
+                item = replace(item, source_ref=refs[0])
+            evidence.append(replace(item, source_refs=tuple(refs)))
+        status = result.status
+        if status == SearchStatus.OK and not evidence:
+            status = SearchStatus.NO_RESULTS
+        return replace(result, evidence=tuple(evidence), status=status,
+                       filtered_count=result.filtered_count + len(result.evidence) - len(evidence),
+                       metadata={**result.metadata, "requested_mode": mode, "actual_mode": actual,
+                                 "degraded": actual != mode and mode == "hybrid"})
 
 
 class HybridTextbookSearchTool:

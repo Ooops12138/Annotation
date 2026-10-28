@@ -61,6 +61,7 @@ class EvidenceRecord:
     title: str | None = None
     publisher: str | None = None
     rank: float | None = None
+    source_refs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,7 +141,8 @@ class TextbookSearchTool(Protocol):
 class UnifiedRetrievalTool(Protocol):
     """One bounded interface for textbook and optional web evidence."""
 
-    def search(self, query: str, *, source: str = "textbook", limit: int = 5) -> SearchResult: ...
+    def search(self, query: str, *, source: str = "textbook", limit: int = 5,
+               mode: str = "hybrid", allowed_source_refs: Iterable[str] | None = None) -> SearchResult: ...
 
 
 @runtime_checkable

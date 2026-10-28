@@ -16,7 +16,7 @@ Annotation 是一个教材驱动的 AI 学习文档生成项目。
 - 样式：Tailwind CSS、shadcn-vue 风格源码组件、编辑出版物视觉规范
 - 后端：Python 3.12、FastAPI、Pydantic v2
 - Agent 编排：LangGraph
-- 教材解析：PyMuPDF + Annotation Hybrid 局部 OCR/公式候选
+- 教材解析：PyMuPDF4LLM 1.x + Annotation Hybrid 局部 OCR/公式候选（PyMuPDF 作为底层依赖）
 - 检索：SQLite FTS5 + LlamaIndex/Chroma 向量召回，保留页/块级 `source_ref`
 - 内容契约：JSON Document IR
 - 公式：KaTeX

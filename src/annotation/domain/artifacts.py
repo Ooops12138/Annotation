@@ -387,6 +387,7 @@ class FactCheckEvidence(BaseModel):
     provider: str
     locator: str
     text: str = Field(min_length=1)
+    source_refs: list[str] = Field(default_factory=list)
     source_ref: str | None = None
     url: str | None = None
     rank: float | None = None
@@ -432,6 +433,7 @@ class FactCheckUnitTrace(BaseModel):
     task_id: str
     knowledge_unit_id: str
     max_corrections: int = Field(ge=0, le=2)
+    retrieval_calls: list[RetrievalCall] = Field(default_factory=list)
     rounds: list[FactCheckRoundTrace] = Field(default_factory=list)
     final_status: Literal["accepted", "at_risk", "failed"]
     corrections_used: int = Field(ge=0, le=2)

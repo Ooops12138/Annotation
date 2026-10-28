@@ -13,6 +13,7 @@ Return only a valid JSON object matching `RetrievalDecision`.
 ```json
 {
   "action": "write",
+  "textbook_mode": "hybrid",
   "textbook_queries": [],
   "web_queries": [],
   "reason": "brief explanation of the decision"
@@ -36,7 +37,13 @@ Return only a valid JSON object matching `RetrievalDecision`.
 
 {{DOMAIN_RULES}}
 
+- Choose `textbook_mode` for this decision: `keyword` for exact terms, names, symbols or identifiers; `vector` for semantic paraphrases; `hybrid` for both. All textbook queries in this decision use that mode. Do not select an unavailable mode. A vector failure is not a keyword search; inspect errors/degradation rather than claiming successful verification.
+
 ## Dynamic Inputs
+
+### Available textbook retrieval modes
+
+{{RETRIEVAL_CAPABILITIES}}
 
 ### Knowledge unit
 

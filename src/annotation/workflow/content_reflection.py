@@ -39,7 +39,7 @@ from annotation.workflow.models import ContentDraft, ContentReflectionState, Ret
 from annotation.config import model_max_output_tokens
 from annotation.token_estimation import estimate_tokens
 
-CONTENT_RETRIEVAL_PROMPT_VERSION = "content_agent_retrieval:v3:optional-subject"
+CONTENT_RETRIEVAL_PROMPT_VERSION = "content_agent_retrieval:v4:mode-selection"
 CONTENT_CRITIC_PROMPT_VERSION = "critique_content_artifact:v3:optional-subject"
 
 def build_content_reflection_subgraph(
@@ -95,6 +95,7 @@ def build_content_reflection_subgraph(
         for round_number in range(3):
             prompt = load_prompt(
                 "content_agent_retrieval",
+                RETRIEVAL_CAPABILITIES=json.dumps(getattr(retrieval_service, "available_modes", ["keyword", "hybrid"])),
                 KNOWLEDGE_UNIT_CONTEXT=_content_prompt_unit(unit),
                 CONTENT_TASK=_content_prompt_task(task),
                 RETRIEVAL_CONTEXT=render_context_pack(pack),
@@ -126,7 +127,7 @@ def build_content_reflection_subgraph(
             new_pack = build_context_pack(
                 task, unit, state["blueprint"],
                 semantic_blocks,
-                search_tool=retrieval_service, retrieval_queries=round_queries,
+                search_tool=retrieval_service, retrieval_queries=round_queries, textbook_mode=plan.textbook_mode,
             )
             seen = {e.chunk_ref or e.source_ref for e in pack.excerpts}
             excerpts = list(pack.excerpts)

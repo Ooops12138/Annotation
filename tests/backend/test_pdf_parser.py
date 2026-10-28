@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pymupdf
+
 from annotation.ingestion.pdf_parser import PARSER_VERSION, extraction_warnings, parse_pdf
 
 
@@ -53,3 +55,75 @@ def test_parser_captures_bookmarks_and_empty_pages_for_structure(tmp_path: Path)
     assert [node.title for node in tree.nodes[1:]] == ["Chapter 1 Numbers", "1.1 Natural numbers", "Chapter 2 Limits"]
     assert all(node.origin == "bookmark" for node in tree.nodes[1:])
     assert "page_without_extracted_text:2" in tree.warnings
+
+
+def test_markdown_layout_preserves_table_coordinates_and_stable_refs(tmp_path: Path) -> None:
+    pdf = tmp_path / "table.pdf"
+    with pymupdf.open() as document:
+        page = document.new_page()
+        page.insert_text((72, 72), "Reference table", fontsize=22)
+        for x in (72, 220, 380):
+            page.draw_line((x, 110), (x, 210))
+        for y in (110, 160, 210):
+            page.draw_line((72, y), (380, y))
+        for point, text in [((80, 140), "Name"), ((230, 140), "Value"),
+                            ((80, 190), "Alpha"), ((230, 190), "42")]:
+            page.insert_text(point, text)
+        document.save(pdf)
+    parsed, blocks = parse_pdf(pdf, artifact_dir=tmp_path / "artifacts")
+    again, repeated = parse_pdf(pdf, run_id="second-run", artifact_dir=tmp_path / "artifacts")
+    assert parsed.artifact_id == again.artifact_id
+    assert [b.source_ref for b in blocks] == [b.source_ref for b in repeated]
+    assert len({b.source_ref for b in blocks}) == len(blocks)
+    assert all(b.source_ref != f"{parsed.artifact_id}-p{b.page_number}-b{b.block_index}" for b in blocks)
+    assert parsed.run_metadata["extractor"] == "pymupdf4llm"
+    table = next(b for b in blocks if b.run_metadata["layout_class"] == "table")
+    assert "|" in table.text and "Alpha" in table.text and "42" in table.text
+    # Layout boxes bound the cell text rather than the drawn table borders.
+    x0, y0, x1, y1 = table.bbox
+    assert 72 <= x0 <= 80 < 230 < x1 <= 380
+    assert 110 <= y0 < 140 < 190 < y1 <= 210
+    assert table.raw_text == table.text
+    markdown = Path(parsed.run_metadata["markdown_path"]).read_text(encoding="utf-8")
+    assert table.text in markdown
+    assert parsed.run_metadata["json_path"] != again.run_metadata["json_path"]
+
+
+def test_markdown_formula_still_uses_explicit_region_candidates(tmp_path: Path, monkeypatch) -> None:
+    import annotation.ingestion.pdf_parser as parser
+
+    class TextBackend:
+        name = "test-ocr"
+        available = True
+
+        def recognize(self, image_path):
+            assert image_path.is_file()
+            return {"status": "ok", "recognizer": self.name, "text": "x = 2"}
+
+    monkeypatch.setattr(parser, "resolve_text_backend", lambda name: TextBackend())
+    pdf = tmp_path / "formula.pdf"
+    with pymupdf.open() as document:
+        document.new_page().insert_text((72, 72), "x = 2")
+        document.save(pdf)
+    _, blocks = parse_pdf(pdf, formula_backend="none", artifact_dir=tmp_path / "artifacts")
+    formula = next(b for b in blocks if b.run_metadata["block_type"] == "formula")
+    assert formula.ocr_candidates[0].text == "x = 2"
+    assert formula.ocr_candidates[0].source_ref == formula.source_ref
+    assert formula.formula_latex_candidates[0].status == "unavailable"
+
+
+def test_image_only_page_does_not_enable_implicit_ocr(tmp_path: Path) -> None:
+    pdf = tmp_path / "scanned.pdf"
+    with pymupdf.open() as document:
+        # Rasterize visible text so the PDF has no native text layer.
+        original = document.new_page()
+        original.insert_text((72, 72), "Image text must not trigger automatic OCR")
+        image = original.get_pixmap().tobytes("png")
+        scanned = document.new_page()
+        scanned.insert_image(scanned.rect, stream=image)
+        document.delete_page(0)
+        document.save(pdf)
+    parsed, blocks = parse_pdf(pdf, ocr_backend="none", formula_backend="none", artifact_dir=tmp_path / "artifacts")
+    assert not blocks
+    assert parsed.run_metadata["empty_text_pages"] == [1]
+    assert parsed.warnings

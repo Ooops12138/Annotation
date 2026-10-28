@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import hashlib
 import logging
-import sqlite3
 import uuid
 from collections.abc import Iterable
 from typing import Any
@@ -13,6 +12,8 @@ from typing import Any
 from annotation.workflow.concurrency import LockedSearch, ordered_batches
 
 from annotation.domain.artifacts import (
+    ContextExcerpt,
+    RetrievalCall,
     ContentArtifact,
     ContentTask,
     ContextPack,
@@ -33,13 +34,14 @@ from annotation.domain.artifacts import (
 from annotation.fact_checking import (
     DisabledWebResourceSearchSkill,
     EvidenceRecord,
-    SQLiteFts5TextbookDatabaseSearchSkill,
     TextbookDatabaseSearchSkill,
     WebResourceSearchSkill,
 )
+from annotation.fact_checking.contracts import UnifiedRetrievalTool
 from annotation.prompt_loader import load_prompt
 from annotation.providers import ModelProvider, ProviderError, StructuredGenerationRequest
-from annotation.retrieval import index_source_blocks
+from annotation.retrieval import UnifiedRetrievalService
+from annotation.ingestion.semantic_chunker import build_semantic_blocks
 from annotation.workflow.content import render_context_pack
 from annotation.workflow.content_support import _content_artifact_from_draft, _content_hard_check, _content_prompt_task
 from annotation.workflow.models import (
@@ -51,7 +53,7 @@ from annotation.workflow.quiz import validate_quiz_artifact, quiz_draft_issues, 
 
 EXTRACT_CLAIMS_PROMPT_VERSION = "extract_fact_check_claims:v4:quiz-context"
 FACT_CHECK_ASSESS_PROMPT_VERSION = "assess_fact_check_claims:v3:optional-subject"
-FACT_CHECK_RETRIEVAL_PROMPT_VERSION = "fact_check_retrieval:v3:optional-subject"
+FACT_CHECK_RETRIEVAL_PROMPT_VERSION = "fact_check_retrieval:v4:mode-selection"
 REGENERATE_QUIZ_PROMPT_VERSION = "regenerate_quiz_for_fact_check:v5:optional-subject"
 
 _LOGGER = logging.getLogger(__name__)
@@ -106,6 +108,7 @@ def _evidence(record: EvidenceRecord) -> FactCheckEvidence:
         locator=record.locator or "unavailable",
         text=record.text,
         source_ref=record.source_ref,
+        source_refs=list(record.source_refs or ([record.source_ref] if record.source_ref else [])),
         url=record.url,
         rank=record.rank,
     )
@@ -532,13 +535,25 @@ def _correct_quiz(
 
 
 def _search_textbook(
-    skill: TextbookDatabaseSearchSkill,
+    skill: UnifiedRetrievalTool,
     claim: FactCheckClaim,
     valid_source_refs: set[str],
     limit: int,
+    mode: str = "hybrid",
+    calls: list[RetrievalCall] | None = None,
 ) -> tuple[list[FactCheckEvidence], str]:
     try:
-        result = skill.search(claim.query, allowed_source_refs=valid_source_refs, limit=limit)
+        result = skill.search(claim.query, allowed_source_refs=valid_source_refs, mode=mode, limit=limit)
+        if calls is not None:
+            calls.append(RetrievalCall(
+                call_id=f"fact-{claim.claim_id}-{len(calls) + 1}", tool_name=result.skill_name,
+                tool_version=result.skill_version, query=claim.query, limit=limit,
+                status=result.status.value, error_code=result.error_code.value if result.error_code else None,
+                metadata={**result.metadata, "claim_id": claim.claim_id},
+                returned_excerpts=[ContextExcerpt(source_ref=e.source_ref, source_refs=list(e.source_refs or [e.source_ref]),
+                    page_number=e.page_number or 1, block_index=e.block_index or 0, text=e.text)
+                    for e in result.evidence if e.source_ref],
+            ))
         return [_evidence(item) for item in result.evidence], _search_reason("textbook", result)
     except Exception as exc:
         return [], _failure("textbook:error", exc)
@@ -564,6 +579,7 @@ def _context_pack_evidence(context_pack: ContextPack) -> tuple[list[FactCheckEvi
             locator=f"page:{excerpt.page_number};block:{excerpt.block_index}",
             text=excerpt.text,
             source_ref=excerpt.source_ref,
+            source_refs=list(excerpt.source_refs or [excerpt.source_ref]),
         )
         for excerpt in excerpts
     ]
@@ -576,11 +592,13 @@ def _fact_check_retrieval_decision(
     claim: FactCheckClaim,
     context_pack: ContextPack,
     web_enabled: bool,
+    available_modes: list[str] | None = None,
 ) -> FactCheckRetrievalDecision:
     """Let the fact-check agent choose whether and where to retrieve evidence."""
 
     prompt = load_prompt(
         "fact_check_retrieval",
+        RETRIEVAL_CAPABILITIES=json.dumps(available_modes or ["keyword", "hybrid"]),
         CLAIM=json.dumps(_dump(claim), ensure_ascii=False, indent=2),
         CONTEXT=json.dumps([_dump(item) for item in _context_pack_evidence(context_pack)[0]], ensure_ascii=False),
     )
@@ -610,7 +628,7 @@ def _check_unit(
     quiz: QuizArtifact | None,
     policy: FactCheckPolicy,
     valid_source_refs: set[str],
-    textbook_skill: TextbookDatabaseSearchSkill,
+    textbook_skill: UnifiedRetrievalTool,
     web_skill: WebResourceSearchSkill,
     additional_retrieval_enabled: bool,
 ) -> tuple[ContentArtifact, QuizArtifact | None, FactCheckUnitTrace, list[ReviewIssue], bool]:
@@ -618,6 +636,7 @@ def _check_unit(
     current_quiz = quiz
     rounds: list[FactCheckRoundTrace] = []
     final_issues: list[ReviewIssue] = []
+    retrieval_calls: list[RetrievalCall] = []
     corrections = 0
     quiz_removed = False
     web_queries_used = 0
@@ -646,6 +665,7 @@ def _check_unit(
             ))
             break
 
+        claim_modes: dict[str, str] = {}
         evidence: dict[str, tuple[list[FactCheckEvidence], list[FactCheckEvidence], list[str]]] = {}
         factual_claims: list[FactCheckClaim] = []
         assessments: list[FactCheckAssessment] = []
@@ -664,15 +684,17 @@ def _check_unit(
                     decision = _fact_check_retrieval_decision(
                         provider, claim=claim, context_pack=context_pack,
                         web_enabled=policy.web_enabled,
+                        available_modes=getattr(textbook_skill, "available_modes", None),
                     )
                 except Exception as exc:
                     # A failed planning call must not discard usable context.
                     reasons.append(_failure("retrieval_decision_error", exc))
                     decision = FactCheckRetrievalDecision(action="use_context")
+            claim_modes[claim.claim_id] = decision.textbook_mode
             if decision.action in {"search_textbook", "search_both"}:
                 for query in _unique(decision.textbook_queries):
                     query_claim = claim.model_copy(update={"query": query})
-                    extra, reason = _search_textbook(textbook_skill, query_claim, valid_source_refs, policy.textbook_result_limit)
+                    extra, reason = _search_textbook(textbook_skill, query_claim, valid_source_refs, policy.textbook_result_limit, decision.textbook_mode, retrieval_calls)
                     textbook = _merge_evidence(textbook, extra)
                     reasons.append(reason)
             external: list[FactCheckEvidence] = []
@@ -708,7 +730,7 @@ def _check_unit(
             for claim in factual_claims:
                 if claim.claim_id not in insufficient_ids or "context_pack:used" not in evidence[claim.claim_id][2]:
                     continue
-                extra, reason = _search_textbook(textbook_skill, claim, valid_source_refs, policy.textbook_result_limit)
+                extra, reason = _search_textbook(textbook_skill, claim, valid_source_refs, policy.textbook_result_limit, claim_modes[claim.claim_id], retrieval_calls)
                 textbook, external, reasons = evidence[claim.claim_id]
                 existing_excerpts = {(item.source_ref, item.text) for item in textbook}
                 extra = [item for item in extra if (item.source_ref, item.text) not in existing_excerpts]
@@ -865,6 +887,7 @@ def _check_unit(
         knowledge_unit_id=unit.artifact_id,
         max_corrections=policy.max_corrections_per_unit,
         rounds=rounds,
+        retrieval_calls=retrieval_calls,
         final_status="at_risk" if any(issue.severity == "warning" for issue in final_issues) else "accepted",
         corrections_used=corrections,
         stop_reason=rounds[-1].stop_reason or "accepted",
@@ -872,12 +895,6 @@ def _check_unit(
         final_quiz_artifact_id=current_quiz.artifact_id if current_quiz else None,
     )
     return current_content, current_quiz, trace, final_issues, quiz_removed
-
-
-def _transient_textbook_skill(source_blocks: list[SourceBlock]) -> tuple[TextbookDatabaseSearchSkill, sqlite3.Connection]:
-    connection = sqlite3.connect(":memory:", check_same_thread=False)
-    index_source_blocks(connection, source_blocks)
-    return SQLiteFts5TextbookDatabaseSearchSkill(connection), connection
 
 
 def run_fact_check_loop(
@@ -893,6 +910,7 @@ def run_fact_check_loop(
     valid_source_refs: Iterable[str],
     policy: FactCheckPolicy,
     textbook_search_skill: TextbookDatabaseSearchSkill | None = None,
+    retrieval_service: UnifiedRetrievalTool | None = None,
     web_search_skill: WebResourceSearchSkill | None = None,
     # Direct callers retain the historical fallback behavior; the runtime
     # reads FACT_CHECK_ADDITIONAL_RETRIEVAL_ENABLED and passes the explicit
@@ -903,11 +921,17 @@ def run_fact_check_loop(
     """Check accepted artifacts against the current textbook and return replacements."""
 
     valid_refs = set(_unique(valid_source_refs))
-    connection: sqlite3.Connection | None = None
+    resources = None
     setup_error: ReviewIssue | None = None
-    if textbook_search_skill is None:
+    if retrieval_service is not None:
+        textbook_search_skill = retrieval_service
+    elif textbook_search_skill is not None:
+        textbook_search_skill = UnifiedRetrievalService(LockedSearch(textbook_search_skill), blocks=source_blocks)
+    else:
         try:
-            textbook_search_skill, connection = _transient_textbook_skill(source_blocks)
+            from annotation.workflow.context import RunResources
+            resources = RunResources()
+            textbook_search_skill = resources.retrieval(build_semantic_blocks(source_blocks))
         except Exception as exc:
             detail = _failure("textbook_index_error", exc)
             setup_error = ReviewIssue(
@@ -928,10 +952,6 @@ def run_fact_check_loop(
     traces: list[FactCheckUnitTrace] = []
     issues: list[ReviewIssue] = [setup_error] if setup_error else []
     web_skill = web_search_skill or DisabledWebResourceSearchSkill()
-
-    # Workers own their artifacts; only search access is shared and serialized.
-    if max_workers > 1:
-        textbook_search_skill = LockedSearch(textbook_search_skill) if textbook_search_skill else None
 
     def check_task(task):
         position = content_index.get(task.task_id)
@@ -985,8 +1005,8 @@ def run_fact_check_loop(
             traces.append(trace)
             issues.extend(unit_issues)
     finally:
-        if connection is not None:
-            connection.close()
+        if resources is not None:
+            resources.close()
 
     final_quiz = [artifact for artifact in final_quiz if artifact.task_id not in removed_quiz_tasks]
     issues = _dedupe_issues(issues)

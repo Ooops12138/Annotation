@@ -42,7 +42,7 @@ def render_context_pack(pack: ContextPack) -> str:
     if pack.retrieval_calls:
         lines.append("工具调用记录：" + json.dumps([
             {"query": c.query, "status": c.status, "error_code": c.error_code,
-             "returned_count": len(c.returned_excerpts)} for c in pack.retrieval_calls
+             "metadata": c.metadata, "returned_count": len(c.returned_excerpts)} for c in pack.retrieval_calls
         ], ensure_ascii=False))
     if pack.prerequisite_titles:
         lines.append("直接前置知识单元：" + "、".join(pack.prerequisite_titles))
@@ -111,6 +111,7 @@ def build_context_pack(
     safety_margin_tokens: int = 400,
     search_tool: TextbookSearchTool | None = None,
     retrieval_queries: list[str] | list[tuple[str, str]] | None = None,
+    textbook_mode: str = "hybrid",
     fixture_fallback: bool = False,
 ) -> ContextPack:
     """Retrieve task evidence through a provider-neutral tool and audit it.
@@ -144,7 +145,10 @@ def build_context_pack(
             except TypeError:
                 result = tool.search(query, limit=5)
         else:
-            result = tool.search(query, limit=8)
+            if search_tool is not None and hasattr(tool, "available_modes"):
+                result = tool.search(query, mode=textbook_mode, limit=8)
+            else:
+                result = tool.search(query, limit=8)
         returned: list[ContextExcerpt] = []
         for evidence in result.evidence:
             evidence_ref = evidence.source_ref or f"web:{evidence.evidence_id}"
@@ -197,10 +201,6 @@ def build_context_pack(
                 if adjacent and neighbor.source_ref not in primary_keys:
                     candidates.append(("adjacent_block", neighbor))
                     primary_keys.add(neighbor.source_ref)
-        for block in _lexical_candidates(unit, ordered_blocks):
-            if block.source_ref not in primary_keys:
-                candidates.append(("keyword_fallback", block))
-                primary_keys.add(block.source_ref)
 
     excerpts: list[ContextExcerpt] = []
     selected_refs: list[str] = []

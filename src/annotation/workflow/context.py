@@ -89,7 +89,9 @@ class RunResources:
                     )
                 # Client locks are independent: web requests never acquire them.
                 textbook = HybridTextbookSearchTool(textbook, LockedSearch(vector))
-            service = UnifiedRetrievalService(textbook, self.web())
+            else:
+                textbook = HybridTextbookSearchTool(textbook)
+            service = UnifiedRetrievalService(textbook, self.web(), blocks=semantic_blocks)
             self.retrieval_service = (
                 ControlledPort(service, control) if control else service
             )

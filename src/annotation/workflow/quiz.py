@@ -39,7 +39,7 @@ from annotation.workflow.content_support import _markdown_formula_format_issues
 
 
 QUIZ_PROMPT_VERSION = "generate_quiz_artifact:v9:optional-subject"
-QUIZ_RETRIEVAL_PROMPT_VERSION = "quiz_retrieval:v3:optional-subject"
+QUIZ_RETRIEVAL_PROMPT_VERSION = "quiz_retrieval:v4:mode-selection"
 logger = logging.getLogger(__name__)
 # There is intentionally no default or minimum quiz size.  The agent decides
 # how many evidence-supported items are useful for a unit, including zero.
@@ -704,6 +704,7 @@ def retrieve_quiz_context(
         return context_pack
     prompt = load_prompt(
         "quiz_retrieval",
+        RETRIEVAL_CAPABILITIES=json.dumps(getattr(retrieval_service, "available_modes", ["keyword", "hybrid"])),
         UNIT=json.dumps(_unit_context(unit), ensure_ascii=False),
         CONTEXT=render_context_pack(context_pack),
     )
@@ -723,7 +724,7 @@ def retrieve_quiz_context(
     used_tokens = sum(estimate_tokens(excerpt.text) for excerpt in excerpts)
     blocks = {block.source_ref: block for block in semantic_blocks}
     for query in decision.textbook_queries:
-        result = retrieval_service.search(query.strip(), source="textbook", limit=5)
+        result = retrieval_service.search(query.strip(), source="textbook", mode=decision.textbook_mode, limit=5)
         returned: list[ContextExcerpt] = []
         for item in getattr(result, "evidence", ()):
             ref = getattr(item, "source_ref", None)

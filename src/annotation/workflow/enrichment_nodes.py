@@ -7,6 +7,7 @@ from annotation.config import (
     STORAGE_DIR,
     interactive_component_max_attempts as configured_interactive_component_max_attempts,
 )
+from annotation.ingestion.semantic_chunker import build_semantic_blocks
 from annotation.workflow.content import write_content_run_artifact
 from annotation.workflow.fact_check import run_fact_check_loop
 from annotation.workflow.interactive_components import run_interactive_component_loop
@@ -33,6 +34,8 @@ def fact_check_artifacts(ctx: WorkflowContext, state: WorkflowState) -> dict[str
         source_blocks=state.get("source_blocks", []),
         valid_source_refs=state.get("source_refs", []),
         policy=ctx.fact_check_policy,
+        retrieval_service=ctx.run_resources.retrieval(
+            state.get("semantic_blocks") or build_semantic_blocks(state.get("source_blocks", [])), ctx.run_control),
         web_search_skill=ctx.run_resources.web(ctx.run_control),
         additional_retrieval_enabled=ctx.additional_fact_retrieval,
         max_workers=ctx.workers,

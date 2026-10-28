@@ -1,4 +1,4 @@
-"""Annotation Hybrid PDF ingestion adapter."""
+"""PyMuPDF4LLM ingestion adapter with explicit local OCR candidates."""
 
 from __future__ import annotations
 
@@ -10,16 +10,14 @@ import time
 from pathlib import Path
 from typing import Any, Iterable
 
-try:
-    import pymupdf as fitz
-except ImportError:  # pragma: no cover
-    import fitz  # type: ignore
+import pymupdf as fitz
+import pymupdf4llm
 
 from annotation.config import STORAGE_DIR
 from annotation.domain.artifacts import FormulaCandidate, OCRCandidate, SourceBlock, SourceDocument
 from annotation.ingestion.hybrid import OCRBackend, resolve_formula_backend, resolve_text_backend
 
-PARSER_VERSION = "annotation-hybrid-pymupdf-v1"
+PARSER_VERSION = "annotation-hybrid-pymupdf4llm-v1"
 
 
 def _sha256(value: bytes | str) -> str:
@@ -27,10 +25,17 @@ def _sha256(value: bytes | str) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _iter_text_blocks(page: object) -> Iterable[tuple[float, float, float, float, str, int]]:
-    for index, block in enumerate(page.get_text("blocks")):  # type: ignore[attr-defined]
-        if len(block) >= 5 and str(block[4]).strip():
-            yield (float(block[0]), float(block[1]), float(block[2]), float(block[3]), str(block[4]).strip(), index)
+def _iter_markdown_blocks(chunk: dict[str, Any]) -> Iterable[tuple[int, str, tuple[float, float, float, float], str]]:
+    """Use layout offsets rather than guessing coordinates from Markdown text."""
+    text = chunk["text"]
+    boxes = chunk["page_boxes"]
+    if text.strip() and not boxes:
+        raise ValueError("PyMuPDF4LLM returned text without source layout boxes")
+    for box in sorted(boxes, key=lambda item: item["index"]):
+        start, stop = box["pos"]
+        content = text[start:stop].strip()
+        if content:
+            yield box["index"], content, tuple(float(v) for v in box["bbox"]), box["class"]
 
 
 def _suspicious(text: str) -> list[str]:
@@ -93,7 +98,7 @@ def _run_region_candidates(page: Any, payload: dict[str, Any], *, region_dir: Pa
 def _markdown(document: SourceDocument, blocks: list[SourceBlock]) -> str:
     lines = [f"# {document.title}", "", f"- parser: `{document.run_metadata.get('parser', PARSER_VERSION)}`", f"- run_id: `{document.run_id}`", ""]
     for block in blocks:
-        lines.extend([f"## Page {block.page_number} · `{block.source_ref}`", block.raw_text.replace("\n", " ")])
+        lines.extend([f"## Page {block.page_number} · `{block.source_ref}`", "", block.raw_text])
         for candidate in block.ocr_candidates:
             lines.append(f"> OCR candidate ({candidate.recognizer}, {candidate.status}): {candidate.text or '[empty]'}")
         for candidate in block.formula_latex_candidates:
@@ -140,24 +145,19 @@ def parse_pdf(path: str | Path, *, run_id: str = "run-ingest-local", created_by:
     with fitz.open(pdf_path) as document:
         toc = document.get_toc()
         page_count = len(document)
+        chunks = pymupdf4llm.to_markdown(
+            document, page_chunks=True, use_ocr=False,
+            write_images=False, embed_images=False, show_progress=False,
+        )
+        if len(chunks) != page_count:
+            raise ValueError("PyMuPDF4LLM page count does not match the PDF")
         empty_text_pages: list[int] = []
-        for page_number, page in enumerate(document, start=1):
+        for page_number, chunk in enumerate(chunks, start=1):
+            page = document[page_number - 1]
             previous_count = len(blocks)
-            page_dict = page.get_text("dict")
-            raw_blocks = list(page.get_text("blocks"))
-            text_indices = [i for i, raw in enumerate(raw_blocks) if len(raw) >= 5 and str(raw[4]).strip()]
-            position = 0
-            for dict_block in page_dict.get("blocks", []):
-                if dict_block.get("type") != 0:
-                    continue
-                lines = dict_block.get("lines", [])
-                text = "\n".join("".join(str(span.get("text", "")) for span in line.get("spans", [])) for line in lines).strip()
-                if not text:
-                    continue
-                bbox = tuple(float(v) for v in dict_block.get("bbox", (0, 0, 0, 0)))
-                block_index = text_indices[position] if position < len(text_indices) else position
-                position += 1
-                source_ref = f"{document_id}-p{page_number}-b{block_index}"
+            for block_index, text, bbox, layout_class in _iter_markdown_blocks(chunk):
+                # The new layout has different block boundaries; never alias old refs.
+                source_ref = f"{document_id}-{_sha256(PARSER_VERSION)[:8]}-p{page_number}-b{block_index}"
                 warnings = _suspicious(text)
                 block_type = "formula" if _formula_like(text) else "text"
                 ocr_candidates: list[OCRCandidate] = []
@@ -165,14 +165,16 @@ def parse_pdf(path: str | Path, *, run_id: str = "run-ingest-local", created_by:
                 if warnings or block_type == "formula":
                     if block_type == "formula" and formula_engine is None:
                         formula_engine = resolve_formula_backend(preferred=formula_preference)
-                    payload = {"source_ref": source_ref, "bbox": bbox, "candidate_bbox": _candidate_bbox(dict_block, bbox), "block_type": block_type}
+                    region = page.get_text("dict", clip=fitz.Rect(*bbox))
+                    lines = [line for block in region.get("blocks", []) for line in block.get("lines", [])]
+                    payload = {"source_ref": source_ref, "bbox": bbox, "candidate_bbox": _candidate_bbox({"lines": lines}, bbox), "block_type": block_type}
                     ocr_candidates, formula_candidates, candidate_warnings = _run_region_candidates(page, payload, region_dir=region_dir, text_backend=text_engine, formula_backend=formula_engine)
                     warnings.extend(candidate_warnings)
-                blocks.append(SourceBlock(artifact_id=f"{source_ref}-artifact", source_ref=source_ref, document_id=document_id, run_id=run_id, version=1, status="draft", source_refs=[source_ref], created_by=created_by, page_number=page_number, block_index=block_index, text=text, raw_text=text, text_hash=_sha256(text), parser_version=PARSER_VERSION, bbox=bbox, ocr_candidates=ocr_candidates, formula_latex_candidates=formula_candidates, warnings=list(dict.fromkeys(warnings)), run_metadata={"block_type": block_type, "recognizers": [c.recognizer for c in (*ocr_candidates, *formula_candidates)]}))
+                blocks.append(SourceBlock(artifact_id=f"{source_ref}-artifact", source_ref=source_ref, document_id=document_id, run_id=run_id, version=1, status="draft", source_refs=[source_ref], created_by=created_by, page_number=page_number, block_index=block_index, text=text, raw_text=text, text_hash=_sha256(text), parser_version=PARSER_VERSION, bbox=bbox, ocr_candidates=ocr_candidates, formula_latex_candidates=formula_candidates, warnings=list(dict.fromkeys(warnings)), run_metadata={"block_type": block_type, "layout_class": layout_class, "recognizers": [c.recognizer for c in (*ocr_candidates, *formula_candidates)]}))
             if len(blocks) == previous_count:
                 empty_text_pages.append(page_number)
     warnings = extraction_warnings(blocks)
     source_document = SourceDocument(artifact_id=document_id, run_id=run_id, version=1, status="draft", created_by=created_by, title=pdf_path.stem, locator=str(pdf_path.resolve()), source_refs=[block.source_ref for block in blocks], warnings=warnings, run_metadata={"parser": "annotation-hybrid", "parser_version": PARSER_VERSION, "sha256": _sha256(pdf_path.read_bytes()), "elapsed_ms": round((time.perf_counter() - started) * 1000), "ocr_backend": text_engine.name, "formula_backend": formula_engine.name if formula_engine else "not_needed", "block_count": len(blocks), "artifact_dir": str(base_dir.resolve()), "json_path": str((base_dir / "source.json").resolve()), "markdown_path": str((base_dir / "source.md").resolve())})
-    source_document.run_metadata.update({"toc": toc, "page_count": page_count, "empty_text_pages": empty_text_pages})
+    source_document.run_metadata.update({"extractor": "pymupdf4llm", "extractor_version": pymupdf4llm.__version__, "toc": toc, "page_count": page_count, "empty_text_pages": empty_text_pages})
     _write_artifacts(source_document, blocks, base_dir)
     return source_document, blocks

@@ -84,6 +84,7 @@ class RetrievalDecision(BaseModel):
     """Queries chosen by the content agent before learner-facing generation."""
 
     model_config = ConfigDict(extra="forbid")
+    textbook_mode: Literal["keyword", "vector", "hybrid"] = "hybrid"
     textbook_queries: list[str] = Field(default_factory=list, max_length=4)
     web_queries: list[str] = Field(default_factory=list, max_length=2)
     action: Literal["search", "write"]
@@ -147,6 +148,7 @@ class FactCheckRetrievalDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     action: Literal["use_context", "search_textbook", "search_web", "search_both"]
+    textbook_mode: Literal["keyword", "vector", "hybrid"] = "hybrid"
     textbook_queries: list[str] = Field(default_factory=list, max_length=3)
     web_queries: list[str] = Field(default_factory=list, max_length=2)
     reason: str = ""
@@ -166,6 +168,7 @@ class QuizRetrievalDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     action: Literal["use_context", "search"]
+    textbook_mode: Literal["keyword", "vector", "hybrid"] = "hybrid"
     textbook_queries: list[str] = Field(default_factory=list, max_length=3)
     reason: str = ""
 
