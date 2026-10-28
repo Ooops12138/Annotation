@@ -48,7 +48,7 @@ from annotation.workflow.models import (
 from annotation.workflow.quiz import validate_quiz_artifact, quiz_draft_issues, accepted_content_context
 
 
-EXTRACT_CLAIMS_PROMPT_VERSION = "extract_fact_check_claims:v3:optional-subject"
+EXTRACT_CLAIMS_PROMPT_VERSION = "extract_fact_check_claims:v4:quiz-context"
 FACT_CHECK_ASSESS_PROMPT_VERSION = "assess_fact_check_claims:v3:optional-subject"
 FACT_CHECK_RETRIEVAL_PROMPT_VERSION = "fact_check_retrieval:v3:optional-subject"
 REGENERATE_QUIZ_PROMPT_VERSION = "regenerate_quiz_for_fact_check:v5:optional-subject"
@@ -141,13 +141,14 @@ def _targets(content: ContentArtifact, quiz: QuizArtifact | None) -> list[dict[s
         refs = list(question.source_refs or quiz.source_refs)
         for role, text in (
             ("quiz_question", question.question),
-            ("quiz_answer", question.answer),
-            ("quiz_explanation", question.explanation),
+            ("quiz_answer", f"题干：{question.question}\n正确答案：{question.answer}"),
+            ("quiz_explanation", f"题干：{question.question}\n正确答案：{question.answer}\n解析：{question.explanation}"),
         ):
             targets.append({
                 "target_id": f"{question.question_id}:{role}",
                 "artifact_id": quiz.artifact_id,
                 "role": role,
+                "question_context": question.question,
                 "text": text,
                 "source_refs": refs,
             })
@@ -213,7 +214,8 @@ def _extract_claims(
             target_id=item.target_id,
             role=target["role"],
             kind=item.kind,
-            text=text[:1600],
+            text=(f"题干：{target['question_context']}\n待核查陈述：{text[:1600]}"
+                  if target.get("question_context") else text[:1600]),
             query=query[:500],
             source_refs=list(target["source_refs"]),
         ))

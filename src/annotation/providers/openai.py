@@ -8,7 +8,10 @@ from collections.abc import Iterator
 from dataclasses import replace
 from typing import Any, Generic, TypeVar
 
-from openai import OpenAI
+from openai import (
+    OpenAI, RateLimitError, APITimeoutError, APIConnectionError,
+    InternalServerError, AuthenticationError, PermissionDeniedError,
+)
 from pydantic import BaseModel, ValidationError
 import httpx
 
@@ -166,6 +169,22 @@ class _OpenAIBase(Generic[T]):
             )
             raw_text = response.choices[0].message.content or ""
             reasoning_output = getattr(response.choices[0].message, "reasoning_content", None)
+            if _finish_reason(response) == "length":
+                error = ProviderError(
+                    "structured response truncated at output token limit; "
+                    "increase the configured output limit or split the task before retrying",
+                    category="truncation", raw_output=raw_text,
+                )
+                log_model_call(
+                    provider=self.provider, model=self.model, base_url=self.base_url,
+                    request_type="generate_structured", metadata=request.metadata,
+                    prompt=request.prompt, system_prompt=request.system_prompt,
+                    max_output_tokens=request.max_output_tokens, temperature=request.temperature,
+                    output=raw_text, usage=_usage(response), duration_ms=_duration_ms(started),
+                    finish_reason="length", thinking=self.thinking,
+                    reasoning_output=reasoning_output, status="error", error=str(error),
+                )
+                raise error
             try:
                 value = request.schema.model_validate(json.loads(raw_text or "{}"))
             except (json.JSONDecodeError, ValidationError) as exc:
@@ -300,13 +319,14 @@ def _usage(response: Any) -> dict[str, int]:
 
 
 def _normalize_error(exc: Exception) -> ProviderError:
-    name = exc.__class__.__name__.lower()
-    if "timeout" in name:
-        return ProviderError(str(exc), category="timeout", retryable=True)
-    if "rate" in name or "429" in str(exc):
+    if isinstance(exc, ProviderError):
+        return exc
+    if isinstance(exc, RateLimitError):
         return ProviderError(str(exc), category="rate_limit", retryable=True)
-    if "authentication" in name or "permission" in name:
+    if isinstance(exc, APITimeoutError):
+        return ProviderError(str(exc), category="timeout", retryable=True)
+    if isinstance(exc, (AuthenticationError, PermissionDeniedError)):
         return ProviderError(str(exc), category="authentication")
-    if "connection" in name or "apierror" in name:
+    if isinstance(exc, (APIConnectionError, InternalServerError)):
         return ProviderError(str(exc), category="transport", retryable=True)
     return ProviderError(str(exc), category="provider")

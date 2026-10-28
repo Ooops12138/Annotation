@@ -282,6 +282,7 @@ class ContentReflectionState(TypedDict, total=False):
     critic_prompt: str | None
     critic_raw_output: str
     critic_parsed_output: dict[str, Any] | None
+    critic_attempt: int
     critic_status: str
     critic_error: str | None
     critic_error_category: str | None

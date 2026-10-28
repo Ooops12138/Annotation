@@ -232,6 +232,56 @@ def test_non_retryable_provider_error_fails_without_retrying_the_unit() -> None:
     assert result["final_artifacts"][0].status == "blocked"
 
 
+@pytest.mark.parametrize("category,retryable,count", [
+    ("timeout", True, 3), ("schema", False, 3), ("authentication", False, 1),
+])
+def test_critic_failure_keeps_candidate_with_warning(category, retryable, count):
+    provider = ScriptedContentProvider([
+        _draft(refs=["src-1"]),
+        *[ProviderError("review unavailable", category=category, retryable=retryable)
+          for _ in range(count)],
+    ])
+    result = build_content_reflection_subgraph(provider, max_attempts=3).invoke(_state())
+    assert [c.schema.__name__ for c in provider.calls] == ["ContentDraft"] + ["ContentCritiqueDraft"] * count
+    assert result["content_loop_trace"].final_status == "accepted"
+    assert len(result["attempts"]) == 1
+    trace = result["attempts"][0]
+    assert trace.critic_error == "review unavailable"
+    assert trace.critic_provider_metadata["critic_attempts"] == count
+    artifact = result["final_artifacts"][0]
+    assert artifact.content == _draft(refs=["src-1"])["content"]
+    assert any(i.severity == "warning" and "教学评审未完成" in i.message for i in artifact.issues)
+
+
+def test_critic_retry_recovers_without_rewriting_content():
+    provider = ScriptedContentProvider([
+        _draft(refs=["src-1"]),
+        ProviderError("timeout", category="timeout", retryable=True), {"issues": []},
+    ])
+    result = build_content_reflection_subgraph(provider, max_attempts=3).invoke(_state())
+    assert [c.schema.__name__ for c in provider.calls] == ["ContentDraft", "ContentCritiqueDraft", "ContentCritiqueDraft"]
+    assert result["route"] == "accept"
+    assert not result["final_artifacts"][0].issues
+
+
+@pytest.mark.parametrize("provider_limit,expected", [(None, 12000), (6000, 6000)])
+def test_generation_uses_configured_output_limit(monkeypatch, provider_limit, expected):
+    monkeypatch.setenv("MODEL_MAX_OUTPUT_TOKENS", "12000")
+    provider = ScriptedContentProvider([_draft(refs=["src-1"]), {"issues": []}])
+    from dataclasses import replace
+    provider.capabilities = replace(provider.capabilities, max_output_tokens=provider_limit)
+    build_content_reflection_subgraph(provider, max_attempts=3).invoke(_state())
+    assert provider.calls[0].max_output_tokens == expected
+
+
+def test_truncation_does_not_retry_same_generation_limit():
+    provider = ScriptedContentProvider([ProviderError("truncated", category="truncation", raw_output="partial")])
+    result = build_content_reflection_subgraph(provider, max_attempts=3).invoke(_state())
+    assert len(provider.calls) == 1
+    assert result["attempts"][0].generation_error_category == "truncation"
+    assert result["attempts"][0].generation_raw_output == "partial"
+
+
 @pytest.mark.parametrize("has_hits", [False, True])
 def test_agent_can_retrieve_from_empty_bootstrap_but_cannot_generate_without_evidence(has_hits):
     from annotation.domain.artifacts import LearningBlueprint

@@ -42,6 +42,10 @@ Return only a valid JSON object matching `FactCheckClaimsDraft`.
   disputed viewpoints as `stance`; exclude intentionally wrong quiz distractors.
   Select no more claims than the maximum specified in Dynamic Inputs.
 
+- For quiz answers and explanations, judge the answer in relation to its supplied
+  question. Preserve the question's conditions in the extracted assertion; a bare
+  answer option is not a standalone factual claim.
+
 ## Dynamic Inputs
 
 ### Maximum claims

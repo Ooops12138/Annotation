@@ -27,6 +27,48 @@ from annotation.workflow.fact_check import run_fact_check_loop
 from annotation.workflow import run_minimal_workflow
 
 
+@pytest.mark.parametrize("role", ["quiz_answer", "quiz_explanation"])
+def test_quiz_question_context_reaches_final_assessor(role):
+    from annotation.workflow.fact_check import _targets, _extract_claims, _assess_claims
+    blueprint, _, _, content, quizzes, _ = _fixture(with_quiz=True)
+    quiz = quizzes[0]
+    question = quiz.questions[0]
+    question.question = "在什么条件下表达式有定义？"
+    question.answer = "$x\\neq 0$"
+    targets = _targets(content, quiz)
+    target = next(t for t in targets if t["role"] == role)
+    assert question.question in target["text"]
+    assert question.answer in target["text"]
+
+    class Provider:
+        def __init__(self):
+            self.calls = []
+
+        def generate_structured(self, request):
+            self.calls.append(request)
+            if request.schema.__name__ == "FactCheckClaimsDraft":
+                # Even if extraction drops context, the workflow must retain it.
+                payload = {"claims": [{"target_id": target["target_id"], "kind": "fact",
+                                       "text": question.answer, "query": "定义域"}]}
+            else:
+                payload = {"assessments": []}
+            value = request.schema.model_validate(payload)
+            return StructuredGenerationResponse(value=value, raw_text=value.model_dump_json(),
+                provider="test", model="test", base_url=None, config_version="test", duration_ms=0)
+
+    provider = Provider()
+    claims, error = _extract_claims(provider, unit=blueprint.knowledge_units[0],
+        content=content, quiz=quiz, policy=FactCheckPolicy(), round_number=0)
+    assert error is None
+    assert question.question in claims[0].text
+    assert claims[0].target_id == target["target_id"]
+    _assess_claims(provider, claims=claims, evidence_by_claim={claims[0].claim_id: ([], [], [])},
+        content_artifact_id=content.artifact_id, quiz_artifact_id=quiz.artifact_id, round_number=0)
+    assert question.question in provider.calls[-1].prompt
+    import json
+    assert json.dumps(question.answer, ensure_ascii=False)[1:-1] in provider.calls[-1].prompt
+
+
 @pytest.mark.parametrize("change", ["count", "unit", "objective", "escape"])
 def test_fact_quiz_correction_enforces_generation_contract(change):
     from annotation.workflow.fact_check import _correct_quiz
@@ -355,7 +397,7 @@ def test_direct_textbook_contradiction_revises_content_then_rechecks() -> None:
     assert result["fact_check_issues"] == []
     claim_calls = [call for call in provider.calls if call.schema.__name__ == "FactCheckClaimsDraft"]
     assert claim_calls and "### Domain rules: mathematics" not in claim_calls[0].prompt
-    assert claim_calls[0].metadata["prompt_version"] == "extract_fact_check_claims:v3:optional-subject"
+    assert claim_calls[0].metadata["prompt_version"] == "extract_fact_check_claims:v4:quiz-context"
     assessment_calls = [call for call in provider.calls if call.schema.__name__ == "FactCheckAssessmentsDraft"]
     assert assessment_calls and "### Domain rules: mathematics" not in assessment_calls[0].prompt
     assert assessment_calls[0].metadata["prompt_version"] == "assess_fact_check_claims:v3:optional-subject"

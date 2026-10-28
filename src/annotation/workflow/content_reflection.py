@@ -227,6 +227,7 @@ def build_content_reflection_subgraph(
             "critic_raw_output": "",
             "critic_parsed_output": None,
             "critic_status": "skipped",
+            "critic_attempt": 0,
             "critic_error": None,
             "critic_error_category": None,
             "critic_retryable": False,
@@ -250,10 +251,8 @@ def build_content_reflection_subgraph(
                 response = provider.generate_structured(StructuredGenerationRequest(
                     prompt=prompt,
                     schema=ContentDraft,
-                    # Content and revision responses contain learner-facing
-                    # Markdown plus a JSON envelope. A 2200-token cap was
-                    # observed truncating otherwise useful DeepSeek drafts.
-                    max_output_tokens=response_limit(min(5000, model_max_output_tokens())),
+                    # Include the JSON/LaTeX envelope within the configured limit.
+                    max_output_tokens=response_limit(model_max_output_tokens()),
                     metadata={
                         "agent": agent,
                         "run_id": state["run_id"],
@@ -338,6 +337,7 @@ def build_content_reflection_subgraph(
             ),
         )
         result: dict[str, Any] = {
+            "critic_attempt": int(state.get("critic_attempt", 0)) + 1,
             "critic_prompt": prompt,
             "critic_raw_output": "",
             "critic_parsed_output": None,
@@ -409,7 +409,15 @@ def build_content_reflection_subgraph(
                 "critic_error_category": "runtime",
                 "critic_provider_metadata": {**provider_metadata(provider), "agent": "critique_content_artifact"},
             })
+        result["critic_provider_metadata"]["critic_attempts"] = result["critic_attempt"]
         return result
+
+    def after_critic(state: ContentReflectionState) -> str:
+        if (state.get("critic_status") != "succeeded"
+                and state.get("critic_retryable")
+                and int(state.get("critic_attempt", 0)) < max_attempts):
+            return "retry"
+        return "route"
 
     def route_candidate(state: ContentReflectionState) -> dict[str, Any]:
         attempt = int(state.get("attempt", 0))
@@ -420,14 +428,11 @@ def build_content_reflection_subgraph(
         has_critic_block = any(issue.severity == "blocking" for issue in state.get("critic_feedback", []))
         non_retryable_error = (
             generation_status == "provider_error" and not state.get("generation_retryable")
-        ) or (
-            critic_status == "provider_error" and not state.get("critic_retryable")
         )
         requires_revision = (
             generation_status != "succeeded"
             or hard_check is None
             or hard_check.status != "accepted"
-            or critic_status != "succeeded"
             or has_critic_block
         )
         if state.get("generation_error_category") in {"no_evidence", "retrieval_budget"}:
@@ -441,6 +446,13 @@ def build_content_reflection_subgraph(
         else:
             route, stop_reason, final_status = "accept", "accepted", "accepted"
 
+        if route == "accept" and critic_status != "succeeded":
+            feedback.append(content_issue(
+                task=state["task"], suffix=f"critic-incomplete-{attempt}",
+                category="coverage", severity="warning",
+                message="教学评审未完成：" + str(state.get("critic_error") or "Critic 未返回有效结果。"),
+                suggested_action="稍后重新进行教学评审。",
+            ))
         candidate = state.get("candidate_artifact")
         if final_status is not None and candidate is None:
             error = state.get("generation_error") or state.get("critic_error") or "内容反思 loop 未生成候选。"
@@ -537,7 +549,10 @@ def build_content_reflection_subgraph(
         after_hard_check,
         {"critic": "critic_candidate", "route": "route_candidate"},
     )
-    graph.add_edge("critic_candidate", "route_candidate")
+    graph.add_conditional_edges(
+        "critic_candidate", after_critic,
+        {"retry": "critic_candidate", "route": "route_candidate"},
+    )
     graph.add_conditional_edges(
         "route_candidate",
         next_route,

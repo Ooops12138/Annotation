@@ -1,4 +1,9 @@
 import json
+from types import SimpleNamespace
+
+import httpx
+import openai
+import pytest
 
 from pydantic import BaseModel
 
@@ -11,6 +16,7 @@ from annotation.providers import (
     StructuredGenerationRequest,
     OpenAICompatibleProvider,
     OpenAIProvider,
+    ProviderError,
 )
 
 
@@ -117,3 +123,73 @@ def test_thinking_disabled_is_sent_as_compatible_extra_body(tmp_path, monkeypatc
     assert record["input"]["prompt"] == "hello"
     assert record["input"]["thinking"] == "disabled"
     assert record["output"] == '{"value": "ok"}'
+
+
+@pytest.mark.parametrize("cls,category,retryable", [
+    (openai.RateLimitError, "rate_limit", True),
+    (openai.InternalServerError, "transport", True),
+    (openai.AuthenticationError, "authentication", False),
+    (openai.PermissionDeniedError, "authentication", False),
+    (openai.APITimeoutError, "timeout", True),
+    (openai.APIConnectionError, "transport", True),
+])
+def test_sdk_errors_are_classified_by_type(cls, category, retryable):
+    from annotation.providers.openai import _normalize_error
+    request = httpx.Request("POST", "https://example.test/v1")
+    if issubclass(cls, openai.APIStatusError):
+        exc = cls("error", response=httpx.Response(500, request=request), body=None)
+    else:
+        exc = cls(request=request)
+    result = _normalize_error(exc)
+    assert (result.category, result.retryable) == (category, retryable)
+
+
+def test_unrelated_names_and_message_numbers_do_not_imply_rate_limit():
+    from annotation.providers.openai import _normalize_error
+    class GenerateError(Exception):
+        pass
+    for exc in (GenerateError("failed"), ValueError("record 429 is invalid")):
+        result = _normalize_error(exc)
+        assert result.category == "provider"
+        assert not result.retryable
+
+
+@pytest.mark.parametrize("raw", ['{"value":', '{"value":"ok"}'])
+def test_finish_reason_length_is_truncation_even_for_valid_json(raw, tmp_path, monkeypatch):
+    monkeypatch.setenv("MODEL_CALL_LOG_PATH", str(tmp_path / "calls.jsonl"))
+    response = SimpleNamespace(choices=[SimpleNamespace(
+        message=SimpleNamespace(content=raw), finish_reason="length")], usage=None)
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **kw: response)))
+    provider = OpenAIProvider(model="test", client=client)
+    with pytest.raises(ProviderError) as info:
+        provider.generate_structured(StructuredGenerationRequest(prompt="test", schema=TinyPayload))
+    assert info.value.category == "truncation"
+    assert not info.value.retryable
+    assert info.value.raw_output == raw
+    record = json.loads((tmp_path / "calls.jsonl").read_text(encoding="utf-8"))
+    assert record["finish_reason"] == "length"
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_log_failure_preserves_response_or_original_error(tmp_path, monkeypatch, caplog, failure):
+    # A regular file cannot be used as the parent of the log file.
+    parent = tmp_path / "not-a-directory"
+    parent.write_text("occupied")
+    monkeypatch.setenv("MODEL_CALL_LOG_PATH", str(parent / "calls.jsonl"))
+    if failure:
+        request = httpx.Request("POST", "https://example.test/v1")
+        def create(**kwargs):
+            raise openai.APITimeoutError(request=request)
+        client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    else:
+        client = _FakeClient()
+    provider = OpenAIProvider(model="test", client=client)
+    request = StructuredGenerationRequest(prompt="test", schema=TinyPayload)
+    if failure:
+        with pytest.raises(ProviderError) as info:
+            provider.generate_structured(request)
+        assert info.value.category == "timeout"
+        assert isinstance(info.value.__cause__, openai.APITimeoutError)
+    else:
+        assert provider.generate_structured(request).value.value == "ok"
+    assert "Failed to write model call log" in caplog.text

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import uuid
@@ -42,34 +43,37 @@ def log_model_call(
     The request payload is intentionally limited to model-call data. API keys
     are never passed to this function and therefore never written to the log.
     """
-    configured_path = os.getenv("MODEL_CALL_LOG_PATH")
-    path = Path(configured_path) if configured_path else STORAGE_DIR / "model-calls.jsonl"
-    record = {
-        "call_id": f"call-{uuid.uuid4().hex[:12]}",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "provider": provider,
-        "model": model,
-        "base_url": base_url,
-        "request_type": request_type,
-        "metadata": dict(metadata),
-        "input": {
-            "system_prompt": system_prompt,
-            "prompt": prompt,
-            "temperature": temperature,
-            "max_output_tokens": max_output_tokens,
-            "thinking": thinking,
-        },
-        "output": output,
-        "reasoning_output": reasoning_output,
-        "parsed_output": parsed_output,
-        "usage": dict(usage or {}),
-        "duration_ms": duration_ms,
-        "finish_reason": finish_reason,
-        "status": status,
-        "error": error,
-    }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    line = json.dumps(record, ensure_ascii=False, default=str) + "\n"
-    with _LOCK:
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(line)
+    try:
+        configured_path = os.getenv("MODEL_CALL_LOG_PATH")
+        path = Path(configured_path) if configured_path else STORAGE_DIR / "model-calls.jsonl"
+        record = {
+            "call_id": f"call-{uuid.uuid4().hex[:12]}",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "provider": provider,
+            "model": model,
+            "base_url": base_url,
+            "request_type": request_type,
+            "metadata": dict(metadata),
+            "input": {
+                "system_prompt": system_prompt,
+                "prompt": prompt,
+                "temperature": temperature,
+                "max_output_tokens": max_output_tokens,
+                "thinking": thinking,
+            },
+            "output": output,
+            "reasoning_output": reasoning_output,
+            "parsed_output": parsed_output,
+            "usage": dict(usage or {}),
+            "duration_ms": duration_ms,
+            "finish_reason": finish_reason,
+            "status": status,
+            "error": error,
+        }
+        path.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(record, ensure_ascii=False, default=str) + "\n"
+        with _LOCK:
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(line)
+    except Exception:
+        logging.getLogger(__name__).warning("Failed to write model call log", exc_info=True)
