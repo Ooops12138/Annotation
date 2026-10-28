@@ -249,6 +249,16 @@ export function isInteractiveComponentSpec(value: unknown): value is Interactive
     if (value.html.length > 20_000 || value.css.length > 12_000 || value.javascript.length > 20_000) return false
     const htmlSource = value.html
     const html = htmlSource.toLowerCase()
+    if (/<\s*(?:meta|base)\b/i.test(htmlSource) || /<\s*(?:a|area)\b[^>]*\bhref\s*=/i.test(htmlSource)) return false
+    const navigationScript = /\b(?:location|navigation|href|httpEquiv)\b|\b(?:window|self|top|parent)\s*\.\s*open\s*\(/i
+    if (navigationScript.test(value.javascript) || /<\s*(?:meta|base)\b/i.test(value.javascript)) return false
+    for (const handler of htmlSource.matchAll(/\bon\w+\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi)) {
+      const decoded = (handler[1] ?? handler[2] ?? handler[3] ?? '').replace(/&#(x[0-9a-f]+|[0-9]+);?/gi, (_, code: string) => {
+        const point = code[0].toLowerCase() === 'x' ? parseInt(code.slice(1), 16) : parseInt(code, 10)
+        return point >= 0 && point <= 0x10ffff ? String.fromCodePoint(point) : ''
+      })
+      if (navigationScript.test(decoded)) return false
+    }
     if (['<script', '<style', '<iframe', '<object', '<embed'].some((token) => html.includes(token))) return false
     if (value.css.toLowerCase().includes('</style') || value.javascript.toLowerCase().includes('</script')) return false
     return value.controls.every((control) => (

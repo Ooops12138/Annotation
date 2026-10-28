@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import re
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from annotation.token_estimation import estimate_tokens
+from annotation.prompt_archive import write_artifact_json
 from annotation.domain.artifacts import (
     ContextExcerpt,
     ContextPack,
@@ -26,12 +27,6 @@ from annotation.domain.artifacts import (
 )
 from annotation.fact_checking.contracts import TextbookSearchTool
 from annotation.retrieval import InMemoryTextbookSearchTool
-
-
-def estimate_tokens(text: str) -> int:
-    """Conservative, dependency-free estimate suitable for a safety budget."""
-
-    return max(0, math.ceil(len(text) / 4))
 
 
 def render_context_pack(pack: ContextPack) -> str:
@@ -128,10 +123,6 @@ def build_context_pack(
 
     effective_window = context_window or 12000
     input_budget = max(0, effective_window - reserved_output_tokens - safety_margin_tokens)
-    # Chinese-heavy textbook text can tokenize close to one token per
-    # character.  Three characters per estimated token is intentionally
-    # conservative and leaves room for prompt/schema overhead.
-    char_budget = input_budget * 3
     ordered_blocks = sorted(blocks, key=lambda block: (block.page_number, block.block_index))
     tool = search_tool or InMemoryTextbookSearchTool(ordered_blocks)
     raw_queries = retrieval_queries if retrieval_queries is not None else [unit.title, *unit.objective_texts]
@@ -214,25 +205,25 @@ def build_context_pack(
     excerpts: list[ContextExcerpt] = []
     selected_refs: list[str] = []
     omitted_refs: list[str] = []
-    used_chars = 0
+    used_tokens = 0
     strategies: list[str] = []
     for strategy, block in candidates:
         text = _compact(block.text)
         if not text:
             continue
-        if len(text) > char_budget:
-            continue
-        if used_chars + len(text) > char_budget and excerpts:
+        tokens = estimate_tokens(text)
+        if used_tokens + tokens > input_budget:
+            omitted_refs.extend(block.source_refs or [block.source_ref])
             continue
         raw_refs = list(block.source_refs or [block.source_ref])
         excerpts.append(ContextExcerpt(source_ref=raw_refs[0], page_number=block.page_number, block_index=block.block_index,
                                        text=text, source_refs=raw_refs,
                                        chunk_ref=block.source_ref if block.run_metadata.get("chunk_type") == "semantic" else None))
         selected_refs.extend(block.source_refs or [block.source_ref])
-        used_chars += len(text)
+        used_tokens += tokens
         if strategy not in strategies:
             strategies.append(strategy)
-        if used_chars >= char_budget:
+        if used_tokens >= input_budget:
             break
 
     by_id = {candidate.artifact_id: candidate for candidate in blueprint.knowledge_units}
@@ -246,7 +237,6 @@ def build_context_pack(
     snapshot_material = "|".join(f"{excerpt.chunk_ref or excerpt.source_ref}:{hashes.get(excerpt.chunk_ref or excerpt.source_ref, '')}:{','.join(excerpt.source_refs)}"
                                   for excerpt in excerpts)
     source_snapshot = hashlib.sha256(snapshot_material.encode("utf-8")).hexdigest() if snapshot_material else None
-    rendered_chars = sum(len(excerpt.text) for excerpt in excerpts)
     return ContextPack(
         context_pack_id=f"ctx-{task.task_id}",
         run_id=task.run_id,
@@ -259,7 +249,7 @@ def build_context_pack(
         selected_source_refs=list(dict.fromkeys(selected_refs)),
         excerpts=excerpts,
         prerequisite_titles=prerequisites,
-        estimated_input_tokens=math.ceil(rendered_chars / 4),
+        estimated_input_tokens=used_tokens,
         input_budget_tokens=input_budget,
         omitted_source_refs=omitted_refs,
         retrieval_strategy=strategies or ["keyword_retrieval"],
@@ -386,5 +376,4 @@ def write_content_run_artifact(
     if traces or content_loop_summary is not None:
         payload["content_loop_traces"] = traces
         payload["content_loop_summary"] = content_loop_summary
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    return path
+    return write_artifact_json(path, payload)

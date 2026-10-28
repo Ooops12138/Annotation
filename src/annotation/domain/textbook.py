@@ -3,6 +3,7 @@
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from annotation.prompt_archive import PromptReference
 
 
 class SourceRange(BaseModel):
@@ -54,8 +55,8 @@ class BlueprintCallTrace(BaseModel):
     phase: str
     scope_id: str
     attempt: int
-    prompt: str
-    system_prompt: str = ""
+    prompt: str | PromptReference
+    system_prompt: str | PromptReference = ""
     raw_output: str = ""
     parsed_output: dict[str, Any] | None = None
     provider_metadata: dict[str, Any] = Field(default_factory=dict)
@@ -65,7 +66,7 @@ class BlueprintCallTrace(BaseModel):
     cache_key: str = ""
     cache_hit: bool = False
     model_called: bool = False
-    cached_prompt: str | None = None
+    cached_prompt: str | PromptReference | None = None
     error: str | None = None
     error_category: str | None = None
     route: Literal["accept", "revise", "block", "fail"] = "accept"

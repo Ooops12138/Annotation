@@ -153,22 +153,17 @@ def _plan_content_task_batch(
     status = "succeeded"
     try:
         budget = PromptBudget.for_provider(provider, output_limit=5000)
-        workflow_capabilities = getattr(provider, "workflow", None)
-        if workflow_capabilities is not None:
-            draft = workflow_capabilities.plan_content_tasks(blueprint)
-            raw_output = draft.model_dump_json()
-            metadata.update(workflow_capabilities.fixture_metadata("plan_content_tasks"))
-        else:
-            budget.check(prompt, ContentTaskPlanDraft)
-            response = provider.generate_structured(StructuredGenerationRequest(
-                prompt=prompt,
-                schema=ContentTaskPlanDraft,
-                max_output_tokens=budget.output_tokens,
-                metadata={key: value for key, value in metadata.items() if key != "prompt"},
-            ))
-            draft = ContentTaskPlanDraft.model_validate(response.value.model_dump(mode="python"))
-            raw_output = response.raw_text
-            metadata.update(response_metadata(response))
+        budget.check(prompt, ContentTaskPlanDraft)
+        response = provider.generate_structured(StructuredGenerationRequest(
+            prompt=prompt,
+            schema=ContentTaskPlanDraft,
+            context={"blueprint": blueprint},
+            max_output_tokens=budget.output_tokens,
+            metadata={key: value for key, value in metadata.items() if key != "prompt"},
+        ))
+        draft = ContentTaskPlanDraft.model_validate(response.value.model_dump(mode="python"))
+        raw_output = response.raw_text
+        metadata.update(response_metadata(response))
         tasks, planning_warnings = _tasks_from_draft(run_id=run_id, blueprint=blueprint, draft=draft)
         warnings.extend(planning_warnings)
         if any(item.startswith("course_architect_revision_required:") for item in planning_warnings):

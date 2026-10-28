@@ -96,9 +96,9 @@ def test_context_pack_does_not_treat_task_sources_as_required() -> None:
     )
     pack = build_context_pack(task, unit, blueprint, blocks, context_window=900, reserved_output_tokens=850, safety_margin_tokens=0)
     assert pack.input_budget_tokens == 50
-    assert estimate_tokens("abcd") == 1
+    assert estimate_tokens("abcd") == 2
     assert pack.source_refs == []
-    assert pack.omitted_source_refs == []
+    assert set(pack.omitted_source_refs).issubset({"src-1", "src-2"})
 
 
 def test_context_pack_retrieves_from_objectives_without_task_sources() -> None:

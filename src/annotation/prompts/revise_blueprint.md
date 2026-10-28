@@ -15,7 +15,7 @@ Return only a valid JSON object matching `BlueprintDraft`.
   "title": "string",
   "knowledge_units": [
     {
-      "knowledge_unit_id": "stable id",
+      "knowledge_unit_id": "existing ID from candidate, or u1 for a new unit",
       "title": "string",
       "kind": "concept|formula|theorem|example|skill",
       "learning_objectives": [
@@ -54,7 +54,11 @@ Return only a valid JSON object matching `BlueprintDraft`.
   least one knowledge unit.
 
 - Repair the listed blocking problems while preserving stable
-  `knowledge_unit_id` values and valid structure. Use those IDs for relations.
+  `knowledge_unit_id` values for retained units by copying their exact IDs from
+  the candidate, even when changing titles or order. For new units, use unique
+  response-local keys (e.g. u1) that do not collide with candidate IDs; the program
+  assigns their permanent IDs. Use retained IDs or new local keys for relations;
+  every relation must point to a unit included in this response. Do not invent permanent IDs.
 
 - Retain each existing objective as an object with its exact `objective_id` and updated `text`, even when rewording or reordering it. Use plain strings only for genuinely new objectives; the program assigns their IDs. Do not invent IDs, move an objective ID to another unit, or replace a retained objective with a new string.
 

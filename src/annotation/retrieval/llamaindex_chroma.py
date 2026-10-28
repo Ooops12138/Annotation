@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import re
 from collections.abc import Iterable
@@ -170,6 +171,7 @@ class LlamaIndexChromaTextbookSearchTool:
             return result(SearchStatus.ERROR, code=SearchErrorCode.INVALID_PROVIDER_RESPONSE,
                           message="encoder or vector index returned invalid evidence")
         except Exception as exc:
+            logging.getLogger(__name__).exception("Vector retrieval failed")
             from openai import APITimeoutError
             code = SearchErrorCode.PROVIDER_TIMEOUT if isinstance(exc, (TimeoutError, APITimeoutError)) else SearchErrorCode.PROVIDER_ERROR
-            return result(SearchStatus.ERROR, code=code, message="vector retrieval failed; check encoder and index configuration")
+            return result(SearchStatus.ERROR, code=code, message=f"vector retrieval failed: {type(exc).__name__}: {str(exc)[:200]}")

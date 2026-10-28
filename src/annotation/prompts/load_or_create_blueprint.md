@@ -15,7 +15,7 @@ Return only a valid JSON object matching `BlueprintDraft`.
   "title": "string",
   "knowledge_units": [
     {
-      "knowledge_unit_id": "stable id such as ku-topic-01",
+      "knowledge_unit_id": "u1",
       "title": "string",
       "kind": "concept|formula|theorem|example|skill",
       "learning_objectives": [
@@ -28,7 +28,7 @@ Return only a valid JSON object matching `BlueprintDraft`.
         "string"
       ],
       "related_unit_ids": [
-        "stable knowledge_unit_id"
+        "response-local knowledge_unit_id"
       ]
     }
   ],
@@ -52,8 +52,10 @@ Return only a valid JSON object matching `BlueprintDraft`.
   Return at least one knowledge unit.
 - Keep representative seed references focused on what downstream planning needs.
   Downstream retrieval records the exact evidence used for generation.
-- Give each unit a stable `knowledge_unit_id`; reference those IDs in
-  `prerequisites` and `related_unit_ids`.
+- Give each unit a unique response-local `knowledge_unit_id`, such as `u1` or `u2`.
+  Use these keys in `prerequisites` and `related_unit_ids`; every reference must
+  point to a unit in this response. The program assigns final stable IDs and
+  rewrites the references. Do not invent permanent IDs or promise cross-call stability.
 - Return new learning objectives as text strings. The program binds stable `objective_id` values after assigning the final knowledge-unit ID; do not invent objective IDs.
 
 {{DOMAIN_RULES}}

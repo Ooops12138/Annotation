@@ -83,6 +83,36 @@ def engine_for(texts, provider=None, *, run_id="hierarchy-run", budget=None, att
     return engine, windows, blocks
 
 
+def test_local_temporary_keys_map_relations_and_representatives_to_program_ids():
+    def decide(request):
+        if request.schema == LocalBlueprintDraft:
+            return {"title": "Local", "representative_unit_ids": ["u2"], "knowledge_units": [
+                {"knowledge_unit_id": "u1", "title": "First", "learning_objectives": ["First goal"],
+                 "related_unit_ids": ["u2"]},
+                {"knowledge_unit_id": "u2", "title": "Second", "learning_objectives": ["Second goal"],
+                 "prerequisites": ["u1"]},
+            ]}
+
+    engine, windows, _ = engine_for(["第1章 正文"], TeachingProvider(decide))
+    groups = []
+    original_local = engine.local
+
+    def capture_local(window):
+        group = original_local(window)
+        groups.append(group)
+        return group
+
+    engine.local = capture_local
+    bp = engine.run(windows)
+    assert bp is not None, engine.trace.stop_reason
+    first, second = bp.knowledge_units
+    assert first.artifact_id not in {"u1", "u2"}
+    assert second.artifact_id not in {"u1", "u2", first.artifact_id}
+    assert first.related_unit_ids == [second.artifact_id]
+    assert second.prerequisites == [first.artifact_id]
+    assert groups[0].representative_unit_ids == [second.artifact_id]
+
+
 def test_structure_owns_every_block_once_with_same_page_boundaries_and_introduction():
     document, blocks = source(["前言", "第1章 实数", "章引言", "1.1 实数集", "正文", "1.2 确界", "正文", "第2章 极限", "正文"])
     tree = build_textbook_structure(document, blocks)
@@ -358,6 +388,12 @@ def test_hierarchical_workflow_reaches_document_with_offline_content_and_keeps_a
                 return False
 
         workflow = ContentFixtures()
+
+        def generate_structured(self, request):
+            if request.schema not in {LocalBlueprintDraft, CoordinationDecision}:
+                from annotation.offline import OfflineFixtureProvider
+                return OfflineFixtureProvider().generate_structured(request)
+            return super().generate_structured(request)
 
     monkeypatch.setattr(graph_module, "parse_pdf", lambda _path, run_id: source(["第1章 基础", "第2章 进阶"], run_id=run_id))
     state = run_minimal_workflow(provider=OfflineContentProvider(), run_id="hierarchy-document")

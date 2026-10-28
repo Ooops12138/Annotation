@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import hashlib
 import logging
-import math
+from annotation.token_estimation import estimate_tokens
 from collections.abc import Iterable, Mapping
 from typing import Any, Literal
 
@@ -707,23 +707,20 @@ def retrieve_quiz_context(
         UNIT=json.dumps(_unit_context(unit), ensure_ascii=False),
         CONTEXT=render_context_pack(context_pack),
     )
-    workflow_capabilities = getattr(provider, "workflow", None)
-    if workflow_capabilities is not None:
-        decision = workflow_capabilities.quiz_retrieval_decision()
-    else:
-        response = provider.generate_structured(StructuredGenerationRequest(
-            prompt=prompt,
-            schema=QuizRetrievalDecision,
-            max_output_tokens=min(700, model_max_output_tokens()),
-            metadata={"agent": "quiz_retrieval", "prompt_version": QUIZ_RETRIEVAL_PROMPT_VERSION, "task_id": task.task_id},
-        ))
-        decision = QuizRetrievalDecision.model_validate(response.value.model_dump(mode="python"))
+    response = provider.generate_structured(StructuredGenerationRequest(
+        prompt=prompt,
+        schema=QuizRetrievalDecision,
+        max_output_tokens=min(700, model_max_output_tokens()),
+        metadata={"agent": "quiz_retrieval", "prompt_version": QUIZ_RETRIEVAL_PROMPT_VERSION, "task_id": task.task_id},
+    ))
+    decision = QuizRetrievalDecision.model_validate(response.value.model_dump(mode="python"))
     if decision.action == "use_context":
         return context_pack
     excerpts = list(context_pack.excerpts)
     seen = {item.chunk_ref or item.source_ref for item in excerpts}
     calls = list(context_pack.retrieval_calls)
     refs = list(context_pack.source_refs)
+    used_tokens = sum(estimate_tokens(excerpt.text) for excerpt in excerpts)
     blocks = {block.source_ref: block for block in semantic_blocks}
     for query in decision.textbook_queries:
         result = retrieval_service.search(query.strip(), source="textbook", limit=5)
@@ -744,8 +741,9 @@ def retrieve_quiz_context(
             )
             returned.append(excerpt)
             key = excerpt.chunk_ref or excerpt.source_ref
-            if key not in seen and excerpt.text.strip():
+            if key not in seen and excerpt.text.strip() and used_tokens + estimate_tokens(excerpt.text) <= context_pack.input_budget_tokens:
                 excerpts.append(excerpt)
+                used_tokens += estimate_tokens(excerpt.text)
                 seen.add(key)
                 refs.extend(source_ref for source_ref in raw_refs if source_ref not in refs)
         calls.append(RetrievalCall(
@@ -763,7 +761,7 @@ def retrieve_quiz_context(
         "selected_source_refs": list(dict.fromkeys([*context_pack.selected_source_refs, *refs])),
         "retrieved_source_refs": list(dict.fromkeys([*context_pack.retrieved_source_refs, *refs])),
         "retrieval_calls": calls,
-        "estimated_input_tokens": math.ceil(sum(len(excerpt.text) for excerpt in excerpts) / 4),
+        "estimated_input_tokens": sum(estimate_tokens(excerpt.text) for excerpt in excerpts),
         "source_snapshot": hashlib.sha256("|".join(
             f"{excerpt.chunk_ref or excerpt.source_ref}:{excerpt.text}:{','.join(excerpt.source_refs)}"
             for excerpt in excerpts
@@ -830,7 +828,6 @@ def generate_quiz_artifact(
             context_pack_id=context_pack.context_pack_id, prompt_version=QUIZ_PROMPT_VERSION,
             generation_metadata={"question_count": 0, "stop_reason": "not_requested"},
         )
-    workflow_capabilities = getattr(provider, "workflow", None)
     attempts: list[dict[str, Any]] = []
     try:
         context_pack = retrieve_quiz_context(
@@ -852,21 +849,17 @@ def generate_quiz_artifact(
         }
         raw_response = ""
         try:
-            if workflow_capabilities is not None:
-                draft = workflow_capabilities.quiz_draft(unit, context_pack, task.quiz_count)
-                metadata.update(workflow_capabilities.fixture_metadata("generate_quiz_artifact"))
-                raw_response = draft.model_dump_json()
-            else:
-                response = provider.generate_structured(StructuredGenerationRequest(
-                    prompt=prompt,
-                    schema=QuizDraft,
-                    max_output_tokens=min(3500, model_max_output_tokens(), getattr(getattr(provider, "capabilities", None), "max_output_tokens", 3500) or 3500),
-                    metadata=metadata,
-                ))
-                raw_response = str(getattr(response, "raw_text", "") or "")
-                draft = QuizDraft.model_validate(response.value.model_dump(mode="python"))
-                metadata.update(_response_metadata(response))
-                raw_response = raw_response or draft.model_dump_json()
+            response = provider.generate_structured(StructuredGenerationRequest(
+                prompt=prompt,
+                schema=QuizDraft,
+                context={"unit": unit, "context_pack": context_pack, "task": task},
+                max_output_tokens=min(3500, model_max_output_tokens(), getattr(getattr(provider, "capabilities", None), "max_output_tokens", 3500) or 3500),
+                metadata=metadata,
+            ))
+            raw_response = str(getattr(response, "raw_text", "") or "")
+            draft = QuizDraft.model_validate(response.value.model_dump(mode="python"))
+            metadata.update(_response_metadata(response))
+            raw_response = raw_response or draft.model_dump_json()
             count = len(draft.questions)
             metadata["question_count"] = count
             metadata["question_count_source"] = "derived_from_questions"
@@ -889,7 +882,7 @@ def generate_quiz_artifact(
             artifact.generation_metadata["attempts"] = attempts
             artifact.generation_metadata["final_attempt"] = attempt
             last = artifact
-            if artifact.status == "accepted" or workflow_capabilities is not None:
+            if artifact.status == "accepted":
                 return artifact
             feedback = [issue.message for issue in blocking]
         except ProviderError as exc:
@@ -898,6 +891,7 @@ def generate_quiz_artifact(
                 return last
             feedback = [str(exc)]
         except Exception as exc:
+            logger.exception("Unexpected quiz generation failure for %s", task.task_id)
             return blocked_quiz_artifact(task=task, unit=unit, context_pack=context_pack, run_id=run_id, provider_name=provider_name, raw_response=raw_response, error=str(exc), generation_metadata={**metadata, "error_category": "runtime"})
     assert last is not None
     return last

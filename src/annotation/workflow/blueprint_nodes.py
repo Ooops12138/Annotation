@@ -28,8 +28,8 @@ from annotation.workflow.helpers import (
 )
 from annotation.workflow.models import BlueprintDraft, WorkflowState
 
-BLUEPRINT_GENERATION_PROMPT_VERSION = "load_or_create_blueprint:v3:optional-subject"
-BLUEPRINT_REVISION_PROMPT_VERSION = "revise_blueprint:v3:optional-subject"
+BLUEPRINT_GENERATION_PROMPT_VERSION = "load_or_create_blueprint:v4:program-unit-ids"
+BLUEPRINT_REVISION_PROMPT_VERSION = "revise_blueprint:v4:program-unit-ids"
 from annotation.workflow.context import WorkflowContext
 import logging
 

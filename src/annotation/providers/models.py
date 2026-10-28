@@ -40,6 +40,9 @@ class StructuredGenerationRequest:
     temperature: float | None = None
     max_output_tokens: int | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    # Typed domain inputs for local adapters. Network adapters use the rendered
+    # prompt only; runtime context is neither sent nor copied into model logs.
+    context: Mapping[str, Any] = field(default_factory=dict, repr=False)
 
 
 @dataclass(frozen=True)

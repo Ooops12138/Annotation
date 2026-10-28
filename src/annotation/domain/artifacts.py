@@ -1,6 +1,8 @@
 from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from annotation.prompt_archive import PromptReference
+from annotation.component_safety import validate_component_navigation
 
 
 class ArtifactBase(BaseModel):
@@ -353,7 +355,10 @@ class FactCheckPolicy(BaseModel):
     max_corrections_per_unit: int = Field(default=2, ge=0, le=2)
     textbook_result_limit: int = Field(default=5, ge=1, le=10)
     web_enabled: bool = False
-    web_query_limit: int = Field(default=10, ge=0, le=20)
+    web_query_limit: int = Field(
+        default=10, ge=0, le=20,
+        description="Per-unit web search call budget across initial retrieval, follow-ups and correction rounds; failed calls count.",
+    )
 
 
 class FactCheckClaim(BaseModel):
@@ -517,8 +522,8 @@ class ContentAttemptTrace(BaseModel):
     # ContextPack, where no model call is allowed.
     attempt: int = Field(ge=0)
     generation_stage: Literal["initial", "revision", "skipped"] = "initial"
-    generation_prompt: str = ""
-    revision_prompt: str | None = None
+    generation_prompt: str | PromptReference = ""
+    revision_prompt: str | PromptReference | None = None
     generation_raw_output: str = ""
     generation_parsed_output: dict[str, Any] | None = None
     # Each attempt produces one readable Markdown candidate. The complete
@@ -529,7 +534,7 @@ class ContentAttemptTrace(BaseModel):
     generation_error_category: str | None = None
     generation_provider_metadata: dict[str, Any] = Field(default_factory=dict)
     hard_check: ContentHardCheckResult | None = None
-    critic_prompt: str | None = None
+    critic_prompt: str | PromptReference | None = None
     critic_raw_output: str = ""
     critic_parsed_output: dict[str, Any] | None = None
     critic_status: Literal["succeeded", "schema_error", "provider_error", "skipped"] = "skipped"
@@ -590,7 +595,7 @@ class BlueprintAttemptTrace(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     attempt: int = Field(ge=1)
-    prompt: str
+    prompt: str | PromptReference
     raw_output: str = ""
     parsed_output: dict[str, Any] | None = None
     generation_status: Literal["succeeded", "schema_error", "provider_error"]
@@ -785,6 +790,7 @@ class GeneratedHtmlSpec(InteractiveComponentSpecBase):
 
     @model_validator(mode="after")
     def validate_fragments(self) -> "GeneratedHtmlSpec":
+        validate_component_navigation(self.html, self.javascript)
         if len(set(self.libraries)) != len(self.libraries):
             raise ValueError("component libraries must be unique")
         lowered_html = self.html.lower()
@@ -874,8 +880,8 @@ class InteractiveComponentAttemptTrace(BaseModel):
 
     attempt: int = Field(ge=0)
     generation_stage: Literal["initial", "revision", "skipped"] = "initial"
-    generation_prompt: str = ""
-    revision_prompt: str | None = None
+    generation_prompt: str | PromptReference = ""
+    revision_prompt: str | PromptReference | None = None
     generation_raw_output: str = ""
     generation_parsed_output: dict[str, Any] | None = None
     candidate_artifact: InteractiveComponentArtifact | dict[str, Any] | None = None
@@ -885,7 +891,7 @@ class InteractiveComponentAttemptTrace(BaseModel):
     generation_provider_metadata: dict[str, Any] = Field(default_factory=dict)
     hard_check: InteractiveComponentHardCheckResult | None = None
     sandbox_report: InteractiveComponentSandboxReport | None = None
-    critic_prompt: str | None = None
+    critic_prompt: str | PromptReference | None = None
     critic_raw_output: str = ""
     critic_parsed_output: dict[str, Any] | None = None
     critic_status: Literal["succeeded", "schema_error", "provider_error", "skipped"] = "skipped"

@@ -226,19 +226,23 @@ def test_quiz_count_is_an_optional_hint_and_never_a_positive_minimum() -> None:
         QuizDraft(knowledge_unit_id=unit.artifact_id, question_count=1, questions=[])
 
 
-def test_offline_generation_is_deterministic_and_does_not_call_provider() -> None:
-    class NoCallOffline(OfflineFixtureProvider):
-        def generate_structured(self, request):  # pragma: no cover - failure proves the branch
-            raise AssertionError("mock quiz generation must stay local")
+def test_offline_generation_is_deterministic_through_provider_interface() -> None:
+    class RecordingOffline(OfflineFixtureProvider):
+        calls = 0
+        def generate_structured(self, request):
+            self.calls += 1
+            return super().generate_structured(request)
 
     unit = _unit()
-    artifact = generate_quiz_artifact(NoCallOffline(), task=_task(unit), unit=unit, context_pack=_pack(unit))
+    provider = RecordingOffline()
+    artifact = generate_quiz_artifact(provider, task=_task(unit), unit=unit, context_pack=_pack(unit))
+    assert provider.calls == 1
     assert artifact.status == "accepted"
     assert artifact.artifact_id == "quiz-task-ku-1"
     assert len(artifact.questions) == 2
     assert all(question.source_refs == ["src-1"] for question in artifact.questions)
     assert artifact.questions[0].model_dump() == generate_quiz_artifact(
-        NoCallOffline(), task=_task(unit), unit=unit, context_pack=_pack(unit)
+        RecordingOffline(), task=_task(unit), unit=unit, context_pack=_pack(unit)
     ).questions[0].model_dump()
 
 

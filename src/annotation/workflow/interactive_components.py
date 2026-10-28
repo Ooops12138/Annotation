@@ -260,11 +260,6 @@ def _critic_issues(
     return result
 
 
-def _fixture_metadata(provider: ModelProvider, agent: str) -> dict[str, Any]:
-    capabilities = getattr(provider, "workflow", None)
-    return capabilities.fixture_metadata(agent) if capabilities is not None else {}
-
-
 def build_interactive_component_subgraph(
     provider: ModelProvider,
     *,
@@ -274,7 +269,6 @@ def build_interactive_component_subgraph(
     """Build the A-004 per-component LangGraph subgraph."""
 
     provider_name = str(getattr(provider, "provider", "unknown"))
-    workflow_capabilities = getattr(provider, "workflow", None)
 
     def output_limit(default: int) -> int:
         limit = getattr(getattr(provider, "capabilities", None), "max_output_tokens", None)
@@ -337,29 +331,25 @@ def build_interactive_component_subgraph(
             "critic_feedback": [],
         }
         try:
-            if workflow_capabilities is not None:
-                draft = workflow_capabilities.component_draft(task)
-                metadata = _fixture_metadata(provider, agent)
-                raw_output = draft.model_dump_json()
-            else:
-                response = provider.generate_structured(StructuredGenerationRequest(
-                    prompt=prompt,
-                    schema=InteractiveComponentDraft,
-                    max_output_tokens=output_limit(min(5000, model_max_output_tokens())),
-                    metadata={
-                        "agent": agent,
-                        "prompt_version": prompt_version,
-                        "run_id": state["run_id"],
-                        "task_id": task.task_id,
-                        "knowledge_unit_id": unit.artifact_id,
-                        "context_pack_id": pack.context_pack_id,
-                        "attempt": attempt,
-                    },
-                ))
-                draft = InteractiveComponentDraft.model_validate(response.value.model_dump(mode="python"))
-                metadata = response_metadata(response)
-                metadata["agent"] = agent
-                raw_output = response.raw_text
+            response = provider.generate_structured(StructuredGenerationRequest(
+                prompt=prompt,
+                schema=InteractiveComponentDraft,
+                context={"task": task},
+                max_output_tokens=output_limit(min(5000, model_max_output_tokens())),
+                metadata={
+                    "agent": agent,
+                    "prompt_version": prompt_version,
+                    "run_id": state["run_id"],
+                    "task_id": task.task_id,
+                    "knowledge_unit_id": unit.artifact_id,
+                    "context_pack_id": pack.context_pack_id,
+                    "attempt": attempt,
+                },
+            ))
+            draft = InteractiveComponentDraft.model_validate(response.value.model_dump(mode="python"))
+            metadata = response_metadata(response)
+            metadata["agent"] = agent
+            raw_output = response.raw_text
             result.update({
                 "generation_status": "succeeded",
                 "generation_raw_output": raw_output,
@@ -391,6 +381,7 @@ def build_interactive_component_subgraph(
                 "generation_provider_metadata": {**provider_metadata(provider), "agent": agent},
             })
         except Exception as exc:
+            logging.getLogger(__name__).exception("Unexpected component model failure")
             result.update({
                 "generation_status": "provider_error",
                 "generation_error": str(exc),
@@ -429,6 +420,7 @@ def build_interactive_component_subgraph(
                 attempt=int(state["attempt"]),
             )
         except Exception as exc:
+            logging.getLogger(__name__).exception("Unexpected component sandbox failure")
             report = InteractiveComponentSandboxReport(status="browser_error", error=str(exc))
         return {"sandbox_report": report}
 
@@ -460,30 +452,25 @@ def build_interactive_component_subgraph(
             "critic_feedback": [],
         }
         try:
-            if workflow_capabilities is not None:
-                critique = workflow_capabilities.component_critique()
-                metadata = _fixture_metadata(provider, "critique_interactive_component")
-                raw_output = critique.model_dump_json()
-            else:
-                response = provider.generate_structured(StructuredGenerationRequest(
-                    prompt=prompt,
-                    schema=InteractiveComponentCritiqueDraft,
-                    max_output_tokens=output_limit(1400),
-                    metadata={
-                        "agent": "critique_interactive_component",
-                        "prompt_version": "critique_interactive_component:v3:optional-subject",
-                        "run_id": state["run_id"],
-                        "task_id": task.task_id,
-                        "knowledge_unit_id": task.knowledge_unit_id,
-                        "context_pack_id": task.context_pack_id,
-                        "attempt": state["attempt"],
-                    },
-                ))
-                critique = InteractiveComponentCritiqueDraft.model_validate(response.value.model_dump(mode="python"))
-                metadata = response_metadata(response)
-                metadata["agent"] = "critique_interactive_component"
-                metadata["prompt_version"] = "critique_interactive_component:v3:optional-subject"
-                raw_output = response.raw_text
+            response = provider.generate_structured(StructuredGenerationRequest(
+                prompt=prompt,
+                schema=InteractiveComponentCritiqueDraft,
+                max_output_tokens=output_limit(1400),
+                metadata={
+                    "agent": "critique_interactive_component",
+                    "prompt_version": "critique_interactive_component:v3:optional-subject",
+                    "run_id": state["run_id"],
+                    "task_id": task.task_id,
+                    "knowledge_unit_id": task.knowledge_unit_id,
+                    "context_pack_id": task.context_pack_id,
+                    "attempt": state["attempt"],
+                },
+            ))
+            critique = InteractiveComponentCritiqueDraft.model_validate(response.value.model_dump(mode="python"))
+            metadata = response_metadata(response)
+            metadata["agent"] = "critique_interactive_component"
+            metadata["prompt_version"] = "critique_interactive_component:v3:optional-subject"
+            raw_output = response.raw_text
             result.update({
                 "critic_status": "succeeded",
                 "critic_raw_output": raw_output,
@@ -508,6 +495,7 @@ def build_interactive_component_subgraph(
                 "critic_provider_metadata": {**provider_metadata(provider), "agent": "critique_interactive_component", "prompt_version": "critique_interactive_component:v3:optional-subject"},
             })
         except Exception as exc:
+            logging.getLogger(__name__).exception("Unexpected component model failure")
             result.update({
                 "critic_status": "provider_error",
                 "critic_error": str(exc),

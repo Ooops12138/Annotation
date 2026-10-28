@@ -160,4 +160,13 @@ describe('component library boundary', () => {
       expect(isInteractiveComponentSpec({ ...spec, libraries })).toBe(false)
     }
   })
+  it('rejects navigation markup and direct JavaScript navigation', () => {
+    for (const html of ['<meta http-equiv="refresh" content="0;url=https://example.test">', '<a href="https://example.test">go</a>', '<a HREF = "#section">go</a>', '<base target="_top">', '<button onclick="location=\'about:blank\'">go</button>']) {
+      expect(isInteractiveComponentSpec({ ...spec, html })).toBe(false)
+    }
+    for (const javascript of ['location="about:blank"', 'window.location.assign("about:blank")', 'self["location"]="about:blank"', 'window.open("https://example.test")', 'navigation.navigate("about:blank")']) {
+      expect(isInteractiveComponentSpec({ ...spec, javascript })).toBe(false)
+    }
+    expect(isInteractiveComponentSpec({ ...spec, html: '<svg><use href="#local"></use></svg>' })).toBe(true)
+  })
 })

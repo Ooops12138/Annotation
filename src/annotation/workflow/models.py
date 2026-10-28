@@ -38,7 +38,10 @@ from annotation.domain.artifacts import (
 from annotation.domain.textbook import BlueprintWindow, HierarchicalBlueprintTrace, TextbookStructure
 
 class BlueprintDraftUnit(BaseModel):
-    knowledge_unit_id: str | None = None
+    knowledge_unit_id: str | None = Field(default=None, description=(
+        "Response-local reference key for a new unit, e.g. u1; the program assigns its final ID. "
+        "When revising an existing unit, copy its exact ID from the previous blueprint."
+    ))
     title: str
     kind: Literal["concept", "formula", "theorem", "example", "skill"] = "concept"
     learning_objectives: list[str | LearningObjective] = Field(default_factory=list)

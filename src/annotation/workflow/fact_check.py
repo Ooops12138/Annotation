@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import logging
 import sqlite3
 import uuid
 from collections.abc import Iterable
@@ -53,6 +54,14 @@ FACT_CHECK_ASSESS_PROMPT_VERSION = "assess_fact_check_claims:v3:optional-subject
 FACT_CHECK_RETRIEVAL_PROMPT_VERSION = "fact_check_retrieval:v3:optional-subject"
 REGENERATE_QUIZ_PROMPT_VERSION = "regenerate_quiz_for_fact_check:v5:optional-subject"
 
+_LOGGER = logging.getLogger(__name__)
+
+
+def _failure(stage: str, exc: Exception) -> str:
+    """Keep operational failures distinguishable from content judgements."""
+    _LOGGER.warning("%s: %s", stage, exc, exc_info=True)
+    return f"{stage}:{getattr(exc, 'category', type(exc).__name__)}:{str(exc)[:200]}"
+
 
 def _dump(value: Any) -> Any:
     return value.model_dump(mode="json") if hasattr(value, "model_dump") else value
@@ -65,6 +74,18 @@ def _output_limit(provider: ModelProvider, default: int) -> int:
 
 def _unique(values: Iterable[str]) -> list[str]:
     return list(dict.fromkeys(value.strip() for value in values if value and value.strip()))
+
+
+def _merge_evidence(*groups: list[FactCheckEvidence]) -> list[FactCheckEvidence]:
+    result: list[FactCheckEvidence] = []
+    seen = set()
+    for group in groups:
+        for item in group:
+            key = (item.source_kind, item.source_ref or item.url or item.locator, item.text)
+            if key not in seen:
+                seen.add(key)
+                result.append(item)
+    return result
 
 
 def _dedupe_issues(issues: Iterable[ReviewIssue]) -> list[ReviewIssue]:
@@ -92,7 +113,8 @@ def _evidence(record: EvidenceRecord) -> FactCheckEvidence:
 
 def _search_reason(prefix: str, result: Any) -> str:
     status = getattr(getattr(result, "status", None), "value", getattr(result, "status", "error"))
-    return f"{prefix}:{status}"
+    detail = str(getattr(result, "error_message", "") or "")[:200]
+    return f"{prefix}:{status}" + (f":{detail}" if detail else "")
 
 
 def _issue(
@@ -166,9 +188,6 @@ def _extract_claims(
 ) -> tuple[list[FactCheckClaim], str | None]:
     """Extract facts and viewpoints; quiz distractors are not supplied as targets."""
 
-    if getattr(provider, "workflow", None) is not None:
-        return [], None
-
     targets = _targets(content, quiz)
     by_id = {target["target_id"]: target for target in targets}
     prompt = load_prompt(
@@ -192,9 +211,9 @@ def _extract_claims(
         ))
         draft = FactCheckClaimsDraft.model_validate(_dump(response.value))
     except ProviderError as exc:
-        return [], f"claim_extraction_error:{getattr(exc, 'category', 'provider')}"
-    except Exception:
-        return [], "claim_extraction_error"
+        return [], _failure("claim_extraction_error", exc)
+    except Exception as exc:
+        return [], _failure("claim_extraction_error", exc)
 
     claims: list[FactCheckClaim] = []
     seen: set[tuple[str, str]] = set()
@@ -286,15 +305,17 @@ def _assess_claims(
         valid_ids = {claim.claim_id for claim in claims}
         drafts = {item.claim_id: item for item in output.assessments if item.claim_id in valid_ids}
     except ProviderError as exc:
-        error = f"assessment_error:{getattr(exc, 'category', 'provider')}"
-    except Exception:
-        error = "assessment_error"
+        error = _failure("assessment_error", exc)
+    except Exception as exc:
+        error = _failure("assessment_error", exc)
 
     assessments: list[FactCheckAssessment] = []
     for claim in claims:
         textbook, external, reasons = evidence_by_claim[claim.claim_id]
         item = drafts.get(claim.claim_id)
         if item is None:
+            if error is None:
+                error = _failure("assessment_error", ValueError(f"assessment_missing:{claim.claim_id}"))
             assessments.append(FactCheckAssessment(
                 assessment_id=f"assessment-{claim.claim_id}",
                 claim_id=claim.claim_id,
@@ -309,7 +330,7 @@ def _assess_claims(
 
         verdict = item.verdict
         if verdict == "contradicted" and not (item.sufficient_textbook_evidence and textbook):
-            verdict = "external_conflict" if external else "insufficient"
+            verdict = "insufficient"
         elif verdict == "supported" and not textbook:
             verdict = "insufficient"
         elif verdict == "external_conflict" and not external:
@@ -338,6 +359,12 @@ def _issue_for_assessment(task: ContentTask, claim: FactCheckClaim, assessment: 
     refs = [item.source_ref for item in assessment.textbook_evidence if item.source_ref]
     if assessment.verdict == "supported":
         return None
+    if assessment.verdict == "error":
+        return _issue(
+            task=task, suffix=f"{claim.claim_id}-error", category="uncertainty", severity="warning", layer="fact",
+            message="事实核查未完成：模型或检索调用失败，尚不能判断该陈述。", target_id=claim.target_id,
+            suggested_action="检查核查 trace 中的故障原因后重试。",
+        )
     if assessment.verdict == "stance":
         return _issue(
             task=task, suffix=f"{claim.claim_id}-stance", category="stance", severity="info", layer="stance",
@@ -419,9 +446,9 @@ def _correct_content(
         ))
         draft = ContentDraft.model_validate(_dump(response.value))
     except ProviderError as exc:
-        return None, f"content_correction_error:{getattr(exc, 'category', 'provider')}"
-    except Exception:
-        return None, "content_correction_error"
+        return None, _failure("content_correction_error", exc)
+    except Exception as exc:
+        return None, _failure("content_correction_error", exc)
 
     candidate = _content_artifact_from_draft(
         draft=draft,
@@ -476,9 +503,10 @@ def _correct_quiz(
         ))
         draft = QuizDraft.model_validate(_dump(response.value))
     except ProviderError as exc:
-        return None, f"quiz_correction_error:{getattr(exc, 'category', 'provider')}"
-    except Exception:
-        return None, "quiz_correction_error"
+        stage = "quiz_correction_retryable_error" if exc.retryable or exc.category == "schema" else "quiz_correction_error"
+        return None, _failure(stage, exc)
+    except Exception as exc:
+        return None, _failure("quiz_correction_error", exc)
 
     candidate = QuizArtifact(
         artifact_id=f"quiz-{task.task_id}-fact-{correction_number}",
@@ -512,16 +540,16 @@ def _search_textbook(
     try:
         result = skill.search(claim.query, allowed_source_refs=valid_source_refs, limit=limit)
         return [_evidence(item) for item in result.evidence], _search_reason("textbook", result)
-    except Exception:
-        return [], "textbook:error"
+    except Exception as exc:
+        return [], _failure("textbook:error", exc)
 
 
 def _search_web(skill: WebResourceSearchSkill, claim: FactCheckClaim) -> tuple[list[FactCheckEvidence], str]:
     try:
         result = skill.search(claim.query, limit=3)
         return [_evidence(item) for item in result.evidence], _search_reason("web", result)
-    except Exception:
-        return [], "web:error"
+    except Exception as exc:
+        return [], _failure("web:error", exc)
 
 
 def _context_pack_evidence(context_pack: ContextPack) -> tuple[list[FactCheckEvidence], str]:
@@ -551,9 +579,6 @@ def _fact_check_retrieval_decision(
 ) -> FactCheckRetrievalDecision:
     """Let the fact-check agent choose whether and where to retrieve evidence."""
 
-    workflow_capabilities = getattr(provider, "workflow", None)
-    if workflow_capabilities is not None:
-        return workflow_capabilities.fact_check_retrieval_decision()
     prompt = load_prompt(
         "fact_check_retrieval",
         CLAIM=json.dumps(_dump(claim), ensure_ascii=False, indent=2),
@@ -595,6 +620,15 @@ def _check_unit(
     final_issues: list[ReviewIssue] = []
     corrections = 0
     quiz_removed = False
+    web_queries_used = 0
+
+    def search_web(claim: FactCheckClaim) -> tuple[list[FactCheckEvidence], str]:
+        nonlocal web_queries_used
+        if web_queries_used >= policy.web_query_limit:
+            return [], "web:budget_exhausted"
+        # Failed requests consume the same per-unit budget as successful ones.
+        web_queries_used += 1
+        return _search_web(web_skill, claim)
 
     for round_number in range(policy.max_corrections_per_unit + 1):
         claims, extraction_error = _extract_claims(
@@ -624,25 +658,32 @@ def _check_unit(
                 continue
             textbook, context_reason = _context_pack_evidence(context_pack)
             decision = FactCheckRetrievalDecision(action="use_context")
+            reasons = [context_reason]
             if additional_retrieval_enabled:
                 try:
                     decision = _fact_check_retrieval_decision(
                         provider, claim=claim, context_pack=context_pack,
                         web_enabled=policy.web_enabled,
                     )
-                except Exception:
+                except Exception as exc:
                     # A failed planning call must not discard usable context.
+                    reasons.append(_failure("retrieval_decision_error", exc))
                     decision = FactCheckRetrievalDecision(action="use_context")
-            reasons = [context_reason]
             if decision.action in {"search_textbook", "search_both"}:
-                query_claim = claim.model_copy(update={"query": decision.textbook_queries[0] or claim.query})
-                textbook, reason = _search_textbook(textbook_skill, query_claim, valid_source_refs, policy.textbook_result_limit)
-                reasons.append(reason)
+                for query in _unique(decision.textbook_queries):
+                    query_claim = claim.model_copy(update={"query": query})
+                    extra, reason = _search_textbook(textbook_skill, query_claim, valid_source_refs, policy.textbook_result_limit)
+                    textbook = _merge_evidence(textbook, extra)
+                    reasons.append(reason)
             external: list[FactCheckEvidence] = []
             if decision.action in {"search_web", "search_both"} and policy.web_enabled:
-                query_claim = claim.model_copy(update={"query": decision.web_queries[0] or claim.query})
-                external, reason = _search_web(web_skill, query_claim)
-                reasons.append(reason)
+                for query in _unique(decision.web_queries):
+                    query_claim = claim.model_copy(update={"query": query})
+                    extra, reason = search_web(query_claim)
+                    external = _merge_evidence(external, extra)
+                    reasons.append(reason)
+                    if reason == "web:budget_exhausted":
+                        break
             evidence[claim.claim_id] = (textbook, external, reasons)
             factual_claims.append(claim)
 
@@ -675,13 +716,17 @@ def _check_unit(
                 if extra:
                     follow_up.append(claim)
             if follow_up:
-                reassessed, _ = _assess_claims(
+                reassessed, reassessment_error = _assess_claims(
                     provider, claims=follow_up, evidence_by_claim=evidence,
                     content_artifact_id=current_content.artifact_id,
                     quiz_artifact_id=current_quiz.artifact_id if current_quiz else None,
                     round_number=round_number, run_id=content.run_id,
                 )
-                replacement = {item.claim_id: item for item in reassessed}
+                replacement = {item.claim_id: item for item in reassessed if item.verdict != "error"}
+                if reassessment_error:
+                    for item in assessments:
+                        if item.claim_id in {claim.claim_id for claim in follow_up}:
+                            item.stop_reason = ";".join(filter(None, [item.stop_reason, reassessment_error]))
                 assessments = [replacement.get(item.claim_id, item) for item in assessments]
                 checked = [replacement.get(item.claim_id, item) for item in checked]
 
@@ -690,12 +735,20 @@ def _check_unit(
                 claim for claim in factual_claims
                 if next((item for item in checked if item.claim_id == claim.claim_id), None)
                 and next(item for item in checked if item.claim_id == claim.claim_id).verdict == "insufficient"
-            ][:policy.web_query_limit]
+            ]
+            searched = []
+            for claim in follow_up:
+                textbook, external, reasons = evidence[claim.claim_id]
+                extra, reason = search_web(claim)
+                evidence[claim.claim_id] = (textbook, _merge_evidence(external, extra), [*reasons, reason])
+                if reason == "web:budget_exhausted":
+                    for item in assessments:
+                        if item.claim_id == claim.claim_id:
+                            item.stop_reason = ";".join(filter(None, [item.stop_reason, reason]))
+                else:
+                    searched.append(claim)
+            follow_up = searched
             if follow_up:
-                for claim in follow_up:
-                    textbook, _external, reasons = evidence[claim.claim_id]
-                    external, reason = _search_web(web_skill, claim)
-                    evidence[claim.claim_id] = (textbook, external, [*reasons, reason])
                 reassessed, reassessment_error = _assess_claims(
                     provider,
                     claims=follow_up,
@@ -708,6 +761,10 @@ def _check_unit(
                 if reassessment_error is None:
                     replacement = {item.claim_id: item for item in reassessed}
                     assessments = [replacement.get(item.claim_id, item) for item in assessments]
+                else:
+                    for item in assessments:
+                        if item.claim_id in {claim.claim_id for claim in follow_up}:
+                            item.stop_reason = ";".join(filter(None, [item.stop_reason, reassessment_error]))
 
         content_conflicts = [item for item in assessments if item.route == "revise_content"]
         quiz_conflicts = [item for item in assessments if item.route == "regenerate_quiz"]
@@ -738,7 +795,8 @@ def _check_unit(
             break
 
         if quiz_conflicts and current_quiz is not None:
-            if corrections < policy.max_corrections_per_unit:
+            candidate = None
+            while corrections < policy.max_corrections_per_unit:
                 candidate, correction_error = _correct_quiz(
                     provider, task=task, unit=unit, context_pack=context_pack, quiz=current_quiz,
                     feedback=_feedback(claims, assessments, "regenerate_quiz"), valid_source_refs=valid_source_refs,
@@ -754,15 +812,38 @@ def _check_unit(
                 ))
                 if candidate is not None and candidate.status == "accepted":
                     current_quiz = candidate
-                    continue
-            else:
-                rounds.append(FactCheckRoundTrace(
-                    round=round_number, content_artifact_id=current_content.artifact_id,
-                    quiz_artifact_id=current_quiz.artifact_id, claims=claims, assessments=assessments,
-                    route="exclude_quiz", stop_reason="max_corrections_exhausted",
-                ))
-            current_quiz = None
-            quiz_removed = True
+                    break
+                if not (correction_error or "").startswith("quiz_correction_retryable_error:"):
+                    break
+            if candidate is not None and candidate.status == "accepted":
+                continue
+            conflict_claim_ids = {item.claim_id for item in quiz_conflicts}
+            conflict_targets = {claim.target_id for claim in claims if claim.claim_id in conflict_claim_ids}
+            remaining = [question for question in current_quiz.questions if not any(
+                target == question.question_id or target in {
+                    f"{question.question_id}:{role}" for role in ("quiz_question", "quiz_answer", "quiz_explanation")
+                }
+                for target in conflict_targets
+            )]
+            old_quiz = current_quiz
+            current_quiz = old_quiz.model_copy(deep=True, update={
+                "artifact_id": f"quiz-{task.task_id}-fact-filtered-{corrections}",
+                "version": old_quiz.version + 1, "questions": remaining,
+                "generation_metadata": {**old_quiz.generation_metadata, "revision_of": old_quiz.artifact_id,
+                                        "excluded_question_ids": [q.question_id for q in old_quiz.questions if q not in remaining]},
+            }) if remaining else None
+            quiz_removed = current_quiz is None
+            rounds.append(FactCheckRoundTrace(
+                round=round_number, content_artifact_id=current_content.artifact_id,
+                quiz_artifact_id=old_quiz.artifact_id, claims=claims, assessments=assessments,
+                route="exclude_quiz", stop_reason="quiz_correction_failed_conflicting_questions_excluded",
+                correction_artifact_id=current_quiz.artifact_id if current_quiz else None,
+            ))
+            final_issues.append(_issue(
+                task=task, suffix="quiz-count-after-exclusion", category="coverage", severity="warning", layer="fact",
+                message=f"测验修正未完成，已剔除确认存在矛盾的题目；保留 {len(remaining)} 题，课程架构师指定 {task.quiz_count} 题。",
+                target_id=current_quiz.artifact_id if current_quiz else old_quiz.artifact_id,
+            ))
             final_issues.extend(_assessment_issues(task, claims, assessments))
             break
 
@@ -827,13 +908,14 @@ def run_fact_check_loop(
     if textbook_search_skill is None:
         try:
             textbook_search_skill, connection = _transient_textbook_skill(source_blocks)
-        except Exception:
+        except Exception as exc:
+            detail = _failure("textbook_index_error", exc)
             setup_error = ReviewIssue(
                 issue_id=f"fact-check-{run_id}-textbook-index",
                 category="uncertainty",
                 severity="warning",
                 layer="fact",
-                message="教材检索索引不可用，未执行自动事实纠正。",
+                message=f"教材检索索引不可用，未执行自动事实纠正。{detail}",
             )
 
     units = {unit.artifact_id: unit for unit in blueprint.knowledge_units}
@@ -868,9 +950,9 @@ def run_fact_check_loop(
                 knowledge_unit_id=unit.artifact_id, max_corrections=policy.max_corrections_per_unit,
                 rounds=[FactCheckRoundTrace(
                     round=0, content_artifact_id=content.artifact_id,
-                    quiz_artifact_id=quiz.artifact_id if quiz else None, route="annotate", stop_reason="textbook_index_error",
+                    quiz_artifact_id=quiz.artifact_id if quiz else None, route="annotate", stop_reason=setup_error.message if setup_error else "textbook_index_error",
                 )],
-                final_status="at_risk", corrections_used=0, stop_reason="textbook_index_error",
+                final_status="at_risk", corrections_used=0, stop_reason=setup_error.message if setup_error else "textbook_index_error",
                 final_content_artifact_id=content.artifact_id, final_quiz_artifact_id=quiz.artifact_id if quiz else None,
             )
             return position, quiz_position, content, quiz, trace, [], False

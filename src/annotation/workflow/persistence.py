@@ -7,12 +7,12 @@ indexes these snapshots in SQLite and uses the paths below for later reads.
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 from typing import Any, Mapping
 
 from annotation.config import STORAGE_DIR
+from annotation.prompt_archive import write_artifact_json
 
 
 def _safe_run_id(run_id: str) -> str:
@@ -20,9 +20,7 @@ def _safe_run_id(run_id: str) -> str:
 
 
 def _write_json(path: Path, payload: Mapping[str, Any]) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    return path
+    return write_artifact_json(path, dict(payload))
 
 
 def _immutable_path(path: Path) -> Path:

@@ -9,12 +9,12 @@ from pydantic import BaseModel
 
 from annotation.config import model_max_output_tokens
 from annotation.providers import ProviderError
+from annotation.token_estimation import estimate_tokens
 
 
 def encoded_size(text: str) -> int:
-    # UTF-8 byte count is deliberately conservative for byte-based tokenizers.
-    # This is an estimate, not provider-reported token usage.
-    return len(text.encode("utf-8"))
+    # Retain the existing helper name for callers; units are estimated tokens.
+    return estimate_tokens(text)
 
 
 def positive_setting(name: str, default: int) -> int:

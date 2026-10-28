@@ -25,7 +25,7 @@ from annotation.workflow.budget import PromptBudget, positive_setting
 from annotation.workflow.models import BlueprintDraft
 
 COORDINATION_PROMPT_VERSION = "coordinate_blueprint:v3:optional-subject"
-LOCAL_BLUEPRINT_PROMPT_VERSION = "generate_local_blueprint:v3:optional-subject"
+LOCAL_BLUEPRINT_PROMPT_VERSION = "generate_local_blueprint:v4:program-unit-ids"
 
 class LocalBlueprintDraft(BlueprintDraft):
     model_config = ConfigDict(extra="forbid")
@@ -283,6 +283,8 @@ class BlueprintEngine:
                 raise ValueError("local source_refs must come from this source window")
             if set(draft.representative_unit_ids) - set(ids):
                 raise ValueError("unknown representative unit ID")
+            if any(set(u.related_unit_ids) - set(ids) for u in draft.knowledge_units):
+                raise ValueError("unknown local related unit ID")
             if any(not u.title.strip() or not u.learning_objectives for u in draft.knowledge_units):
                 raise ValueError("units require a title and learning objectives")
             if any(not isinstance(o, str) for u in draft.knowledge_units for o in u.learning_objectives):
@@ -295,7 +297,8 @@ class BlueprintEngine:
             lambda feedback: window_prompt(window, self.blocks, feedback), check)
         self.context_digest = hashlib.sha256((self.context_digest + _json(draft.model_dump())).encode()).hexdigest()
         namespace = window.window_id.removeprefix("window-")
-        ids = {(u.knowledge_unit_id or u.title): f"ku-{namespace}-{hashlib.sha256((u.knowledge_unit_id or u.title).encode()).hexdigest()[:10]}" for u in draft.knowledge_units}
+        ids = {(u.knowledge_unit_id or u.title): f"ku-{namespace}-{index:04d}"
+               for index, u in enumerate(draft.knowledge_units, start=1)}
         titles = {u.title: ids[u.knowledge_unit_id or u.title] for u in draft.knowledge_units}
         unit_ids: list[str] = []
         for item in draft.knowledge_units:

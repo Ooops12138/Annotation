@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import uuid
 from pathlib import Path
@@ -350,17 +349,35 @@ def blueprint_from_draft(
     previous_units = {u.artifact_id: u for u in previous.knowledge_units} if previous else {}
     reserved_ids = set(previous.objective_id_history) if previous else set()
     reserved_ids.update(o.objective_id for u in previous_units.values() for o in u.learning_objectives)
-    for index, unit in enumerate(draft.knowledge_units, start=1):
+    # Allocate every identity before resolving references, including forward edges.
+    id_map: dict[str, str] = {}
+    final_ids: list[str] = []
+    for unit in draft.knowledge_units:
+        key = (unit.knowledge_unit_id or "").strip()
+        if key and key in id_map:
+            raise ProviderError(f"duplicate knowledge unit id: {key}", category="schema")
+        stable_id = key if key in previous_units else f"ku-{uuid.uuid4().hex}"
+        if stable_id in used_unit_ids:
+            raise ProviderError(f"duplicate knowledge unit id: {stable_id}", category="schema")
+        used_unit_ids.add(stable_id)
+        final_ids.append(stable_id)
+        if key:
+            id_map[key] = stable_id
+
+    def resolve_refs(refs: list[str]) -> list[str]:
+        result = []
+        for ref in refs:
+            if ref not in id_map:
+                raise ProviderError(f"unknown knowledge unit reference: {ref}", category="schema")
+            result.append(id_map[ref])
+        return result
+
+    for unit, stable_id in zip(draft.knowledge_units, final_ids, strict=True):
         if workflow_capabilities is not None:
             refs, refs_adapted = workflow_capabilities.blueprint_source_refs(unit, state)
             adapted = adapted or refs_adapted
         else:
             refs = _lossless_refs(unit.source_refs)
-        requested_id = (unit.knowledge_unit_id or "").strip()
-        stable_id = requested_id or f"ku-{hashlib.sha256(unit.title.strip().encode('utf-8')).hexdigest()[:12]}"
-        if stable_id in used_unit_ids:
-            raise ProviderError(f"duplicate knowledge unit id: {stable_id}", category="schema")
-        used_unit_ids.add(stable_id)
         known_ids = set(previous_units[stable_id].objective_ids) if stable_id in previous_units else set()
         for objective in unit.learning_objectives:
             if not isinstance(objective, str) and objective.objective_id not in known_ids:
@@ -377,8 +394,8 @@ def blueprint_from_draft(
             title=unit.title,
             kind=unit.kind,
             learning_objectives=objectives,
-            prerequisites=list(unit.prerequisites),
-            related_unit_ids=list(unit.related_unit_ids),
+            prerequisites=resolve_refs(unit.prerequisites),
+            related_unit_ids=resolve_refs(unit.related_unit_ids),
             structure_node_ids=[state["textbook_structure"].nodes[0].node_id] if state.get("textbook_structure") else [],
         ))
     if not units:

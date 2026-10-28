@@ -65,6 +65,9 @@ class SequenceProvider:
     def generate_structured(
         self, request: StructuredGenerationRequest[BaseModel]
     ) -> StructuredGenerationResponse[BaseModel]:
+        if request.schema.__name__ in {"ContentDraft", "ContentCritiqueDraft", "RetrievalDecision", "FactCheckClaimsDraft", "FactCheckRetrievalDecision", "ContentTaskPlanDraft", "QuizDraft", "QuizRetrievalDecision", "InteractiveComponentDraft", "InteractiveComponentCritiqueDraft"}:
+            from annotation.offline import OfflineFixtureProvider
+            return OfflineFixtureProvider().generate_structured(request)
         self.calls.append(request)
         if not self._responses:
             raise ProviderError("sequence provider exhausted", category="sequence")

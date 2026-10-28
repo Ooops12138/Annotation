@@ -10,6 +10,7 @@ from threading import Lock
 from typing import Any, Mapping
 
 from annotation.config import first_book_pdf
+from annotation.prompt_archive import read_artifact_json
 from annotation.domain.artifacts import LearningDocument, ReviewReport
 from annotation.persistence import DEFAULT_DATABASE_PATH, PersistenceRepository, project_document_status
 from annotation.retrieval import index_source_blocks
@@ -42,7 +43,7 @@ def _register_seed_book(repo: PersistenceRepository) -> dict[str, Any] | None:
 
 
 def _load_json(path: str | Path) -> dict[str, Any]:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+    return read_artifact_json(Path(path))
 
 
 def _document_from_path(path: str | Path) -> dict[str, Any]:

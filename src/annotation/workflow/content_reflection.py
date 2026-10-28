@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import logging
 import uuid
 from typing import Any
 
@@ -36,6 +37,7 @@ from annotation.workflow.content_support import (
 from annotation.workflow.helpers import response_metadata, provider_metadata
 from annotation.workflow.models import ContentDraft, ContentReflectionState, RetrievalDecision
 from annotation.config import model_max_output_tokens
+from annotation.token_estimation import estimate_tokens
 
 CONTENT_RETRIEVAL_PROMPT_VERSION = "content_agent_retrieval:v3:optional-subject"
 CONTENT_CRITIC_PROMPT_VERSION = "critique_content_artifact:v3:optional-subject"
@@ -54,7 +56,6 @@ def build_content_reflection_subgraph(
     """
 
     provider_name = str(getattr(provider, "provider", "unknown"))
-    workflow_capabilities = getattr(provider, "workflow", None)
 
     def response_limit(default: int) -> int:
         limit = getattr(getattr(provider, "capabilities", None), "max_output_tokens", None)
@@ -92,28 +93,26 @@ def build_content_reflection_subgraph(
         if semantic_blocks is None:
             semantic_blocks = build_semantic_blocks(state.get("source_blocks", []))
         for round_number in range(3):
-            if workflow_capabilities is not None:
-                plan = workflow_capabilities.content_retrieval_decision(pack, unit)
-            else:
-                prompt = load_prompt(
-                    "content_agent_retrieval",
-                    KNOWLEDGE_UNIT_CONTEXT=_content_prompt_unit(unit),
-                    CONTENT_TASK=_content_prompt_task(task),
-                    RETRIEVAL_CONTEXT=render_context_pack(pack),
-                    REVISION_CONTEXT=json.dumps({
-                        "candidate": state["candidate_artifact"].model_dump(mode="json") if state.get("candidate_artifact") else None,
-                        "hard_check": state["hard_check"].model_dump(mode="json") if state.get("hard_check") else None,
-                        "critique": state.get("critic_parsed_output"),
-                        "error": state.get("generation_error"), "searches_remaining": 2 - round_number,
-                    }, ensure_ascii=False),
-                )
-                response = provider.generate_structured(StructuredGenerationRequest(
-                    prompt=prompt,
-                    schema=RetrievalDecision,
-                    max_output_tokens=response_limit(900),
-                    metadata={"agent": "content_agent", "phase": "retrieval_decision", "prompt_version": CONTENT_RETRIEVAL_PROMPT_VERSION, "run_id": state["run_id"], "task_id": task.task_id, "attempt": int(state.get("attempt", 0)) + 1, "round": round_number + 1},
-                ))
-                plan = RetrievalDecision.model_validate(response.value.model_dump(mode="python"))
+            prompt = load_prompt(
+                "content_agent_retrieval",
+                KNOWLEDGE_UNIT_CONTEXT=_content_prompt_unit(unit),
+                CONTENT_TASK=_content_prompt_task(task),
+                RETRIEVAL_CONTEXT=render_context_pack(pack),
+                REVISION_CONTEXT=json.dumps({
+                    "candidate": state["candidate_artifact"].model_dump(mode="json") if state.get("candidate_artifact") else None,
+                    "hard_check": state["hard_check"].model_dump(mode="json") if state.get("hard_check") else None,
+                    "critique": state.get("critic_parsed_output"),
+                    "error": state.get("generation_error"), "searches_remaining": 2 - round_number,
+                }, ensure_ascii=False),
+            )
+            response = provider.generate_structured(StructuredGenerationRequest(
+                prompt=prompt,
+                schema=RetrievalDecision,
+                context={"unit": unit, "context_pack": pack, "source_blocks": semantic_blocks},
+                max_output_tokens=response_limit(900),
+                metadata={"agent": "content_agent", "phase": "retrieval_decision", "prompt_version": CONTENT_RETRIEVAL_PROMPT_VERSION, "run_id": state["run_id"], "task_id": task.task_id, "attempt": int(state.get("attempt", 0)) + 1, "round": round_number + 1},
+            ))
+            plan = RetrievalDecision.model_validate(response.value.model_dump(mode="python"))
             if plan.action == "write":
                 break
             if round_number == 2:
@@ -128,24 +127,23 @@ def build_content_reflection_subgraph(
                 task, unit, state["blueprint"],
                 semantic_blocks,
                 search_tool=retrieval_service, retrieval_queries=round_queries,
-                fixture_fallback=bool(workflow_capabilities is not None),
             )
             seen = {e.chunk_ref or e.source_ref for e in pack.excerpts}
             excerpts = list(pack.excerpts)
-            used = sum(len(e.text) for e in excerpts)
+            used = sum(estimate_tokens(e.text) for e in excerpts)
             for e in new_pack.excerpts:
                 key = e.chunk_ref or e.source_ref
-                if key not in seen and used + len(e.text) <= new_pack.input_budget_tokens * 3:
+                if key not in seen and used + estimate_tokens(e.text) <= new_pack.input_budget_tokens:
                     excerpts.append(e)
                     seen.add(key)
-                    used += len(e.text)
+                    used += estimate_tokens(e.text)
             refs = list(dict.fromkeys(r for e in excerpts for r in (e.source_refs or [e.source_ref])))
             pack = new_pack.model_copy(update={"excerpts": excerpts, "source_refs": refs,
                 "selected_source_refs": refs, "retrieved_source_refs": refs,
                 "retrieval_calls": [*pack.retrieval_calls, *[call.model_copy(update={
                     "call_id": f"call-{task.task_id}-{len(pack.retrieval_calls) + i + 1:03d}"})
                     for i, call in enumerate(new_pack.retrieval_calls)]],
-                "estimated_input_tokens": (used + 3) // 4,
+                "estimated_input_tokens": used,
                 "source_snapshot": hashlib.sha256(json.dumps([e.model_dump(mode="json") for e in excerpts], sort_keys=True).encode()).hexdigest() if excerpts else None})
         return {
             **state,
@@ -169,13 +167,14 @@ def build_content_reflection_subgraph(
                     "generation_error_category": exc.category, "generation_retryable": exc.retryable,
                     "context_pack": getattr(exc, "context_pack", state["context_pack"])}
             except Exception as exc:
+                logging.getLogger(__name__).exception("Unexpected content reflection failure")
                 return {"attempt": int(state.get("attempt", 0)) + 1, "generation_status": "provider_error", "generation_error": str(exc), "generation_error_category": "retrieval", "generation_retryable": False}
         attempt = int(state.get("attempt", 0)) + 1
         task = state["task"]
         unit = state["unit"]
         pack = state["context_pack"]
         previous = state.get("candidate_artifact")
-        is_revision = attempt > 1
+        is_revision = previous is not None
         if is_revision:
             prompt = load_prompt(
                 "revise_content_artifact",
@@ -240,32 +239,25 @@ def build_content_reflection_subgraph(
                 result.update(generation_error="教材检索未返回可用证据，未生成正文。",
                               generation_error_category="no_evidence")
                 return result
-            # Offline fixtures intentionally remain local. This keeps
-            # existing Blueprint loop call-count tests stable while recording
-            # a fully shaped generation and Critic attempt in the trace.
-            if workflow_capabilities is not None:
-                draft = workflow_capabilities.content_draft(unit, pack)
-                metadata = workflow_capabilities.fixture_metadata(agent)
-                raw_output = draft.model_dump_json()
-            else:
-                response = provider.generate_structured(StructuredGenerationRequest(
-                    prompt=prompt,
-                    schema=ContentDraft,
-                    # Include the JSON/LaTeX envelope within the configured limit.
-                    max_output_tokens=response_limit(model_max_output_tokens()),
-                    metadata={
-                        "agent": agent,
-                        "run_id": state["run_id"],
-                        "task_id": task.task_id,
-                        "knowledge_unit_id": unit.artifact_id,
-                        "context_pack_id": pack.context_pack_id,
-                        "attempt": attempt,
-                    },
-                ))
-                draft = ContentDraft.model_validate(response.value.model_dump(mode="python"))
-                metadata = response_metadata(response)
-                metadata["agent"] = agent
-                raw_output = response.raw_text
+            response = provider.generate_structured(StructuredGenerationRequest(
+                prompt=prompt,
+                schema=ContentDraft,
+                context={"unit": unit, "context_pack": pack},
+                # Include the JSON/LaTeX envelope within the configured limit.
+                max_output_tokens=response_limit(model_max_output_tokens()),
+                metadata={
+                    "agent": agent,
+                    "run_id": state["run_id"],
+                    "task_id": task.task_id,
+                    "knowledge_unit_id": unit.artifact_id,
+                    "context_pack_id": pack.context_pack_id,
+                    "attempt": attempt,
+                },
+            ))
+            draft = ContentDraft.model_validate(response.value.model_dump(mode="python"))
+            metadata = response_metadata(response)
+            metadata["agent"] = agent
+            raw_output = response.raw_text
             result.update({
                 "generation_status": "succeeded",
                 "generation_raw_output": raw_output,
@@ -296,6 +288,7 @@ def build_content_reflection_subgraph(
                 "generation_provider_metadata": {**provider_metadata(provider), "agent": agent},
             })
         except Exception as exc:
+            logging.getLogger(__name__).exception("Unexpected content reflection failure")
             result.update({
                 "generation_status": "provider_error",
                 "generation_error": str(exc),
@@ -349,30 +342,25 @@ def build_content_reflection_subgraph(
             "critic_feedback": [],
         }
         try:
-            if workflow_capabilities is not None:
-                critique = workflow_capabilities.content_critique()
-                metadata = workflow_capabilities.fixture_metadata("critique_content_artifact")
-                raw_output = critique.model_dump_json()
-            else:
-                response = provider.generate_structured(StructuredGenerationRequest(
-                    prompt=prompt,
-                    schema=ContentCritiqueDraft,
-                    max_output_tokens=response_limit(1200),
-                    metadata={
-                        "agent": "critique_content_artifact",
-                        "prompt_version": CONTENT_CRITIC_PROMPT_VERSION,
-                        "run_id": state["run_id"],
-                        "task_id": task.task_id,
-                        "knowledge_unit_id": unit.artifact_id,
-                        "context_pack_id": state["context_pack"].context_pack_id,
-                        "attempt": state["attempt"],
-                    },
-                ))
-                critique = ContentCritiqueDraft.model_validate(response.value.model_dump(mode="python"))
-                metadata = response_metadata(response)
-                metadata["agent"] = "critique_content_artifact"
-                metadata["prompt_version"] = CONTENT_CRITIC_PROMPT_VERSION
-                raw_output = response.raw_text
+            response = provider.generate_structured(StructuredGenerationRequest(
+                prompt=prompt,
+                schema=ContentCritiqueDraft,
+                max_output_tokens=response_limit(1200),
+                metadata={
+                    "agent": "critique_content_artifact",
+                    "prompt_version": CONTENT_CRITIC_PROMPT_VERSION,
+                    "run_id": state["run_id"],
+                    "task_id": task.task_id,
+                    "knowledge_unit_id": unit.artifact_id,
+                    "context_pack_id": state["context_pack"].context_pack_id,
+                    "attempt": state["attempt"],
+                },
+            ))
+            critique = ContentCritiqueDraft.model_validate(response.value.model_dump(mode="python"))
+            metadata = response_metadata(response)
+            metadata["agent"] = "critique_content_artifact"
+            metadata["prompt_version"] = CONTENT_CRITIC_PROMPT_VERSION
+            raw_output = response.raw_text
             feedback = _critic_review_issues(
                 critique,
                 task=task,
@@ -403,6 +391,7 @@ def build_content_reflection_subgraph(
                 "critic_provider_metadata": {**provider_metadata(provider), "agent": "critique_content_artifact"},
             })
         except Exception as exc:
+            logging.getLogger(__name__).exception("Unexpected content reflection failure")
             result.update({
                 "critic_status": "provider_error",
                 "critic_error": str(exc),

@@ -121,6 +121,31 @@ class OfflineFixtureProvider:
         self, request: StructuredGenerationRequest[BaseModel]
     ) -> StructuredGenerationResponse[BaseModel]:
         payload = self.structured_payload
+        schema_name = request.schema.__name__
+        unit = request.context.get("unit")
+        pack = request.context.get("context_pack")
+        if not payload and schema_name == "ContentDraft" and unit is not None and pack is not None:
+            payload = self.workflow.content_draft(unit, pack).model_dump(mode="python")
+        elif not payload and schema_name == "ContentCritiqueDraft":
+            payload = self.workflow.content_critique().model_dump(mode="python")
+        elif not payload and schema_name == "RetrievalDecision" and unit is not None and pack is not None:
+            payload = self.workflow.content_retrieval_decision(pack, unit).model_dump(mode="python")
+            if not pack.excerpts and request.context.get("source_blocks"):
+                payload["textbook_queries"] = [request.context["source_blocks"][0].text[:80]]
+        elif not payload and schema_name == "FactCheckClaimsDraft":
+            payload = {"claims": []}
+        elif not payload and schema_name == "FactCheckRetrievalDecision":
+            payload = self.workflow.fact_check_retrieval_decision().model_dump(mode="python")
+        elif not payload and schema_name == "QuizRetrievalDecision":
+            payload = self.workflow.quiz_retrieval_decision().model_dump(mode="python")
+        elif not payload and schema_name == "QuizDraft" and unit is not None and pack is not None:
+            payload = self.workflow.quiz_draft(unit, pack, request.context["task"].quiz_count).model_dump(mode="python")
+        elif not payload and schema_name == "ContentTaskPlanDraft" and request.context.get("blueprint") is not None:
+            payload = self.workflow.plan_content_tasks(request.context["blueprint"]).model_dump(mode="python")
+        elif not payload and schema_name == "InteractiveComponentDraft" and request.context.get("task") is not None:
+            payload = self.workflow.component_draft(request.context["task"]).model_dump(mode="python")
+        elif not payload and schema_name == "InteractiveComponentCritiqueDraft":
+            payload = self.workflow.component_critique().model_dump(mode="python")
         if not payload:
             if request.schema.__name__ == "BlueprintDraft":
                 payload = {

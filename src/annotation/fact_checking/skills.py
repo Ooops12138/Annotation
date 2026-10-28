@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import sqlite3
 import httpx
@@ -454,13 +455,14 @@ class ProviderBackedWebResourceSearchSkill:
                 code=SearchErrorCode.PROVIDER_TIMEOUT,
                 message="web resource provider timed out",
             )
-        except Exception:
+        except Exception as exc:
+            logging.getLogger(__name__).exception("Web resource provider failed")
             return _error_result(
                 name=self.name,
                 version=self.version,
                 query=query,
                 code=SearchErrorCode.PROVIDER_ERROR,
-                message="web resource provider failed",
+                message=f"web resource provider failed: {type(exc).__name__}: {str(exc)[:200]}",
             )
         if not isinstance(candidates, Sequence):
             return _error_result(

@@ -14,6 +14,7 @@ const webRoot = path.resolve(scriptDirectory, '..')
 const started = Date.now()
 let server
 let browser
+let watchdog
 let report = {
   status: 'browser_error',
   console_errors: [],
@@ -119,14 +120,37 @@ try {
   const context = await browser.newContext({ viewport: { width: 1080, height: 760 } })
   const page = await context.newPage()
   page.setDefaultTimeout(timeoutMs)
+  watchdog = setTimeout(async () => {
+    report.status = 'timeout'
+    report.error = 'interactive component exceeded the sandbox deadline (including event handlers)'
+    report.duration_ms = Date.now() - started
+    await writeFile(reportPath, JSON.stringify(report, null, 2), 'utf8')
+    await Promise.race([browser.close().catch(() => {}), new Promise((resolve) => setTimeout(resolve, 1000))])
+    process.exit(1)
+  }, timeoutMs)
+  const initializedFrames = new Set()
+  page.on('framenavigated', (frame) => {
+    if (frame === page.mainFrame()) return
+    if (!initializedFrames.has(frame) && frame.url() === 'about:srcdoc') {
+      initializedFrames.add(frame)
+      return
+    }
+    report.console_errors.push(`iframe navigation forbidden: ${stringSnapshot(frame.url())}`)
+  })
   page.on('console', (message) => {
     const text = stringSnapshot(message.text())
     if (message.type() === 'error' && !text.includes('ERR_BLOCKED_BY_CLIENT')) report.console_errors.push(text)
   })
   page.on('pageerror', (error) => report.console_errors.push(stringSnapshot(error.message)))
   await context.route('**/*', async (route) => {
-    const url = route.request().url()
-    if (url.startsWith(origin)) return route.continue()
+    const request = route.request()
+    const url = request.url()
+    if (request.isNavigationRequest() && request.frame() !== page.mainFrame()) {
+      report.console_errors.push(`iframe navigation forbidden: ${stringSnapshot(url)}`)
+      report.blocked_requests.push(url)
+      return route.abort('blockedbyclient')
+    }
+    if (new URL(url).origin === origin) return route.continue()
     report.blocked_requests.push(url)
     return route.abort('blockedbyclient')
   })
@@ -188,6 +212,36 @@ try {
     }
     report.action_results.push({ action: action.action, control_id: action.control_id, passed, detail })
   }
+  // Exercise both ends of every declared control, including states the model
+  // omitted from its happy-path assertions. The watchdog also bounds evaluate().
+  for (const declared of spec.controls || []) {
+    const control = generatedFrame.locator(`[data-component-control="${declared.control_id}"]`)
+    const values = declared.kind === 'toggle'
+      ? [false, true, declared.default_value]
+      : [declared.minimum, declared.maximum, (declared.minimum + declared.maximum) / 2, declared.default_value]
+    for (const value of values) {
+      let passed = false
+      let detail = ''
+      try {
+        if (declared.kind === 'toggle') await control.setChecked(Boolean(value))
+        else await control.evaluate((input, nextValue) => {
+          input.value = String(nextValue)
+          input.dispatchEvent(new Event('input', { bubbles: true }))
+          input.dispatchEvent(new Event('change', { bubbles: true }))
+        }, value)
+        await generatedFramePage.evaluate(() => true)
+        passed = true
+      } catch (error) {
+        detail = error instanceof Error ? error.message : String(error)
+      }
+      report.action_results.push({ action: `probe_${declared.kind}`, control_id: declared.control_id, passed, detail })
+    }
+  }
+  await page.waitForTimeout(200)
+  // Chromium can replace srcdoc with about:blank without a Playwright frame
+  // navigation event. Inspect the current document as well as listening above.
+  const documentUrl = await generatedFramePage.evaluate(() => document.URL)
+  if (documentUrl !== 'about:srcdoc') report.console_errors.push(`iframe navigation forbidden: ${stringSnapshot(documentUrl)}`)
   report.dom_snapshot = stringSnapshot(await body.evaluate((element) => element.outerHTML))
   try {
     report.accessibility_snapshot = stringSnapshot(await body.ariaSnapshot())
@@ -216,6 +270,7 @@ try {
   else if (/render|invalid interactive component/i.test(message)) report.status = 'render_error'
   else report.status = 'browser_error'
 } finally {
+  if (watchdog) clearTimeout(watchdog)
   report.duration_ms = Date.now() - started
   try {
     if (browser) await browser.close()
