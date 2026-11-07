@@ -23,3 +23,4 @@ web/docs/.vitepress/cache/
 output/playwright/
 .DS_Store
 AGENTS.md
+devtools
