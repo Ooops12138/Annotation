@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import hashlib
 import logging
-from annotation.token_estimation import estimate_tokens
+from annotation.token_counting import count_tokens
 from collections.abc import Iterable, Mapping
 from typing import Any, Literal
 
@@ -721,7 +721,7 @@ def retrieve_quiz_context(
     seen = {item.chunk_ref or item.source_ref for item in excerpts}
     calls = list(context_pack.retrieval_calls)
     refs = list(context_pack.source_refs)
-    used_tokens = sum(estimate_tokens(excerpt.text) for excerpt in excerpts)
+    used_tokens = sum(count_tokens(excerpt.text) for excerpt in excerpts)
     blocks = {block.source_ref: block for block in semantic_blocks}
     for query in decision.textbook_queries:
         result = retrieval_service.search(query.strip(), source="textbook", mode=decision.textbook_mode, limit=5)
@@ -742,9 +742,9 @@ def retrieve_quiz_context(
             )
             returned.append(excerpt)
             key = excerpt.chunk_ref or excerpt.source_ref
-            if key not in seen and excerpt.text.strip() and used_tokens + estimate_tokens(excerpt.text) <= context_pack.input_budget_tokens:
+            if key not in seen and excerpt.text.strip() and used_tokens + count_tokens(excerpt.text) <= context_pack.input_budget_tokens:
                 excerpts.append(excerpt)
-                used_tokens += estimate_tokens(excerpt.text)
+                used_tokens += count_tokens(excerpt.text)
                 seen.add(key)
                 refs.extend(source_ref for source_ref in raw_refs if source_ref not in refs)
         calls.append(RetrievalCall(
@@ -762,7 +762,7 @@ def retrieve_quiz_context(
         "selected_source_refs": list(dict.fromkeys([*context_pack.selected_source_refs, *refs])),
         "retrieved_source_refs": list(dict.fromkeys([*context_pack.retrieved_source_refs, *refs])),
         "retrieval_calls": calls,
-        "estimated_input_tokens": sum(estimate_tokens(excerpt.text) for excerpt in excerpts),
+        "estimated_input_tokens": sum(count_tokens(excerpt.text) for excerpt in excerpts),
         "source_snapshot": hashlib.sha256("|".join(
             f"{excerpt.chunk_ref or excerpt.source_ref}:{excerpt.text}:{','.join(excerpt.source_refs)}"
             for excerpt in excerpts

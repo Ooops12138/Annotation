@@ -8,7 +8,7 @@ from annotation.providers import ProviderError
 from annotation.workflow.fact_check import _assess_claims, _issue_for_assessment, run_fact_check_loop
 from annotation.workflow.content_reflection import build_content_reflection_subgraph
 from annotation.prompt_archive import archive_prompts, write_artifact_json, read_artifact_json, restore_prompts
-from annotation.token_estimation import estimate_tokens
+from annotation.token_counting import count_tokens
 from annotation.workflow.budget import encoded_size
 from test_fact_check_loop import _fixture, ScriptedFactCheckProvider
 from test_content_reflection_subgraph import _state, _draft, ScriptedContentProvider
@@ -122,11 +122,10 @@ def test_schema_retry_without_candidate_uses_generation_prompt():
 
 
 @pytest.mark.parametrize("text", ["中文教材" * 100, "English textbook " * 100, r"中文 $\\frac{x}{y}$" * 100])
-def test_budget_and_context_use_same_mixed_language_estimate(text, monkeypatch):
-    monkeypatch.setenv("TOKEN_ESTIMATE_SCALE", "1.7")
-    assert encoded_size(text) == estimate_tokens(text)
-    assert estimate_tokens("中文" * 100) == 340
-    assert estimate_tokens("英文" * 100) < len(("英文" * 100).encode("utf-8"))
+def test_budget_and_context_use_same_token_counter(text):
+    assert encoded_size(text) == count_tokens(text)
+    assert count_tokens("中文" * 100) > 0
+    assert count_tokens("英文" * 100) < len(("英文" * 100).encode("utf-8"))
 
 
 def test_prompt_archive_deduplicates_and_roundtrips_without_mutating_runtime(tmp_path):

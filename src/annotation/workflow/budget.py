@@ -1,4 +1,4 @@
-"""Conservative, provider-neutral request budgets (no tokenizer dependency)."""
+"""Provider-neutral request budgets using the shared token-counting boundary."""
 
 import json
 import os
@@ -9,12 +9,12 @@ from pydantic import BaseModel
 
 from annotation.config import model_max_output_tokens
 from annotation.providers import ProviderError
-from annotation.token_estimation import estimate_tokens
+from annotation.token_counting import count_tokens
 
 
 def encoded_size(text: str) -> int:
-    # Retain the existing helper name for callers; units are estimated tokens.
-    return estimate_tokens(text)
+    # Retain the existing helper name for callers; units are tokenizer counts (reference estimates for unknown models).
+    return count_tokens(text)
 
 
 def positive_setting(name: str, default: int) -> int:

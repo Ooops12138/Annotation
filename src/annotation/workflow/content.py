@@ -14,7 +14,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from annotation.token_estimation import estimate_tokens
+from annotation.token_counting import count_tokens
 from annotation.prompt_archive import write_artifact_json
 from annotation.artifact_storage import artifact_directory
 from annotation.domain.artifacts import (
@@ -212,7 +212,7 @@ def build_context_pack(
         text = _compact(block.text)
         if not text:
             continue
-        tokens = estimate_tokens(text)
+        tokens = count_tokens(text)
         if used_tokens + tokens > input_budget:
             omitted_refs.extend(block.source_refs or [block.source_ref])
             continue

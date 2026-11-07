@@ -47,7 +47,7 @@ Annotation 是一个教材驱动的 AI 学习文档生成项目。
 前置关系和显式合并；不增加独立知识清单。协调 Agent 可以搜索/读取知识单元及按偏移回读原文。
 所有未显式合并的单元由程序完整保留，失败不会静默当成跳过。课程架构师也按预算分批生成任务。
 
-`BLUEPRINT_INPUT_BUDGET_TOKENS` 默认 16000，输入与检索包统一按中英文混合字符估算 token，并预留 schema/输出空间；
+`BLUEPRINT_INPUT_BUDGET_TOKENS` 默认 16000，输入与检索包统一通过 count_tokens(text) 使用固定参考分词器计数，并预留 schema/输出空间；
 `BLUEPRINT_MAX_ATTEMPTS` 控制每次局部生成/协调的重试，`BLUEPRINT_COORDINATION_MAX_STEPS` 限制工具回路，
 `BLUEPRINT_MAX_CALLS` 默认 1000，限制本次分层蓝图的实际模型请求数（provider 内部传输重试另计）。
 成功局部结果默认缓存于 `storage/cache/blueprint`，按内容、提示、模型/配置及预算隔离；
@@ -234,7 +234,7 @@ SQLite artifact 索引中。题目通过结构、答案和来源检查后才进�
 
 `books/`、`storage/` 和模型调用日志只用于本地开发，不提交教材、密钥或运行产物。
 
-模型输入估算默认使用 `TOKEN_ESTIMATE_SCALE=1.7`，是安全预算估算而非精确 tokenizer。可运行 `.venv/Scripts/python.exe scripts/calibrate_token_estimation.py storage/model-calls.jsonl`，按 provider/model 查看实际 `prompt_tokens` 相对基础估算的分位数，再显式调整该比例；脚本不输出教材提示词，也不自动改配置。
+模型输入预算统一通过 `annotation.token_counting.count_tokens` 计数，不再配置人工估算系数。所有模型统一使用固定的 `o200k_base` 参考分词器做粗略预算限制，不读取模型配置，不等同于服务端精确计数；请求保留安全余量，实际消耗以 API `usage` 为准。首次加载分词编码可能下载并缓存资源。可运行 `.venv/Scripts/python.exe scripts/calibrate_token_estimation.py storage/model-calls.jsonl` 对比参考计数与实际 `prompt_tokens`；脚本仅审计，不生成系数或修改配置。
 
 新的审计 artifact 将 512 字符以上的提示词替换为 `PromptReference`：`storage=gzip-sha256-v1`、`sha256`、相对 `path`、`characters`。原文按哈希去重压缩在同目录 `prompts/`；复制 artifact 时需一并复制该目录。`annotation.prompt_archive.read_artifact_json(Path(...))` 可校验并还原提示词，API 读取保持完整提示词，旧的内联字符串仍可读取；运行状态/检查点不受这项存储优化影响。
 # Fact-check retrieval budget

@@ -37,7 +37,7 @@ from annotation.workflow.content_support import (
 from annotation.workflow.helpers import response_metadata, provider_metadata
 from annotation.workflow.models import ContentDraft, ContentReflectionState, RetrievalDecision
 from annotation.config import model_max_output_tokens
-from annotation.token_estimation import estimate_tokens
+from annotation.token_counting import count_tokens
 
 CONTENT_RETRIEVAL_PROMPT_VERSION = "content_agent_retrieval:v4:mode-selection"
 CONTENT_CRITIC_PROMPT_VERSION = "critique_content_artifact:v3:optional-subject"
@@ -131,13 +131,13 @@ def build_content_reflection_subgraph(
             )
             seen = {e.chunk_ref or e.source_ref for e in pack.excerpts}
             excerpts = list(pack.excerpts)
-            used = sum(estimate_tokens(e.text) for e in excerpts)
+            used = sum(count_tokens(e.text) for e in excerpts)
             for e in new_pack.excerpts:
                 key = e.chunk_ref or e.source_ref
-                if key not in seen and used + estimate_tokens(e.text) <= new_pack.input_budget_tokens:
+                if key not in seen and used + count_tokens(e.text) <= new_pack.input_budget_tokens:
                     excerpts.append(e)
                     seen.add(key)
-                    used += estimate_tokens(e.text)
+                    used += count_tokens(e.text)
             refs = list(dict.fromkeys(r for e in excerpts for r in (e.source_refs or [e.source_ref])))
             pack = new_pack.model_copy(update={"excerpts": excerpts, "source_refs": refs,
                 "selected_source_refs": refs, "retrieved_source_refs": refs,

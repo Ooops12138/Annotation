@@ -1,4 +1,4 @@
-"""Summarize actual usage by provider/model without printing textbook prompts."""
+"""Audit actual usage against tokenizer counts without printing textbook prompts."""
 
 import argparse
 import json
@@ -9,7 +9,7 @@ from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from annotation.token_estimation import base_token_estimate
+from annotation.token_counting import count_tokens
 
 
 def calibrate(path: Path) -> list[dict]:
@@ -20,7 +20,7 @@ def calibrate(path: Path) -> list[dict]:
             actual = record.get("usage", {}).get("prompt_tokens", 0)
             inputs = record.get("input", {})
             text = "\n".join(str(inputs.get(key) or "") for key in ("system_prompt", "prompt"))
-            base = base_token_estimate(text)
+            base = count_tokens(text)
             if actual > 0 and base > 200:
                 groups[(record["provider"], record["model"])].append(actual / base)
         except (ValueError, KeyError, TypeError):
@@ -31,7 +31,7 @@ def calibrate(path: Path) -> list[dict]:
         p95 = values[math.ceil(len(values) * .95) - 1]
         results.append(dict(provider=provider, model=model, samples=len(values),
                             median_ratio=statistics.median(values), p95_ratio=p95,
-                            max_ratio=max(values), suggested_scale=math.ceil(max(values) * 1.05 * 100) / 100))
+                            max_ratio=max(values)))
     return results
 
 

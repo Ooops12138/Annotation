@@ -1,5 +1,5 @@
 from annotation.domain.artifacts import ContentTask, KnowledgeUnit, LearningBlueprint, SourceBlock
-from annotation.workflow.content import build_context_pack, estimate_tokens, render_context_pack
+from annotation.workflow.content import build_context_pack, count_tokens, render_context_pack
 
 
 def _block(ref: str, index: int, text: str) -> SourceBlock:
@@ -96,7 +96,7 @@ def test_context_pack_does_not_treat_task_sources_as_required() -> None:
     )
     pack = build_context_pack(task, unit, blueprint, blocks, context_window=900, reserved_output_tokens=850, safety_margin_tokens=0)
     assert pack.input_budget_tokens == 50
-    assert estimate_tokens("abcd") == 2
+    assert count_tokens("abcd") > 0
     assert pack.source_refs == []
     assert set(pack.omitted_source_refs).issubset({"src-1", "src-2"})
 
