@@ -100,13 +100,10 @@ def test_large_pending_checkpoint_writes_are_compressed_and_legacy_payload_reads
     assert serializer.loads_typed((kind, data)) == value
 
 
-def test_legacy_checkpoints_remain_locatable_after_new_summary_is_created():
+def test_checkpoints_always_use_the_current_run_directory():
     run_id = _id()
-    legacy = STORAGE_DIR / "artifacts" / "execution" / run_id
-    legacy.mkdir(parents=True)
-    (legacy / "checkpoints.sqlite3").write_bytes(b"legacy database")
-    run_directory(run_id, title="legacy resume")
-    assert checkpoint_directory(run_id) == legacy
+    directory = run_directory(run_id, title="current")
+    assert checkpoint_directory(run_id) == directory / "execution"
 
 
 def test_shared_pdf_source_reuses_parser_and_separates_configuration(tmp_path, monkeypatch):
@@ -190,12 +187,13 @@ def test_archival_refuses_live_execution_and_library_references(tmp_path):
         repo.close()
 
 
-def test_inventory_covers_both_layouts_and_preserves_unknown_classification(tmp_path):
-    (tmp_path / "content" / "test-blocked").mkdir(parents=True)
-    (tmp_path / "content" / "test-blocked" / "content.json").write_bytes(b"123")
-    (tmp_path / "execution" / "test-blocked").mkdir(parents=True)
-    (tmp_path / "execution" / "test-blocked" / "receipt.json").write_bytes(b"12345")
+def test_inventory_reports_current_run_layout(tmp_path):
+    run = tmp_path / "runs" / "20261107-120000_demo__run-1-hash"
+    (run / "results").mkdir(parents=True)
+    (run / "results" / "content.json").write_bytes(b"123")
+    (run / "execution").mkdir(parents=True)
+    (run / "execution" / "receipt.json").write_bytes(b"12345")
     result = inventory(tmp_path)
     assert result["files"] == 2 and result["bytes"] == 8
-    assert result["runs"][0]["status"] == "unknown"
+    assert result["runs"][0]["directory"] == "20261107-120000_demo__run-1-hash"
     assert result["runs"][0]["bytes"] == 8

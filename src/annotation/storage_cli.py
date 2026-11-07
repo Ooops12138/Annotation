@@ -45,8 +45,6 @@ def inventory(root: Path | None = None) -> dict[str, Any]:
         group["bytes"] += size
         if parts[0] == "runs" and len(parts) >= 3:
             key = parts[1]
-        elif len(parts) >= 3 and parts[0] not in {"sources", ".run-index"}:
-            key = "legacy/" + parts[1]
         else:
             continue
         item = runs.setdefault(key, {"directory": key, "files": 0, "bytes": 0, "status": "unknown"})
@@ -67,7 +65,9 @@ def _execution_directory(run_id: str) -> Path:
     if not run_id or Path(run_id).name != run_id or run_id in {".", ".."}:
         raise ValueError("run_id must be a single path component")
     directory = find_run_directory(run_id)
-    target = directory / "execution" if directory else STORAGE_DIR / "artifacts" / "execution" / run_id
+    if directory is None:
+        raise ValueError("run is not in the current artifact layout")
+    target = directory / "execution"
     resolved = target.resolve()
     if not resolved.is_relative_to((STORAGE_DIR / "artifacts").resolve()) or target.is_symlink():
         raise ValueError("execution directory escapes artifact storage")
@@ -132,7 +132,7 @@ def archive_execution(run_id: str, *, apply: bool = False, database: Path | None
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    stats = sub.add_parser("stats", help="read-only inventory of new and legacy artifacts")
+    stats = sub.add_parser("stats", help="read-only inventory of current artifacts")
     stats.add_argument("--json", action="store_true", help="include all per-run details")
     archive = sub.add_parser("archive-execution", help="preview lossless archival of terminal execution records")
     archive.add_argument("--run-id", required=True)
@@ -149,7 +149,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{result['files']:,} files / {result['bytes'] / 1024**3:.2f} GiB — {result['root']}")
                 for name, item in sorted(result["groups"].items(), key=lambda pair: pair[1]["bytes"], reverse=True):
                     print(f"{name:24} {item['files']:8,} files {item['bytes'] / 1024**2:10.2f} MiB")
-                print("Largest runs (legacy/ combines matching IDs across old stage directories):")
+                print("Largest runs:")
                 for item in result["runs"][:20]:
                     print(f"{item['bytes'] / 1024**2:10.2f} MiB {item['status']:12} {item['directory']}")
         elif args.command == "read":

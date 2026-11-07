@@ -120,7 +120,7 @@ def build_context_pack(
     ``retrieval_queries`` represents the content agent's search decisions. A
     caller may supply multiple queries (and therefore multiple tool calls);
     the resulting calls and selected excerpts are retained in the ContextPack.
-    The legacy block-based path remains available through the in-memory tool.
+    The in-memory tool is the deterministic offline adapter.
     """
 
     effective_window = context_window or 12000
@@ -196,7 +196,7 @@ def build_context_pack(
                 neighbor_page, neighbor_position = chunk_positions.get(neighbor.source_ref, (None, None))
                 adjacent = (position is not None and neighbor_position is not None
                             and neighbor_page == page and abs(neighbor_position - position) <= 1)
-                # Preserve legacy raw-block neighbor behavior for callers not using semantic chunks.
+                # Raw blocks without semantic positions use page/block adjacency.
                 if position is None:
                     adjacent = neighbor.page_number == block.page_number and abs(neighbor.block_index - block.block_index) <= 1
                 if adjacent and neighbor.source_ref not in primary_keys:

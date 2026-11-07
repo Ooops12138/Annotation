@@ -8,8 +8,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BOOKS_DIR = PROJECT_ROOT / "books"
 STORAGE_DIR = Path(os.environ.get("ANNOTATION_STORAGE_DIR", PROJECT_ROOT / "storage")).expanduser().resolve()
 DATABASE_PATH = STORAGE_DIR / "annotation.sqlite3"
-# Kept as a migration/debug source for installations created before the
-# unified library database. New indexing uses ``DATABASE_PATH``.
+# The source index is part of the unified library database.
 SOURCE_INDEX_PATH = DATABASE_PATH
 
 # The first revision loop is deliberately bounded.  Tests may inject a

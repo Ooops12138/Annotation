@@ -116,10 +116,10 @@ uv sync --extra dev --extra rag --extra rag-local-embeddings --link-mode copy
 `results/` 保存结果，`traces/` 保存逐任务诊断，`execution/` 保存检查点和调用回执。
 大 prompt、原始响应和上下文使用运行内共享的压缩对象；统一 reader 会校验引用并无损还原。
 同一教材及解析配置复用 `artifacts/sources/` 中的来源；更换本地识别器配置时递增
-`ANNOTATION_SOURCE_CONFIG_VERSION`。历史目录和已登记路径继续可读，不自动迁移。
+`ANNOTATION_SOURCE_CONFIG_VERSION`。当前版本只使用新的运行目录；过早的 demo/test 产物已清理，旧路径不再作为运行时输入。
 
 ```powershell
-# 只读统计，包含旧目录；--json 输出全部运行的时间、状态和占用。
+# 只读统计当前运行目录；--json 输出全部运行的时间、状态和占用。
 uv run python -m annotation.storage_cli stats
 uv run python -m annotation.storage_cli stats --json
 # 展开一个产物的完整诊断（也支持旧 prompt 引用）。

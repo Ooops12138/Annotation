@@ -347,8 +347,7 @@ def persist_workflow_result(
         book = enriched
 
     # Keep the searchable source projection in the same SQLite file as the
-    # library records.  The legacy standalone index remains readable for
-    # existing debug commands and is migrated on first repository access.
+    # library records.
     blocks = list(state.get("source_blocks", []))
     if blocks and repo.database_path and repo.database_path != ":memory:":
         index_source_blocks(repo.database_path, blocks)

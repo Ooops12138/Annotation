@@ -13,8 +13,7 @@ from typing import Any, Iterator
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.checkpoint.sqlite import SqliteSaver
 
-from annotation.config import STORAGE_DIR
-from annotation.artifact_storage import run_directory, find_run_directory
+from annotation.artifact_storage import run_directory
 
 
 class ChannelPayloadSerializer(JsonPlusSerializer):
@@ -110,13 +109,7 @@ def checkpoint_directory(run_id: str, root: Path | None = None) -> Path:
         raise ValueError("run_id must be a single path component")
     if root is not None:
         return root / run_id
-    existing = find_run_directory(run_id)
-    legacy = STORAGE_DIR / "artifacts" / "execution" / run_id
-    if (legacy / "checkpoints.sqlite3").is_file() and (
-        existing is None or not (existing / "execution" / "checkpoints.sqlite3").is_file()
-    ):
-        return legacy
-    return (existing or run_directory(run_id)) / "execution"
+    return run_directory(run_id) / "execution"
 
 
 @contextmanager
