@@ -5,6 +5,8 @@ import threading
 import uuid
 from pathlib import Path
 from annotation.config import STORAGE_DIR
+from annotation.workflow.checkpoints import checkpoint_directory
+from annotation.prompt_archive import write_artifact_json
 
 class RunStopped(BaseException):
     """Control flow: must bypass broad model/tool exception handlers."""
@@ -15,7 +17,7 @@ class RunControl:
         self._stop = threading.Event()
         self.committing = False
         self.run_id = run_id
-        self.root = root or STORAGE_DIR / "artifacts" / "execution"
+        self.root = root
         self.sequence = 0
 
     @property
@@ -40,12 +42,13 @@ class RunControl:
         from annotation.workflow.persistence import _model_dump
         with self.lock:
             self.sequence += 1
-            directory = self.root / self.run_id
+            directory = checkpoint_directory(self.run_id, self.root)
             directory.mkdir(parents=True, exist_ok=True)
-            path = directory / f"{self.sequence:06d}-{uuid.uuid4().hex}.json"
+            safe_kind = "".join(c for c in str(kind) if c.isalnum() or c in "-_") or "call"
+            path = directory / f"{self.sequence:06d}-{safe_kind}-{uuid.uuid4().hex[:8]}.json"
             temporary = path.with_suffix(f".{uuid.uuid4().hex}.tmp")
             payload = {"run_id": self.run_id, "kind": kind, "value": _model_dump(value)}
-            temporary.write_text(json.dumps(payload, ensure_ascii=False, default=str), encoding="utf-8")
+            write_artifact_json(temporary, payload)
             temporary.replace(path)
 
 class ControlledPort:

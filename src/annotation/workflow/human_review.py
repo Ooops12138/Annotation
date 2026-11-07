@@ -17,6 +17,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from annotation.config import STORAGE_DIR
+from annotation.artifact_storage import artifact_directory
 from annotation.domain.artifacts import ReviewIssue, ReviewReport
 
 
@@ -86,7 +87,7 @@ def write_human_review_record(
 ) -> Path:
     """Persist an immutable local review record and return its path."""
 
-    directory = Path(root or (STORAGE_DIR / "artifacts" / "human-review")) / _safe_id(record.run_id)
+    directory = artifact_directory(record.run_id, "human-review", root)
     path = _immutable_path(directory / f"{_safe_id(record.review_id)}.json")
     record.artifact_path = str(path.resolve())
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -219,7 +220,7 @@ def merge_human_review(
 
 
 def _review_report_path(report: ReviewReport, *, root: str | Path | None = None) -> Path:
-    directory = Path(root or (STORAGE_DIR / "artifacts" / "review")) / _safe_id(report.run_id)
+    directory = artifact_directory(report.run_id, "review", root)
     return _immutable_path(directory / f"review-v{report.version}.json")
 
 

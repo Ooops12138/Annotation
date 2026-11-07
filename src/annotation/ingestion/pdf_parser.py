@@ -7,6 +7,8 @@ import json
 import os
 import re
 import time
+import threading
+from functools import wraps
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -18,6 +20,47 @@ from annotation.domain.artifacts import FormulaCandidate, OCRCandidate, SourceBl
 from annotation.ingestion.hybrid import OCRBackend, resolve_formula_backend, resolve_text_backend
 
 PARSER_VERSION = "annotation-hybrid-pymupdf4llm-v1"
+_source_lock = threading.RLock()
+
+
+def _reuse_source(parse):
+    @wraps(parse)
+    def cached(path, *, run_id="run-ingest-local", created_by="parser", ocr_backend=None,
+               formula_backend=None, artifact_dir=None):
+        if artifact_dir is not None:
+            return parse(path, run_id=run_id, created_by=created_by, ocr_backend=ocr_backend,
+                         formula_backend=formula_backend, artifact_dir=artifact_dir)
+        pdf = Path(path)
+        identity = {"pdf": _sha256(pdf.read_bytes()), "parser": PARSER_VERSION,
+                    "extractor": pymupdf4llm.__version__, "pymupdf": fitz.VersionBind,
+                    "ocr": ocr_backend or os.getenv("ANNOTATION_OCR_BACKEND", "none"),
+                    "formula": formula_backend or os.getenv("ANNOTATION_FORMULA_BACKEND", "none"),
+                    "config": os.getenv("ANNOTATION_SOURCE_CONFIG_VERSION", "1")}
+        fingerprint = _sha256(json.dumps(identity, sort_keys=True))
+        directory = STORAGE_DIR / "artifacts" / "sources" / fingerprint
+        with _source_lock:
+            source = directory / "source.json"
+            if source.is_file():
+                payload = json.loads(source.read_text(encoding="utf-8"))
+                document = SourceDocument.model_validate(payload["document"])
+                blocks = [SourceBlock.model_validate(block) for block in payload["blocks"]]
+                if document.run_metadata.get("source_fingerprint") != fingerprint:
+                    raise ValueError("source fingerprint mismatch")
+                document.run_id, document.created_by = run_id, created_by
+                document.title, document.locator = pdf.stem, str(pdf.resolve())
+                for block in blocks:
+                    block.run_id, block.created_by = run_id, created_by
+                return document, blocks
+            document, blocks = parse(pdf, run_id=run_id, created_by=created_by, ocr_backend=ocr_backend,
+                                     formula_backend=formula_backend, artifact_dir=directory)
+            document.run_metadata["source_fingerprint"] = fingerprint
+            # The first write is private under the source lock; add the cache identity
+            # before any caller receives this immutable shared source.
+            from annotation.artifact_storage import atomic_json
+            atomic_json(source, {"schema_version": "source-artifact-v1", "document": document.model_dump(mode="json"),
+                                 "blocks": [block.model_dump(mode="json") for block in blocks]})
+            return document, blocks
+    return cached
 
 
 def _sha256(value: bytes | str) -> str:
@@ -130,6 +173,7 @@ def _write_artifacts(document: SourceDocument, blocks: list[SourceBlock], artifa
     markdown_path.write_text(_markdown(document, blocks), encoding="utf-8")
 
 
+@_reuse_source
 def parse_pdf(path: str | Path, *, run_id: str = "run-ingest-local", created_by: str = "parser", ocr_backend: str | None = None, formula_backend: str | None = None, artifact_dir: str | Path | None = None) -> tuple[SourceDocument, list[SourceBlock]]:
     pdf_path = Path(path)
     if not pdf_path.is_file():

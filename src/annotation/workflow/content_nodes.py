@@ -408,7 +408,6 @@ def content_reflection_loops(
             content_task_planning_metadata=state.get("content_task_planning_metadata"),
             content_loop_traces=traces,
             content_loop_summary=summary,
-            root=STORAGE_DIR / "artifacts" / "content",
         )
         result["content_artifact_path"] = str(artifact_path.resolve())
         result["content_loop_trace_path"] = str(artifact_path.resolve())
@@ -557,7 +556,6 @@ def generate_quiz_artifacts(
         content_task_planning_metadata=state.get("content_task_planning_metadata"),
         content_loop_traces=state.get("content_loop_traces", []),
         content_loop_summary=dict(state.get("content_loop_summary", {})),
-        root=STORAGE_DIR / "artifacts" / "content",
     )
     return {
         "context_packs": updated_packs,

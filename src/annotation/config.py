@@ -6,7 +6,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BOOKS_DIR = PROJECT_ROOT / "books"
-STORAGE_DIR = PROJECT_ROOT / "storage"
+STORAGE_DIR = Path(os.environ.get("ANNOTATION_STORAGE_DIR", PROJECT_ROOT / "storage")).expanduser().resolve()
 DATABASE_PATH = STORAGE_DIR / "annotation.sqlite3"
 # Kept as a migration/debug source for installations created before the
 # unified library database. New indexing uses ``DATABASE_PATH``.
@@ -210,7 +210,7 @@ def rag_enabled() -> bool:
 
 
 def rag_chroma_path() -> str:
-    return os.getenv("RAG_CHROMA_PATH", "storage/chroma")
+    return os.getenv("RAG_CHROMA_PATH", str(STORAGE_DIR / "chroma"))
 
 
 def embedding_provider_name() -> str:

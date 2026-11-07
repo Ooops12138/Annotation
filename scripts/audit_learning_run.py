@@ -12,7 +12,8 @@ from typing import Any
 
 
 def read_json(path: Path) -> dict[str, Any]:
-    value = json.loads(path.read_text(encoding="utf-8"))
+    from annotation.prompt_archive import read_artifact_json
+    value = read_artifact_json(path)
     if not isinstance(value, dict):
         raise ValueError(f"Expected a JSON object: {path}")
     return value

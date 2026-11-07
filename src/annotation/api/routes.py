@@ -35,6 +35,7 @@ from annotation.retrieval import index_source_blocks, search_source_blocks
 from annotation.workflow import run_minimal_workflow
 from annotation.workflow.control import RunControl, RunStopped
 from annotation.workflow.checkpoints import resumable_checkpoint
+from annotation.prompt_archive import read_artifact_json
 
 
 router = APIRouter()
@@ -69,7 +70,7 @@ def _read_artifact_payload(path: str | Path | None) -> dict[str, Any] | None:
     if not path or not Path(path).is_file():
         return None
     try:
-        return json.loads(Path(path).read_text(encoding="utf-8"))
+        return read_artifact_json(Path(path))
     except (OSError, ValueError):
         return None
 
@@ -220,6 +221,7 @@ def _execute_run(*, book: dict[str, Any], requested_run_id: str | None = None, o
                 provider=provider,
                 run_id=run_id,
                 pdf_path=book["stored_path"],
+                run_title=book.get("title") or book.get("original_filename"),
                 document_id=logical_document_id,
                 progress_callback=lambda stage, snapshot, phase: _publish_run_progress(repo, run_id, stage, snapshot, phase),
                 run_control=run_control,

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from annotation.config import STORAGE_DIR, first_book_pdf
+from annotation.artifact_storage import artifact_directory
 from annotation.domain.artifacts import (
     CalloutNode,
     ContentArtifact,
@@ -57,7 +58,7 @@ def response_metadata(response: Any) -> dict[str, Any]:
 def write_review_report(report: ReviewReport) -> Path:
     """Persist each review result as a separate immutable-by-convention artifact."""
 
-    root = STORAGE_DIR / "artifacts" / "review" / report.run_id
+    root = artifact_directory(report.run_id, "review")
     root.mkdir(parents=True, exist_ok=True)
     # Re-running a workflow with the same run id is a new review version.  A
     # previous report is evidence and must remain readable for comparison.

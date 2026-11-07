@@ -62,7 +62,6 @@ def fact_check_artifacts(ctx: WorkflowContext, state: WorkflowState) -> dict[str
         content_task_planning_metadata=state.get("content_task_planning_metadata"),
         content_loop_traces=state.get("content_loop_traces", []),
         content_loop_summary=dict(state.get("content_loop_summary", {})),
-        root=STORAGE_DIR / "artifacts" / "content",
     )
     result.update(
         {

@@ -16,6 +16,7 @@ from typing import Any
 
 from annotation.token_estimation import estimate_tokens
 from annotation.prompt_archive import write_artifact_json
+from annotation.artifact_storage import artifact_directory
 from annotation.domain.artifacts import (
     ContextExcerpt,
     ContextPack,
@@ -330,7 +331,7 @@ def write_content_run_artifact(
     quiz_coverage: Any | None = None,
     checks: dict[str, str],
     provider_metadata: dict[str, Any],
-    root: str | Path,
+    root: str | Path | None = None,
     content_task_planning_metadata: dict[str, Any] | None = None,
     content_loop_traces: list[Any] | None = None,
     content_loop_summary: dict[str, Any] | None = None,
@@ -338,7 +339,7 @@ def write_content_run_artifact(
     """Persist the complete T-006 handoff without relying on graph memory."""
 
     safe_run_id = re.sub(r"[^A-Za-z0-9._-]+", "-", run_id).strip(".-") or "run"
-    artifact_dir = Path(root) / safe_run_id
+    artifact_dir = artifact_directory(run_id, "content", root)
     artifact_dir.mkdir(parents=True, exist_ok=True)
     path = artifact_dir / "content.json"
     if path.exists():

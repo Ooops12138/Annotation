@@ -109,6 +109,35 @@ uv sync --extra dev --extra rag --extra rag-local-embeddings --link-mode copy
 30.79%，本地为 33.76%；API 没有在这份开发基线上整体胜出，无答案误召回仍存在。
 这些运行产物保留在本机，不随源码提交。
 
+### artifact 查看与空间管理
+
+新运行位于 `storage/artifacts/runs/<时间>_<教材>__<运行标识>/`，先打开其中的 `README.md`：
+它显示教材、完整运行 ID、状态、模型和阶段产物链接。`manifest.json` 保存机器可读索引；
+`results/` 保存结果，`traces/` 保存逐任务诊断，`execution/` 保存检查点和调用回执。
+大 prompt、原始响应和上下文使用运行内共享的压缩对象；统一 reader 会校验引用并无损还原。
+同一教材及解析配置复用 `artifacts/sources/` 中的来源；更换本地识别器配置时递增
+`ANNOTATION_SOURCE_CONFIG_VERSION`。历史目录和已登记路径继续可读，不自动迁移。
+
+```powershell
+# 只读统计，包含旧目录；--json 输出全部运行的时间、状态和占用。
+uv run python -m annotation.storage_cli stats
+uv run python -m annotation.storage_cli stats --json
+# 展开一个产物的完整诊断（也支持旧 prompt 引用）。
+uv run python -m annotation.storage_cli read "<产物 JSON 路径>"
+# 默认只预览指定运行的 execution 归档；停止后端后再显式执行。
+uv run python -m annotation.storage_cli archive-execution --run-id "<完整 run_id>"
+uv run python -m annotation.storage_cli archive-execution --run-id "<完整 run_id>" --apply
+```
+
+归档只处理 SQLite 确认的 succeeded/blocked 运行，保留校验通过的 ZIP，随后移除原 execution
+目录；结果、诊断、共享来源和数据库记录保留。running、failed、cancelled、interrupted 及
+未知归属运行会被保护，不能依据测试风格名字直接删除旧数据。归档后的执行记录可从 ZIP
+查看；要恢复检查点时先解压回原 execution 目录。
+
+可在启动 Python 前通过进程环境变量 `ANNOTATION_STORAGE_DIR` 指定独立存储根目录；
+数据库、上传、来源、缓存和工作流默认路径随之调整，显式缓存/向量目录配置仍优先。
+pytest 在导入配置前自动使用临时根目录，测试子进程继承该目录，退出时清理。
+
 ### 文档库与本地持久化
 
 页面首次打开只读取本地文档库，不会自动调用模型。教材和每次生成运行的关系

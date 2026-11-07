@@ -10,6 +10,7 @@ from collections.abc import Iterable
 from time import perf_counter
 
 from annotation.domain.artifacts import SourceBlock
+from annotation.config import rag_chroma_path
 from annotation.fact_checking.contracts import (
     EvidenceKind, EvidenceRecord, SearchErrorCode, SearchResult, SearchStatus,
 )
@@ -41,9 +42,10 @@ class LlamaIndexChromaTextbookSearchTool:
     version = "v2"
 
     def __init__(self, blocks: Iterable[SourceBlock], *, collection_name: str = "annotation-textbook",
-                 persist_directory: str = "storage/chroma", embedding_provider: EmbeddingProvider | None = None,
+                 persist_directory: str | None = None, embedding_provider: EmbeddingProvider | None = None,
                  document_ids: Iterable[str] | None = None) -> None:
         started = perf_counter()
+        persist_directory = persist_directory or rag_chroma_path()
         try:
             import chromadb
             from chromadb.config import Settings

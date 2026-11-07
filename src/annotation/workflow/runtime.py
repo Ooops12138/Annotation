@@ -39,6 +39,8 @@ from annotation.workflow.control import ControlledPort, RunControl, RunStopped
 from annotation.workflow.models import WorkflowState
 from annotation.prompt_loader import prompt_profile_scope, validate_prompt_profile
 from annotation.workflow.persistence import persist_workflow_snapshots
+from annotation.workflow.helpers import default_pdf
+from annotation.artifact_storage import run_directory, update_run_info, execution_lock
 
 
 NODES = {
@@ -183,6 +185,7 @@ def tracked_node(
     runtime: Runtime[RunResources],
 ) -> dict[str, Any]:
     if ctx.run_control and ctx.run_control.stop_requested:
+        update_run_info(state["run_id"], status="interrupted", stage=name)
         interrupt({"reason": "user_requested_stop", "stage": name})
         ctx.run_control.raise_if_stopped()
     if progress_callback:
@@ -191,8 +194,13 @@ def tracked_node(
         with prompt_profile_scope(state.get("prompt_profile")):
             update = _invoke_node(ctx, node, state, runtime)
     except RunStopped:
+        update_run_info(state["run_id"], status="interrupted", stage=name)
         interrupt({"reason": "user_requested_stop", "stage": name})
         raise
+    except Exception as exc:
+        update_run_info(state["run_id"], status="failed", stage=name, errors=[str(exc)])
+        raise
+    update_run_info(state["run_id"], stage=name, status="running")
     if progress_callback:
         progress_callback(name, {**state, **update}, "completed")
     return update
@@ -282,7 +290,11 @@ def run_minimal_workflow(
     run_control: RunControl | None = None,
     resume_checkpoint: dict[str, Any] | None = None,
     prompt_profile: str | None = None,
+    run_title: str | None = None,
 ) -> WorkflowState:
+    source_path = str(pdf_path or default_pdf())
+    directory = run_directory(run_id, title=run_title or "", pdf_path=source_path)
+    update_run_info(run_id, pdf_path=source_path, status="running")
     if resume_checkpoint and resume_checkpoint.get("run_id") != run_id:
         raise ValueError("native resume must keep the original run_id")
     initial: WorkflowState = {
@@ -300,6 +312,7 @@ def run_minimal_workflow(
     config = {"configurable": {"thread_id": f"{run_id}:{uuid.uuid4().hex}"}}
     root = run_control.root if run_control else None
     with (
+        execution_lock(directory),
         workflow_checkpointer(run_id, root) as checkpointer,
         RunResources() as resources,
     ):
@@ -329,6 +342,7 @@ def run_minimal_workflow(
             value = initial
         state = graph.invoke(value, config, context=resources, durability="sync")
         if state.get("__interrupt__"):
+            update_run_info(run_id, status="interrupted")
             raise RunStopped("user_requested_stop")
         if run_control:
             run_control.raise_if_stopped()

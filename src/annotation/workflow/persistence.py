@@ -8,10 +8,12 @@ indexes these snapshots in SQLite and uses the paths below for later reads.
 from __future__ import annotations
 
 import re
+from dataclasses import fields, is_dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
 from annotation.config import STORAGE_DIR
+from annotation.artifact_storage import artifact_directory, update_run_info
 from annotation.prompt_archive import write_artifact_json
 
 
@@ -39,12 +41,18 @@ def _immutable_path(path: Path) -> Path:
 def _model_dump(value: Any) -> Any:
     """Serialize Pydantic artifacts while accepting test-friendly mappings."""
 
+    if isinstance(value, type):
+        return value.__name__
+    if is_dataclass(value):
+        return {field.name: _model_dump(getattr(value, field.name)) for field in fields(value)}
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json")
     if isinstance(value, Mapping):
         return {key: _model_dump(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_model_dump(item) for item in value]
+    if isinstance(value, Path):
+        return str(value)
     return value
 
 
@@ -181,7 +189,7 @@ def write_blueprint_artifact(state: Mapping[str, Any], *, root: str | Path | Non
         return None
     run_id = str(state.get("run_id") or (blueprint.run_id if blueprint is not None else (loop_trace or {}).get("run_id", "run")))
     version = getattr(blueprint, "version", 1)
-    path = _immutable_path(Path(root or (STORAGE_DIR / "artifacts" / "blueprint")) / _safe_run_id(run_id) / f"blueprint-v{version}.json")
+    path = _immutable_path(artifact_directory(run_id, "blueprint", root) / f"blueprint-v{version}.json")
     if loop_trace is not None:
         loop_trace["artifact_path"] = str(path.resolve())
         # Keep the in-memory typed trace and the serialized trace identical.
@@ -214,7 +222,7 @@ def write_document_artifact(state: Mapping[str, Any], *, root: str | Path | None
     if document is None:
         return None
     run_id = str(state.get("run_id") or document.run_id)
-    path = _immutable_path(Path(root or (STORAGE_DIR / "artifacts" / "document")) / _safe_run_id(run_id) / f"document-v{document.version}.json")
+    path = _immutable_path(artifact_directory(run_id, "document", root) / f"document-v{document.version}.json")
     report = state.get("review_report")
     return _write_json(
         path,
@@ -234,7 +242,7 @@ def write_quiz_artifact(state: Mapping[str, Any], *, root: str | Path | None = N
     if not artifacts and coverage is None:
         return None
     run_id = str(state.get("run_id") or "run")
-    path = _immutable_path(Path(root or (STORAGE_DIR / "artifacts" / "quiz")) / _safe_run_id(run_id) / "quiz-v1.json")
+    path = _immutable_path(artifact_directory(run_id, "quiz", root) / "quiz-v1.json")
     payload = {
         "schema_version": "quiz-artifact-v2",
         "run_id": run_id,
@@ -263,8 +271,7 @@ def write_fact_check_artifact(state: Mapping[str, Any], *, root: str | Path | No
         else 1
     )
     path = _immutable_path(
-        Path(root or (STORAGE_DIR / "artifacts" / "fact_check"))
-        / _safe_run_id(run_id)
+        artifact_directory(run_id, "fact_check", root)
         / f"fact-check-v{version}.json"
     )
     artifact_path = str(path.resolve())
@@ -303,8 +310,7 @@ def write_interactive_component_artifact(state: Mapping[str, Any], *, root: str 
         or "run"
     )
     path = _immutable_path(
-        Path(root or (STORAGE_DIR / "artifacts" / "interactive_components"))
-        / _safe_run_id(run_id)
+        artifact_directory(run_id, "interactive_components", root)
         / "interactive-components-v2.json"
     )
     artifact_path = str(path.resolve())
@@ -407,8 +413,14 @@ def write_run_manifest(
     if interactive_component_summary is not None or interactive_component_path_value:
         manifest["paths"]["interactive_components"] = interactive_component_path_value
         manifest["interactive_component_summary"] = interactive_component_summary
-    path = _immutable_path(Path(root or (STORAGE_DIR / "artifacts" / "runs")) / _safe_run_id(run_id) / "run.json")
-    return _write_json(path, manifest)
+    path = _immutable_path(artifact_directory(run_id, "manifest", root) / ("run.json" if root is not None else "manifest.json"))
+    written = _write_json(path, manifest)
+    if root is None:
+        source = state.get("source_document")
+        update_run_info(run_id, status=state.get("workflow_status", "completed"),
+                        paths={**manifest["paths"], "manifest": str(written.resolve())},
+                        errors=manifest["errors"], **{key: state.get("provider_metadata", {}).get(key, "") for key in ("provider", "model")})
+    return written
 
 
 def persist_workflow_snapshots(state: dict[str, Any]) -> dict[str, Any]:

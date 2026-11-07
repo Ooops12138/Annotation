@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import gzip
 import threading
 import uuid
 from contextlib import contextmanager
@@ -13,6 +14,7 @@ from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from annotation.config import STORAGE_DIR
+from annotation.artifact_storage import run_directory, find_run_directory
 
 
 class ChannelPayloadSerializer(JsonPlusSerializer):
@@ -34,7 +36,10 @@ class ChannelPayloadSerializer(JsonPlusSerializer):
             or "channel_versions" not in obj
             or "channel_values" not in obj
         ):
-            return super().dumps_typed(obj)
+            kind, data = super().dumps_typed(obj)
+            if len(data) < 4096:
+                return kind, data
+            return "annotation-blob-v1", self._store(kind, data).encode("ascii")
         values = {}
         with self._lock:
             self.root.mkdir(parents=True, exist_ok=True)
@@ -48,13 +53,7 @@ class ChannelPayloadSerializer(JsonPlusSerializer):
                 digest = self._references.get(cache_key)
                 if digest is None:
                     kind, data = super().dumps_typed(value)
-                    payload = kind.encode("ascii") + b"\n" + data
-                    digest = hashlib.sha256(payload).hexdigest()
-                    target = self.root / digest
-                    if not target.exists():
-                        temporary = self.root / f".{uuid.uuid4().hex}.tmp"
-                        temporary.write_bytes(payload)
-                        temporary.replace(target)
+                    digest = self._store(kind, data)
                     self._references[cache_key] = digest
                 values[key] = digest
         return super().dumps_typed(
@@ -62,6 +61,8 @@ class ChannelPayloadSerializer(JsonPlusSerializer):
         )
 
     def loads_typed(self, data: tuple[str, bytes]) -> Any:
+        if data[0] == "annotation-blob-v1":
+            return self._load(data[1].decode("ascii"))
         obj = super().loads_typed(data)
         if not isinstance(obj, dict) or not obj.pop("annotation_channel_refs", False):
             return obj
@@ -76,19 +77,46 @@ class ChannelPayloadSerializer(JsonPlusSerializer):
                 or any(c not in "0123456789abcdef" for c in value)
             ):
                 raise ValueError("invalid checkpoint channel reference")
-            payload = (self.root / value).read_bytes()
-            if hashlib.sha256(payload).hexdigest() != value:
-                raise ValueError("checkpoint channel integrity mismatch")
-            kind, raw = payload.split(b"\n", 1)
-            values[key] = super().loads_typed((kind.decode("ascii"), raw))
+            values[key] = self._load(value)
             self._references[(key, str(obj["channel_versions"][key]))] = value
         return {**obj, "channel_values": values}
+
+    def _store(self, kind: str, data: bytes) -> str:
+        payload = kind.encode("ascii") + b"\n" + data
+        digest = hashlib.sha256(payload).hexdigest()
+        with self._lock:
+            self.root.mkdir(parents=True, exist_ok=True)
+            target = self.root / digest
+            if not target.exists():
+                temporary = self.root / f".{uuid.uuid4().hex}.tmp"
+                temporary.write_bytes(gzip.compress(payload, mtime=0))
+                temporary.replace(target)
+        return digest
+
+    def _load(self, digest: str) -> Any:
+        if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+            raise ValueError("invalid checkpoint channel reference")
+        payload = (self.root / digest).read_bytes()
+        if payload.startswith(b"\x1f\x8b"):
+            payload = gzip.decompress(payload)
+        if hashlib.sha256(payload).hexdigest() != digest:
+            raise ValueError("checkpoint channel integrity mismatch")
+        kind, raw = payload.split(b"\n", 1)
+        return super().loads_typed((kind.decode("ascii"), raw))
 
 
 def checkpoint_directory(run_id: str, root: Path | None = None) -> Path:
     if not run_id or Path(run_id).name != run_id or run_id in {".", ".."}:
         raise ValueError("run_id must be a single path component")
-    return (root or STORAGE_DIR / "artifacts" / "execution") / run_id
+    if root is not None:
+        return root / run_id
+    existing = find_run_directory(run_id)
+    legacy = STORAGE_DIR / "artifacts" / "execution" / run_id
+    if (legacy / "checkpoints.sqlite3").is_file() and (
+        existing is None or not (existing / "execution" / "checkpoints.sqlite3").is_file()
+    ):
+        return legacy
+    return (existing or run_directory(run_id)) / "execution"
 
 
 @contextmanager
