@@ -9,7 +9,8 @@ import time
 import uuid
 from pathlib import Path
 
-from annotation.config import PROJECT_ROOT, STORAGE_DIR
+from annotation.artifact_storage import run_directory
+from annotation.config import PROJECT_ROOT
 from annotation.domain.artifacts import InteractiveComponentSandboxReport, InteractiveComponentSpec
 
 
@@ -59,8 +60,9 @@ def run_interactive_component_sandbox(
     safe_task = "".join(character if character.isalnum() or character in "._-" else "-" for character in task_id).strip(".-") or "task"
     # The child runs from web/, so file arguments must not depend on its cwd.
     nonce = uuid.uuid4().hex[:10]
-    output_root = (Path(root or (STORAGE_DIR / "artifacts" / "interactive_components"))
-                   / safe_run / safe_task / f"a{attempt}-{nonce}").resolve()
+    base = (Path(root) / safe_run if root is not None else
+            run_directory(run_id) / "traces" / "interactive_components")
+    output_root = (base / safe_task / f"a{attempt}-{nonce}").resolve()
     output_root.mkdir(parents=True, exist_ok=True)
     input_path = output_root / f"sandbox-input-{safe_task}-a{attempt}-{nonce}.json"
     report_path = output_root / f"sandbox-report-{safe_task}-a{attempt}-{nonce}.json"
