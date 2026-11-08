@@ -26,16 +26,6 @@ class SequenceProvider:
     provider = "sequence"
     base_url = None
 
-    class _WorkflowFixtures(OfflineWorkflowCapabilities):
-        def use_blueprint_fixture(self, provider: Any) -> bool:
-            return False
-
-        def blueprint_source_refs(self, unit: Any, state: Mapping[str, Any]) -> tuple[list[str], bool]:
-            return list(unit.source_refs), False
-
-        def blueprint_artifact_id(self, fallback: str) -> str:
-            return fallback
-
     def __init__(
         self,
         responses: Sequence[Mapping[str, Any] | ProviderError | Exception | Callable[[StructuredGenerationRequest[Any]], Any]],
@@ -46,7 +36,7 @@ class SequenceProvider:
         self.model = model
         self.config_version = config_version
         self.capabilities = ProviderCapabilities(supports_structured_output=True, supports_json_schema=True)
-        self.workflow = self._WorkflowFixtures()
+        self.workflow = OfflineWorkflowCapabilities()
         self._responses = list(responses)
         self.calls: list[StructuredGenerationRequest[Any]] = []
 

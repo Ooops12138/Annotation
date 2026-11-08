@@ -134,8 +134,8 @@ def test_minimal_workflow_endpoint_uses_offline_provider_by_default() -> None:
     payload = response.json()
     assert payload["status"] == "ok"
     assert payload["run"]["provider"] == "offline"
-    assert payload["document"]["blueprint_version"].startswith("bp-fixture-001:v1")
-    assert len(payload["quiz_artifacts"]) == 6
+    assert payload["document"]["blueprint_version"].startswith("bp-")
+    assert len(payload["quiz_artifacts"]) == payload["content_loop"]["unit_count"]
     assert all("question_count" not in artifact for artifact in payload["quiz_artifacts"])
     assert payload["quiz_coverage"]["status"] == "passed"
     assert payload["quiz_artifact_path"]

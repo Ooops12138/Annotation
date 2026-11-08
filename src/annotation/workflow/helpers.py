@@ -1,4 +1,4 @@
-"""Shared blueprint conversion, document assembly and review helpers."""
+"""Shared document assembly and review helpers."""
 
 from __future__ import annotations
 
@@ -15,8 +15,6 @@ from annotation.domain.artifacts import (
     DocumentSection,
     InteractiveComponentArtifact,
     InteractiveComponentNode,
-    KnowledgeUnit,
-    bind_learning_objectives,
     LearningBlueprint,
     LearningDocument,
     MarkdownNode,
@@ -24,31 +22,15 @@ from annotation.domain.artifacts import (
     QuizNode,
     ReviewIssue,
     ReviewReport,
-    SourceBlock,
 )
-from annotation.providers import ModelProvider, ProviderError
-from annotation.workflow.models import BlueprintDraft, CalloutDraft, WorkflowState
+from annotation.providers import ModelProvider
+from annotation.workflow.models import CalloutDraft, WorkflowState
 
 from annotation.workflow.content_support import _formula_format_issues, _lossless_refs
 
 
 def default_pdf() -> Path:
     return first_book_pdf()
-
-
-def source_context(blocks: list[SourceBlock], limit: int | None = None) -> str:
-    """Render non-empty textbook blocks for the blueprint model input.
-
-    The single-window path is budget checked before a model request. Long books
-    use source slices in blueprint_hierarchy instead. An explicit block limit is
-    retained for fixtures/experiments, never as an automatic truncation policy.
-    """
-    non_empty = [block for block in blocks if block.text.strip()]
-    selected = non_empty if limit is None else non_empty[:limit]
-    return "\n".join(
-        f"[{block.source_ref}] {block.text}"
-        for block in selected
-    )
 
 
 def response_metadata(response: Any) -> dict[str, Any]:
@@ -328,93 +310,6 @@ def assemble_document_from_artifacts(
         title=blueprint.title,
         sections=sections,
     )
-
-
-def blueprint_from_draft(
-    *,
-    draft: BlueprintDraft,
-    state: WorkflowState,
-    provider_name: str,
-    workflow_capabilities: Any | None = None,
-) -> tuple[LearningBlueprint, bool]:
-    """Convert a validated model draft without provider-profile heuristics."""
-
-    # Re-validate here even when a test provider hands us a model instance.
-    # This keeps the production boundary strict for enum values such as kind.
-    draft = BlueprintDraft.model_validate(draft.model_dump(mode="python"))
-    ordered_refs = list(state["source_refs"])
-    units: list[KnowledgeUnit] = []
-    adapted = False
-    used_unit_ids: set[str] = set()
-    previous = state.get("blueprint")
-    previous_units = {u.artifact_id: u for u in previous.knowledge_units} if previous else {}
-    reserved_ids = set(previous.objective_id_history) if previous else set()
-    reserved_ids.update(o.objective_id for u in previous_units.values() for o in u.learning_objectives)
-    # Allocate every identity before resolving references, including forward edges.
-    id_map: dict[str, str] = {}
-    final_ids: list[str] = []
-    for unit in draft.knowledge_units:
-        key = (unit.knowledge_unit_id or "").strip()
-        if key and key in id_map:
-            raise ProviderError(f"duplicate knowledge unit id: {key}", category="schema")
-        stable_id = key if key in previous_units else f"ku-{uuid.uuid4().hex}"
-        if stable_id in used_unit_ids:
-            raise ProviderError(f"duplicate knowledge unit id: {stable_id}", category="schema")
-        used_unit_ids.add(stable_id)
-        final_ids.append(stable_id)
-        if key:
-            id_map[key] = stable_id
-
-    def resolve_refs(refs: list[str]) -> list[str]:
-        result = []
-        for ref in refs:
-            if ref not in id_map:
-                raise ProviderError(f"unknown knowledge unit reference: {ref}", category="schema")
-            result.append(id_map[ref])
-        return result
-
-    for unit, stable_id in zip(draft.knowledge_units, final_ids, strict=True):
-        if workflow_capabilities is not None:
-            refs, refs_adapted = workflow_capabilities.blueprint_source_refs(unit, state)
-            adapted = adapted or refs_adapted
-        else:
-            refs = _lossless_refs(unit.source_refs)
-        known_ids = set(previous_units[stable_id].objective_ids) if stable_id in previous_units else set()
-        for objective in unit.learning_objectives:
-            if not isinstance(objective, str) and objective.objective_id not in known_ids:
-                raise ProviderError(f"unknown retained objective_id: {objective.objective_id}", category="schema")
-        objectives = bind_learning_objectives(stable_id, list(unit.learning_objectives), reserved_ids)
-        reserved_ids.update(o.objective_id for o in objectives)
-        units.append(KnowledgeUnit(
-            artifact_id=stable_id,
-            run_id=state["run_id"],
-            version=1,
-            status="draft",
-            source_refs=refs,
-            created_by=f"provider:{provider_name}",
-            title=unit.title,
-            kind=unit.kind,
-            learning_objectives=objectives,
-            prerequisites=resolve_refs(unit.prerequisites),
-            related_unit_ids=resolve_refs(unit.related_unit_ids),
-            structure_node_ids=[state["textbook_structure"].nodes[0].node_id] if state.get("textbook_structure") else [],
-        ))
-    if not units:
-        raise ProviderError("blueprint contains no knowledge units", category="schema")
-    artifact_id = (workflow_capabilities.blueprint_artifact_id(f"bp-{uuid.uuid4().hex[:12]}")
-                   if workflow_capabilities is not None else f"bp-{uuid.uuid4().hex[:12]}")
-    blueprint = LearningBlueprint(
-        artifact_id=artifact_id,
-        run_id=state["run_id"],
-        version=1,
-        status="checking",
-        source_refs=ordered_refs,
-        created_by=f"provider:{provider_name}",
-        title=draft.title or state["source_document"].title,
-        knowledge_units=units,
-        objective_id_history=sorted(reserved_ids),
-    )
-    return blueprint, adapted
 
 
 def provider_metadata(provider: ModelProvider) -> dict[str, Any]:

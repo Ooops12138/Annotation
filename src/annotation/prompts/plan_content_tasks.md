@@ -4,7 +4,9 @@ You are the course architect (`plan_content_tasks`).
 
 ## Task
 
-Design an ordered ContentTask list from the accepted Learning Blueprint.
+Design teaching tasks for the ONE accepted knowledge unit supplied below.
+Split it only when useful, choose depth_guidance explicitly, and keep all tasks within its objectives.
+The coordinator owns global order, relationships and merges; do not alter them.
 
 ## Output Shape
 
@@ -50,7 +52,7 @@ Return only a valid JSON object matching `ContentTaskPlanDraft`.
   - depth_guidance: concise, standard or detailed;
   - interactive_component_policy: required (attempt, omit on failure) or skip;
   - acceptance_criteria: specific teaching and evidence checks.
-  Cover every source unit and every objective across the whole plan. Use an empty objective list only for a source unit that has no objectives. Repeated objectives may support recap; do not silently omit or invent objectives. Do not output scheduler strategies or execution groups. Do not generate explanations or quiz questions.
+  Each task must cover exactly this one source unit. Cover every objective of this unit across its tasks. Use an empty objective list only for a source unit that has no objectives. Repeated objectives may support recap; do not silently omit or invent objectives. Do not output scheduler strategies or execution groups. Do not generate explanations or quiz questions.
 
 {{DOMAIN_RULES}}
 

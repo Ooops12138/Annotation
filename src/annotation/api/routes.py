@@ -53,7 +53,6 @@ _run_controls: dict[str, RunControl] = {}
 _run_controls_lock = threading.RLock()
 _RUN_STAGES = {
     "ingest": "读取教材", "prepare_blueprint": "理解教材结构", "hierarchical_blueprint": "整理学习蓝图",
-    "generate_blueprint_attempt": "生成学习蓝图", "check_blueprint_attempt": "检查学习蓝图",
     "plan_content_tasks": "规划知识单元", "prepare_content_tools": "准备教材检索工具",
     "content_reflection_loops": "生成并检查讲解", "generate_quiz_artifacts": "生成练习",
     "fact_check_artifacts": "核对关键事实", "interactive_component_loop": "准备互动内容",
@@ -91,21 +90,8 @@ def _run_response_from_state(result: dict[str, Any], state: dict[str, Any]) -> d
     document = state.get("document")
     report = state.get("review_report")
     run = result.get("run") or {}
-    loop = state.get("blueprint_loop_trace")
-    loop_summary = None
-    if state.get("blueprint_hierarchy_trace") is not None:
-        from annotation.workflow.persistence import _blueprint_loop_summary
-        loop_summary = _blueprint_loop_summary(state)
-    if loop is not None:
-        payload = loop.model_dump(mode="json") if hasattr(loop, "model_dump") else dict(loop)
-        loop_summary = {
-            "trace_id": payload.get("trace_id"),
-            "attempt_count": len(payload.get("attempts") or []),
-            "max_attempts": payload.get("max_attempts"),
-            "final_status": payload.get("final_status"),
-            "stop_reason": payload.get("stop_reason"),
-            "trace_path": state.get("blueprint_trace_path") or payload.get("artifact_path"),
-        }
+    from annotation.workflow.persistence import _blueprint_loop_summary
+    loop_summary = _blueprint_loop_summary(state)
     content_loop_summary = state.get("content_loop_summary")
     if content_loop_summary is not None:
         content_loop_summary = content_loop_summary.model_dump(mode="json") if hasattr(content_loop_summary, "model_dump") else dict(content_loop_summary)

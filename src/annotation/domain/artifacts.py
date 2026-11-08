@@ -104,6 +104,7 @@ class KnowledgeUnit(ArtifactBase):
     kind: Literal["concept", "formula", "theorem", "example", "skill"]
     learning_objectives: list[LearningObjective] = Field(default_factory=list)
     prerequisites: list[str] = Field(default_factory=list)
+    external_prerequisites: list[str] = Field(default_factory=list)
     related_unit_ids: list[str] = Field(default_factory=list)
     structure_node_ids: list[str] = Field(default_factory=list)
 
@@ -591,41 +592,6 @@ class ContentUnitLoopTrace(BaseModel):
     artifact_path: str | None = None
 
 
-class BlueprintAttemptTrace(BaseModel):
-    """Auditable record for one Blueprint generation/check attempt."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    attempt: int = Field(ge=1)
-    prompt: str | PromptReference
-    raw_output: str = ""
-    parsed_output: dict[str, Any] | None = None
-    generation_status: Literal["succeeded", "schema_error", "provider_error"]
-    error: str | None = None
-    error_category: str | None = None
-    provider_metadata: dict[str, Any] = Field(default_factory=dict)
-    check: BlueprintCheckResult | None = None
-    feedback: list[ReviewIssue] = Field(default_factory=list)
-    route: Literal["accept", "revise", "block", "fail"]
-    stop_reason: Literal["accepted", "max_attempts", "non_retryable_provider_error", "preloaded"] | None = None
-
-
-class BlueprintLoopTrace(BaseModel):
-    """Versioned, auditable trace for the complete Blueprint revision loop."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    trace_id: str
-    run_id: str
-    max_attempts: int = Field(ge=1)
-    attempts: list[BlueprintAttemptTrace] = Field(default_factory=list)
-    final_status: Literal["accepted", "blocked", "failed"]
-    final_attempt: int = Field(ge=0)
-    stop_reason: Literal["accepted", "max_attempts", "non_retryable_provider_error", "preloaded"]
-    final_blueprint_artifact_id: str | None = None
-    artifact_path: str | None = None
-
-
 ComponentType = Literal["generated_html"]
 
 
@@ -1004,8 +970,6 @@ class RunMetadata(BaseModel):
 
 ArtifactBase.model_rebuild()
 BlueprintCheckResult.model_rebuild()
-BlueprintAttemptTrace.model_rebuild()
-BlueprintLoopTrace.model_rebuild()
 
 # Naming aliases keep item/set terminology explicit at call sites without
 # creating duplicate Pydantic contracts.

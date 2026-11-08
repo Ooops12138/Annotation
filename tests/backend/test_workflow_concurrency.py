@@ -9,10 +9,12 @@ from annotation.offline import OfflineFixtureProvider
 from annotation.workflow import run_minimal_workflow
 from annotation.workflow import content_nodes as runtime, fact_check
 from annotation.workflow.concurrency import ordered_batches, workflow_max_workers
+from test_workflow import _install_source_fixture
 
 
 @pytest.mark.parametrize("workers", [1, 2])
 def test_three_stages_overlap_tasks_and_keep_output_order(monkeypatch, workers):
+    _install_source_fixture(monkeypatch)
     monkeypatch.setenv("WORKFLOW_MAX_WORKERS", str(workers))
     monkeypatch.setenv("RAG_ENABLED", "false")
     active, peak, calls = Counter(), Counter(), Counter()
@@ -56,6 +58,7 @@ def test_three_stages_overlap_tasks_and_keep_output_order(monkeypatch, workers):
 
 
 def test_failed_batch_preserves_started_tasks_and_skips_later_tasks(monkeypatch):
+    _install_source_fixture(monkeypatch)
     monkeypatch.setenv("WORKFLOW_MAX_WORKERS", "2")
     monkeypatch.setenv("RAG_ENABLED", "false")
     barrier = Barrier(2)

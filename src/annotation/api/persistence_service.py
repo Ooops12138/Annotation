@@ -9,6 +9,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Mapping
 
+from annotation.workflow.persistence import _blueprint_loop_summary
 from annotation.config import first_book_pdf
 from annotation.prompt_archive import read_artifact_json
 from annotation.domain.artifacts import LearningDocument, ReviewReport
@@ -157,25 +158,6 @@ def _artifact_path(state: Mapping[str, Any], kind: str) -> str | None:
     if kind == "run":
         return state.get("run_manifest_path")
     return None
-
-
-def _blueprint_loop_summary(state: Mapping[str, Any]) -> dict[str, Any] | None:
-    if state.get("blueprint_hierarchy_trace") is not None:
-        from annotation.workflow.persistence import _blueprint_loop_summary as hierarchy_summary
-        return hierarchy_summary(state)
-    trace = state.get("blueprint_loop_trace") or state.get("blueprint_trace")
-    if trace is None:
-        return None
-    payload = trace.model_dump(mode="json") if hasattr(trace, "model_dump") else dict(trace)
-    attempts = payload.get("attempts") or []
-    return {
-        "trace_id": payload.get("trace_id"),
-        "attempt_count": len(attempts),
-        "max_attempts": payload.get("max_attempts"),
-        "final_status": payload.get("final_status"),
-        "stop_reason": payload.get("stop_reason"),
-        "trace_path": state.get("blueprint_trace_path") or payload.get("artifact_path"),
-    }
 
 
 def _content_loop_summary(state: Mapping[str, Any]) -> dict[str, Any] | None:

@@ -22,10 +22,13 @@ Return only a valid JSON object matching `LocalBlueprintDraft`.
         "objective"
       ],
       "prerequisites": [],
+      "external_prerequisites": [],
       "source_refs": [],
       "related_unit_ids": []
     }
   ],
+  "continues_before": [],
+  "continues_after": [],
   "summary": "short local plan summary",
   "representative_unit_ids": [],
   "skip_reason": null
@@ -62,6 +65,12 @@ Return only a valid JSON object matching `LocalBlueprintDraft`.
   An overlap marked context_only supports boundary understanding; focus new units
   on owned text. Do not assume a split argument ends where the window ends.
 
+- If the FIRST unit begins an explanation already underway in the preceding context,
+  list its local ID in continues_before. If the LAST unit continues into the following
+  context, list its ID in continues_after. Each field contains at most one ID; otherwise [].
+  Keep objectives faithful to the owned text. These flags ask the coordinator to inspect
+  adjacent units; they do not authorize duplication or automatic merging.
+
 - Return a short summary (at most 600 characters) of this local teaching plan and
   up to 6 representative_unit_ids for higher-level coordination. All units remain
   in the final assembly, even when not selected as representatives.
@@ -80,3 +89,5 @@ Return only a valid JSON object matching `LocalBlueprintDraft`.
 
 ### Validation feedback from the previous attempt
 {{FEEDBACK}}
+
+Explicit prerequisite knowledge outside this textbook belongs in external_prerequisites as concept names. Cross-window references inside this textbook remain in prerequisites for later resolution. An unavailable match alone is not evidence that a concept is external.

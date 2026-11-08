@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from annotation.domain.artifacts import BlueprintCheckResult, LearningBlueprint, ReviewIssue
+from annotation.workflow.blueprint_references import resolve_reference, title_index
 
 
 def validate_blueprint(
@@ -13,7 +14,7 @@ def validate_blueprint(
     """Check non-empty structure, source integrity and prerequisite references."""
     issues: list[ReviewIssue] = []
     unit_ids = {unit.artifact_id for unit in blueprint.knowledge_units}
-    unit_titles = {unit.title for unit in blueprint.knowledge_units}
+    titles = title_index(blueprint.knowledge_units)
     covered_kinds = sorted({unit.kind for unit in blueprint.knowledge_units})
     objective_ids = [oid for unit in blueprint.knowledge_units for oid in unit.objective_ids]
     if len(objective_ids) != len(set(objective_ids)):
@@ -61,7 +62,7 @@ def validate_blueprint(
         unresolved = [
             prerequisite
             for prerequisite in unit.prerequisites
-            if prerequisite not in unit_ids and prerequisite not in unit_titles
+            if resolve_reference(prerequisite, unit_ids, titles) is None
         ]
         if unresolved:
             issues.append(
@@ -73,7 +74,7 @@ def validate_blueprint(
                     target_id=unit.artifact_id,
                 )
             )
-        unresolved_related = [related for related in unit.related_unit_ids if related not in unit_ids]
+        unresolved_related = [related for related in unit.related_unit_ids if resolve_reference(related, unit_ids, titles) is None]
         if unresolved_related:
             issues.append(
                 ReviewIssue(

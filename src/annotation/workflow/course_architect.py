@@ -9,8 +9,7 @@ from annotation.domain.artifacts import ContentTask, LearningBlueprint, Knowledg
 from annotation.prompt_loader import load_prompt
 from annotation.providers import ModelProvider, ProviderError, StructuredGenerationRequest
 from annotation.workflow.helpers import response_metadata, provider_metadata
-from annotation.workflow.content_support import _plan_content_tasks
-from annotation.workflow.models import ContentTaskPlanDraft
+from annotation.workflow.models import ContentTaskDraft, ContentTaskPlanDraft
 from annotation.workflow.budget import PromptBudget
 
 
@@ -27,6 +26,7 @@ def _blueprint_context(blueprint: LearningBlueprint) -> str:
                     "kind": unit.kind,
                     "learning_objectives": unit.objective_context(),
                     "prerequisites": list(unit.prerequisites),
+                    "external_prerequisites": list(unit.external_prerequisites),
                     "related_unit_ids": list(unit.related_unit_ids),
                 }
                 for unit in blueprint.knowledge_units
@@ -70,13 +70,17 @@ def _tasks_from_draft(
     run_id: str,
     blueprint: LearningBlueprint,
     draft: ContentTaskPlanDraft,
+    global_offset: int = 0,
 ) -> tuple[list[ContentTask], list[str]]:
     units = {u.artifact_id: u for u in blueprint.knowledge_units}
     warnings: list[str] = []
     covered: dict[str, set[str]] = {}
     tasks: list[ContentTask] = []
     occurrences = {key: sum(key in item.covered_objectives for item in draft.tasks) for key in units}
-    for index, item in enumerate(draft.tasks, 1):
+    for index, item in enumerate(draft.tasks, global_offset + 1):
+        if len(item.covered_objectives) != 1:
+            warnings.append(f"course_architect_revision_required:task-{index}:cross_unit_scope")
+            continue
         invalid = False
         for key, objectives in item.covered_objectives.items():
             if key not in units or not set(objectives).issubset(units[key].objective_ids):
@@ -89,18 +93,15 @@ def _tasks_from_draft(
             covered.setdefault(key, set()).update(objectives)
         if invalid:
             continue
-        keys = list(item.covered_objectives)
-        if not keys:
-            warnings.append(f"course_architect_revision_required:task-{index}:empty_scope")
-            continue
-        unit_id = keys[0] if len(keys) == 1 and occurrences[keys[0]] == 1 else f"teaching-{run_id}-{index:03d}"
+        key = next(iter(item.covered_objectives))
+        unit_id = key if occurrences[key] == 1 else f"teaching-{run_id}-{index:03d}"
         tasks.append(ContentTask(task_id=f"task-{run_id}-{index:03d}", run_id=run_id,
             blueprint_version=f"{blueprint.artifact_id}:v{blueprint.version}",
             knowledge_unit_id=unit_id, title=item.title, covered_objectives=item.covered_objectives,
             quiz_count=item.quiz_count, depth_guidance=item.depth_guidance,
             interactive_component_policy=item.interactive_component_policy,
             acceptance_criteria=_unique([
-                *(criterion for key in keys for criterion in _default_criteria(units[key], item)),
+                *_default_criteria(units[key], item),
                 *item.acceptance_criteria,
             ])))
     for key, unit in units.items():
@@ -112,40 +113,50 @@ def _tasks_from_draft(
 def teaching_blueprint(blueprint: LearningBlueprint, tasks: list[ContentTask]) -> LearningBlueprint:
     """Execution view; the original Blueprint is never rewritten."""
     originals = {u.artifact_id: u for u in blueprint.knowledge_units}
-    units = []
+    task_ids_by_unit: dict[str, list[str]] = {}
     for task in tasks:
-        selected = [originals[key] for key in task.covered_objectives]
-        objective_map = {o.objective_id: o for u in selected for o in u.learning_objectives}
-        objectives = [objective_map[oid] for oid in _unique(
-            o for values in task.covered_objectives.values() for o in values)]
-        prerequisites = _unique(p for u in selected for p in u.prerequisites if p not in task.covered_objectives)
+        key = next(iter(task.covered_objectives))
+        task_ids_by_unit.setdefault(key, []).append(task.knowledge_unit_id)
+    units = []
+    previous_by_unit: dict[str, str] = {}
+    for task in tasks:
+        key = next(iter(task.covered_objectives))
+        original = originals[key]
+        objective_map = {o.objective_id: o for o in original.learning_objectives}
+        prerequisites = [task_ids_by_unit[p][-1] for p in original.prerequisites if p in task_ids_by_unit]
+        if key in previous_by_unit:
+            prerequisites.append(previous_by_unit[key])
+        previous_by_unit[key] = task.knowledge_unit_id
         units.append(KnowledgeUnit(artifact_id=task.knowledge_unit_id, run_id=task.run_id,
             version=1, status="accepted", created_by="course_architect",
-            title=task.title, kind=selected[0].kind, learning_objectives=objectives,
-            prerequisites=prerequisites, source_refs=_unique(r for u in selected for r in u.source_refs)))
+            title=task.title, kind=original.kind,
+            learning_objectives=[objective_map[oid] for oid in task.covered_objectives[key]],
+            prerequisites=_unique(prerequisites), source_refs=list(original.source_refs),
+            external_prerequisites=list(original.external_prerequisites),
+            related_unit_ids=_unique(task_id for related in original.related_unit_ids
+                for task_id in task_ids_by_unit.get(related, [])),
+            structure_node_ids=list(original.structure_node_ids)))
     return blueprint.model_copy(update={"knowledge_units": units})
 
 
-def _plan_content_task_batch(
+def _plan_unit_tasks(
     provider: ModelProvider,
     *,
     run_id: str,
     blueprint: LearningBlueprint,
-    batch_index: int = 0,
     global_offset: int = 0,
 ) -> dict[str, Any]:
     """Return ContentTask objects planned by the course architect agent."""
 
-    provider_name = str(getattr(provider, "provider", "unknown"))
     prompt = load_prompt("plan_content_tasks", BLUEPRINT=_blueprint_context(blueprint))
     metadata: dict[str, Any] = {
         "agent": "plan_content_tasks",
-        "prompt_version": "plan_content_tasks:v3:optional-subject",
+        "prompt_version": "plan_content_tasks:v4:unit-scope",
         "run_id": run_id,
         "blueprint_artifact_id": blueprint.artifact_id,
         "blueprint_version": blueprint.version,
         "prompt": prompt,
-        "batch_index": batch_index,
+        "unit_id": blueprint.knowledge_units[0].artifact_id,
         "global_offset": global_offset,
     }
     warnings: list[str] = []
@@ -164,7 +175,7 @@ def _plan_content_task_batch(
         draft = ContentTaskPlanDraft.model_validate(response.value.model_dump(mode="python"))
         raw_output = response.raw_text
         metadata.update(response_metadata(response))
-        tasks, planning_warnings = _tasks_from_draft(run_id=run_id, blueprint=blueprint, draft=draft)
+        tasks, planning_warnings = _tasks_from_draft(run_id=run_id, blueprint=blueprint, draft=draft, global_offset=global_offset)
         warnings.extend(planning_warnings)
         if any(item.startswith("course_architect_revision_required:") for item in planning_warnings):
             status = "needs_revision"
@@ -200,7 +211,7 @@ def _plan_content_task_batch(
         })
 
     return {
-        "content_tasks": _plan_content_tasks(run_id, blueprint),
+        "content_tasks": [],
         "content_task_planning_metadata": metadata,
         "warnings": warnings,
     }
@@ -209,6 +220,24 @@ def _plan_content_task_batch(
 def plan_content_tasks_with_architect(
     provider: ModelProvider, *, run_id: str, blueprint: LearningBlueprint,
 ) -> dict[str, Any]:
-    """Plan bounded batches without losing global IDs, task order or diagnostics."""
-    # Organization is global: batching by source units would prohibit cross-batch merges.
-    return _plan_content_task_batch(provider, run_id=run_id, blueprint=blueprint)
+    """Split one accepted unit at a time; preserve the coordinator's global order."""
+    tasks: list[ContentTask] = []
+    scopes = []
+    warnings = []
+    status = "succeeded"
+    for unit in blueprint.knowledge_units:
+        scope = blueprint.model_copy(update={"knowledge_units": [unit]})
+        result = _plan_unit_tasks(provider, run_id=run_id, blueprint=scope, global_offset=len(tasks))
+        metadata = result["content_task_planning_metadata"]
+        scopes.append(metadata)
+        warnings.extend(result["warnings"])
+        if metadata["status"] != "succeeded":
+            status = metadata["status"]
+            break
+        tasks.extend(result["content_tasks"])
+    if not blueprint.knowledge_units:
+        status = "needs_revision"
+        warnings.append("course_architect_revision_required:empty_blueprint")
+    return {"content_tasks": tasks if status == "succeeded" else [],
+        "content_task_planning_metadata": {"agent": "plan_content_tasks", "status": status,
+            "scope": "knowledge_unit", "scopes": scopes}, "warnings": warnings}

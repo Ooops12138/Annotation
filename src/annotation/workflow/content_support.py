@@ -122,31 +122,6 @@ def _lossless_refs(values: list[str] | None) -> list[str]:
     return normalized
 
 
-def _plan_content_tasks(run_id: str, blueprint: LearningBlueprint) -> list[ContentTask]:
-    tasks: list[ContentTask] = []
-    blueprint_version = f"{blueprint.artifact_id}:v{blueprint.version}"
-    for index, unit in enumerate(blueprint.knowledge_units, start=1):
-        criteria = [
-            "覆盖该知识单元的学习目标",
-            "只使用 ContextPack 中可定位的教材证据",
-            "说明与直接前置知识的必要衔接" if unit.prerequisites else "使用适合初学者的分步解释",
-            "由 Agent 根据学习目标和教材证据决定是否生成练习及题量；不为凑数编题",
-        ]
-        tasks.append(ContentTask(
-            depth_guidance="standard",
-            task_id=f"task-{run_id}-{index:03d}",
-            run_id=run_id,
-            blueprint_version=blueprint_version,
-            knowledge_unit_id=unit.artifact_id,
-            content_types=["explanation", "quiz"],
-            # Retrieval discovers the evidence used by this task. Blueprint
-            # source refs are planning hints, not an allowlist for generation.
-            source_refs=[],
-            acceptance_criteria=criteria,
-        ))
-    return tasks
-
-
 def _content_artifact_from_draft(
     *,
     draft: ContentDraft,
@@ -507,6 +482,7 @@ def _unit_context(unit: KnowledgeUnit) -> str:
             "kind": unit.kind,
             "learning_objectives": unit.objective_context(),
             "prerequisites": unit.prerequisites,
+            "external_prerequisites": unit.external_prerequisites,
             "source_refs": unit.source_refs,
         },
         ensure_ascii=False,
@@ -540,6 +516,7 @@ def _content_prompt_unit(unit: KnowledgeUnit) -> str:
             "kind": unit.kind,
             "learning_objectives": unit.objective_context(),
             "prerequisites": list(unit.prerequisites),
+            "external_prerequisites": list(unit.external_prerequisites),
         },
         ensure_ascii=False,
         separators=(",", ":"),

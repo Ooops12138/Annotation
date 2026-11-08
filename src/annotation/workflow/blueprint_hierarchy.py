@@ -6,7 +6,9 @@ import hashlib
 import heapq
 import json
 import os
+import re
 import uuid
+from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Literal
 
@@ -21,24 +23,23 @@ from annotation.domain.textbook import (
 from annotation.prompt_loader import load_prompt
 from annotation.providers import ModelProvider, ProviderError, StructuredGenerationRequest
 from annotation.workflow.blueprint_checks import validate_blueprint
-from annotation.workflow.budget import PromptBudget, positive_setting
-from annotation.workflow.models import BlueprintDraft
+from annotation.workflow.blueprint_references import normalize_relationships, normalized_title, resolve_reference, title_index
+from annotation.workflow.budget import PromptBudget, positive_setting, encoded_size, preview_text
+from annotation.workflow.models import LocalBlueprintUnit
+from annotation.workflow.blueprint_relations import repair_relationships, BlueprintToolRequest
 
-COORDINATION_PROMPT_VERSION = "coordinate_blueprint:v3:optional-subject"
-LOCAL_BLUEPRINT_PROMPT_VERSION = "generate_local_blueprint:v4:program-unit-ids"
+COORDINATION_PROMPT_VERSION = "coordinate_blueprint:v7:budgeted-evidence"
+LOCAL_BLUEPRINT_PROMPT_VERSION = "generate_local_blueprint:v6:external-prerequisites"
 
-class LocalBlueprintDraft(BlueprintDraft):
+class LocalBlueprintDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    title: str
+    knowledge_units: list[LocalBlueprintUnit] = Field(default_factory=list)
+    skip_reason: str | None = None
+    continues_before: list[str] = Field(default_factory=list, max_length=1)
+    continues_after: list[str] = Field(default_factory=list, max_length=1)
     summary: str = Field(default="", max_length=600)
     representative_unit_ids: list[str] = Field(default_factory=list, max_length=6)
-
-
-class BlueprintToolRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    tool: Literal["read_units", "search_units", "read_sources"]
-    ids: list[str] = Field(default_factory=list, max_length=8)
-    query: str = Field(default="", max_length=200)
-    offset: int = Field(default=0, ge=0)
 
 
 class UnitUpdate(BaseModel):
@@ -47,6 +48,7 @@ class UnitUpdate(BaseModel):
     prerequisites: list[str] | None = None
     related_unit_ids: list[str] | None = None
     before_id: str | None = None
+    reason: str = Field(default="", max_length=240)
 
 
 class UnitMerge(BaseModel):
@@ -67,6 +69,10 @@ class CoordinationDecision(BaseModel):
     representative_unit_ids: list[str] = Field(default_factory=list, max_length=6)
 
 
+class FinalCoordinationDecision(CoordinationDecision):
+    action: Literal["finalize"]
+
+
 class PlanGroup(BaseModel):
     group_id: str
     title: str
@@ -85,6 +91,11 @@ def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
+def _grams(text: str) -> set[str]:
+    text = normalized_title(text)
+    return {text[i:i + 2] for i in range(len(text) - 1)} or {text}
+
+
 def render_slices(slices: list[SourceSlice], blocks: dict[str, SourceBlock]) -> list[dict[str, Any]]:
     return [{"source_ref": s.source_ref, "start": s.start, "end": s.end,
              "text": blocks[s.source_ref].text[s.start:s.end]} for s in slices]
@@ -96,6 +107,13 @@ def window_prompt(window: BlueprintWindow, blocks: dict[str, SourceBlock], feedb
         "owned": render_slices(window.slices, blocks),
         "context_only": render_slices(window.context_slices, blocks),
     }), FEEDBACK=feedback)
+
+
+def emit_window(current: BlueprintWindow, windows: list[BlueprintWindow]) -> BlueprintWindow:
+    if current.slices:
+        current.window_id = "window-" + hashlib.sha256(_json([current.node_id, [span.model_dump() for span in current.slices]]).encode()).hexdigest()[:16]
+        windows.append(current)
+    return BlueprintWindow(window_id="window-0000000000000000", node_id=current.node_id, path=current.path, slices=[])
 
 
 def build_blueprint_windows(structure: TextbookStructure, blocks: list[SourceBlock], budget: PromptBudget) -> list[BlueprintWindow]:
@@ -114,14 +132,6 @@ def build_blueprint_windows(structure: TextbookStructure, blocks: list[SourceBlo
             parent = nodes[parent].parent_id
         current = BlueprintWindow(window_id="window-0000000000000000", node_id=node.node_id, path=path, slices=[])
 
-        def emit() -> None:
-            nonlocal current
-            if not current.slices:
-                return
-            current.window_id = "window-" + hashlib.sha256(_json([node.node_id, [s.model_dump() for s in current.slices]]).encode()).hexdigest()[:16]
-            windows.append(current)
-            current = BlueprintWindow(window_id="window-0000000000000000", node_id=node.node_id, path=path, slices=[])
-
         for span in node.owned_ranges:
             for ref in structure.ordered_source_refs[span.start:span.end]:
                 text = by_ref[ref].text
@@ -135,16 +145,23 @@ def build_blueprint_windows(structure: TextbookStructure, blocks: list[SourceBlo
                             low = end
                         else:
                             high = end - 1
+                    if low < len(text) and current.slices:
+                        current = emit_window(current, windows)
+                        continue
+                    if low > start and low < len(text):
+                        boundaries = [m.end() for m in re.finditer(r"\n[ \t]*\n|\n(?=#{1,6} )", text[start:low])]
+                        if boundaries:
+                            low = start + boundaries[-1]
                     if low == start:
                         if current.slices:
-                            emit()
+                            current = emit_window(current, windows)
                             continue
                         raise ProviderError("input budget cannot hold a source slice and local Blueprint schema", category="budget")
                     current.slices.append(SourceSlice(source_ref=ref, start=start, end=low))
                     start = low
                     if start < len(text):
-                        emit()
-        emit()
+                        current = emit_window(current, windows)
+        current = emit_window(current, windows)
     # Windows stay in textbook order even when a parent owns an introduction.
     positions = {ref: i for i, ref in enumerate(structure.ordered_source_refs)}
     windows.sort(key=lambda w: (positions[w.slices[0].source_ref], w.slices[0].start))
@@ -152,10 +169,10 @@ def build_blueprint_windows(structure: TextbookStructure, blocks: list[SourceBlo
         neighbors: list[SourceSlice] = []
         if index:
             s = windows[index - 1].slices[-1]
-            neighbors.append(SourceSlice(source_ref=s.source_ref, start=max(s.start, s.end - 160), end=s.end))
+            neighbors.append(SourceSlice(source_ref=s.source_ref, start=max(s.start, s.end - 600), end=s.end))
         if index + 1 < len(windows):
             s = windows[index + 1].slices[0]
-            neighbors.append(SourceSlice(source_ref=s.source_ref, start=s.start, end=min(s.end, s.start + 160)))
+            neighbors.append(SourceSlice(source_ref=s.source_ref, start=s.start, end=min(s.end, s.start + 600)))
         for s in neighbors:
             candidate = window.model_copy(update={"context_slices": [*window.context_slices, s]})
             if context_budget.fits(window_prompt(candidate, by_ref), LocalBlueprintDraft):
@@ -176,13 +193,20 @@ class BlueprintEngine:
         self.units: dict[str, KnowledgeUnit] = {}
         self.max_calls = positive_setting("BLUEPRINT_MAX_CALLS", 1000)
         self.request_count = 0
-        self.tool_steps = positive_setting("BLUEPRINT_COORDINATION_MAX_STEPS", 6)
+        self._unit_evidence: dict[str, tuple[str, dict[str, Any]]] = {}
+        # Coordination is an agent/tool loop.  Six steps is enough for the
+        # small fixtures, but real chapters often need several rounds to
+        # resolve title-based prerequisites across merged groups.  Keep the
+        # setting overrideable while giving the production default enough
+        # room to converge before declaring a blocked Blueprint.
+        self.tool_steps = positive_setting("BLUEPRINT_COORDINATION_MAX_STEPS", 16)
         self.cache_dir = Path(os.getenv("BLUEPRINT_CACHE_PATH", str(STORAGE_DIR / "cache" / "blueprint")))
         self.cache_enabled = os.getenv("BLUEPRINT_CACHE_ENABLED", "true").lower() not in {"false", "0", "no"}
         self.context_digest = hashlib.sha256(_json({ref: hashlib.sha256(b.text.encode()).hexdigest() for ref, b in self.blocks.items()}).encode()).hexdigest()
 
     def generate(self, phase: str, scope_id: str, schema: type[BaseModel],
-                 make_prompt: Callable[[str], str], validate: Callable[[Any], None]) -> Any:
+                 make_prompt: Callable[[str], str], validate: Callable[[Any], None],
+                 context: dict[str, Any] | None = None) -> Any:
         feedback = ""
         for attempt in range(1, self.max_attempts + 1):
             prompt = make_prompt(feedback)
@@ -195,15 +219,7 @@ class BlueprintEngine:
             try:
                 self.budget.check(prompt, schema)
                 identity = {key: getattr(self.provider, key, None) for key in ("provider", "model", "base_url", "config_version")}
-                context_fingerprint = None
-                if phase == "coordinate_blueprint":
-                    context_fingerprint = self.context_digest
-                def cache_key(candidate_prompt: str) -> str:
-                    return hashlib.sha256(_json({"version": 1, "identity": identity,
-                        "prompt": candidate_prompt, "schema": schema.model_json_schema(), "output": self.budget.output_tokens,
-                        "input_budget": self.budget.input_tokens,
-                        "context": context_fingerprint}).encode()).hexdigest()
-                record.cache_key = cache_key(prompt)
+                record.cache_key = self._cache_key(phase, prompt, schema)
                 cache = self.cache_dir / f"{record.cache_key}.json"
                 value = None
                 if self.cache_enabled:
@@ -226,21 +242,23 @@ class BlueprintEngine:
                     record.model_called = True
                     response = self.provider.generate_structured(StructuredGenerationRequest(
                         prompt=prompt, system_prompt=record.system_prompt, schema=schema, max_output_tokens=self.budget.output_tokens,
+                        context=context or {},
                         metadata={"agent": phase, "prompt_version": {
                             "generate_local_blueprint": LOCAL_BLUEPRINT_PROMPT_VERSION,
                             "coordinate_blueprint": COORDINATION_PROMPT_VERSION,
+                            "resolve_blueprint_relations": "resolve_blueprint_relations:v1",
                         }.get(phase), "run_id": self.document.run_id, "scope_id": scope_id, "attempt": attempt}))
                     record.raw_output = response.raw_text
                     record.provider_metadata = {**identity, "duration_ms": response.duration_ms, "usage": dict(response.usage)}
                     value = schema.model_validate(response.value.model_dump(mode="python"))
                     record.parsed_output = value.model_dump(mode="json")
                     validate(value)
-                    if self.cache_enabled:
+                    if self.cache_enabled and not (phase in {"coordinate_blueprint", "resolve_blueprint_relations"} and value.action == "read"):
                         cache.parent.mkdir(parents=True, exist_ok=True)
                         # A corrected response also satisfies the original request.
                         # Cache it under that request so a resumed run need not
                         # repeat the initial invalid call just to recover feedback.
-                        keys = {record.cache_key, cache_key(make_prompt(""))}
+                        keys = {record.cache_key, self._cache_key(phase, make_prompt(""), schema)}
                         for key in keys:
                             destination = self.cache_dir / f"{key}.json"
                             temporary = destination.with_suffix(f".{uuid.uuid4().hex}.tmp")
@@ -267,193 +285,409 @@ class BlueprintEngine:
             unit_id = self.trace.merges[unit_id]
         return unit_id
 
-    def local(self, window: BlueprintWindow) -> PlanGroup:
-        def check(draft: LocalBlueprintDraft) -> None:
-            if not draft.knowledge_units:
-                if not draft.skip_reason or not draft.skip_reason.strip():
-                    raise ValueError("empty local Blueprint requires a substantive skip_reason")
-                return
-            if draft.skip_reason:
-                raise ValueError("skip_reason and knowledge_units are mutually exclusive")
-            ids = [u.knowledge_unit_id or u.title for u in draft.knowledge_units]
-            if len(ids) != len(set(ids)):
-                raise ValueError("local unit IDs must be unique")
-            evidence = {s.source_ref for s in [*window.slices, *window.context_slices]}
-            if any(set(u.source_refs) - evidence for u in draft.knowledge_units):
-                raise ValueError("local source_refs must come from this source window")
-            if set(draft.representative_unit_ids) - set(ids):
-                raise ValueError("unknown representative unit ID")
-            if any(set(u.related_unit_ids) - set(ids) for u in draft.knowledge_units):
-                raise ValueError("unknown local related unit ID")
-            if any(not u.title.strip() or not u.learning_objectives for u in draft.knowledge_units):
-                raise ValueError("units require a title and learning objectives")
-            if any(not isinstance(o, str) for u in draft.knowledge_units for o in u.learning_objectives):
-                raise ValueError("new local objectives must be text; the program assigns objective IDs")
-            title_ids = {u.title: u.knowledge_unit_id or u.title for u in draft.knowledge_units}
-            dependencies = {u.knowledge_unit_id or u.title: {title_ids.get(r, r) for r in u.prerequisites} & set(ids) for u in draft.knowledge_units}
-            _topological_ids(ids, dependencies)
+    def _resolve_unit_ref(self, value: str) -> str | None:
+        return resolve_reference(self._canonical(value), set(self.units), title_index(self.units.values()))
 
+    def _cache_key(self, phase: str, prompt: str, schema: type[BaseModel]) -> str:
+        identity = {key: getattr(self.provider, key, None)
+                    for key in ("provider", "model", "base_url", "config_version", "thinking")}
+        return hashlib.sha256(_json({
+            "version": 2, "identity": identity, "temperature": None,
+            "policy": LOCAL_BLUEPRINT_PROMPT_VERSION if phase == "generate_local_blueprint" else COORDINATION_PROMPT_VERSION,
+            "steps": None if phase == "generate_local_blueprint" else self.tool_steps,
+            "prompt": prompt, "schema": schema.model_json_schema(),
+            "output": self.budget.output_tokens, "input_budget": self.budget.input_tokens,
+            "context": self.context_digest if phase in {"coordinate_blueprint", "resolve_blueprint_relations"} else None,
+        }).encode()).hexdigest()
+
+    def _check_local(self, draft: LocalBlueprintDraft, window: BlueprintWindow) -> None:
+        if not draft.knowledge_units:
+            if draft.continues_before or draft.continues_after:
+                raise ValueError("skipped windows cannot declare unit continuations")
+            if not draft.skip_reason or not draft.skip_reason.strip():
+                raise ValueError("empty local Blueprint requires a substantive skip_reason")
+            return
+        if draft.skip_reason:
+            raise ValueError("skip_reason and knowledge_units are mutually exclusive")
+        ids = [u.knowledge_unit_id or u.title for u in draft.knowledge_units]
+        if len(ids) != len(set(ids)):
+            raise ValueError("local unit IDs must be unique")
+        evidence = {s.source_ref for s in [*window.slices, *window.context_slices]}
+        if any(set(u.source_refs) - evidence for u in draft.knowledge_units):
+            raise ValueError("local source_refs must come from this source window")
+        if draft.continues_before and draft.continues_before != ids[:1]:
+            raise ValueError("continues_before must name only the first local unit")
+        if draft.continues_after and draft.continues_after != ids[-1:]:
+            raise ValueError("continues_after must name only the last local unit")
+        if set(draft.representative_unit_ids) - set(ids):
+            raise ValueError("unknown representative unit ID")
+        if any(set(u.related_unit_ids) - set(ids) for u in draft.knowledge_units):
+            raise ValueError("unknown local related unit ID")
+        if any(not u.title.strip() or not u.learning_objectives for u in draft.knowledge_units):
+            raise ValueError("units require a title and learning objectives")
+        dependencies = {u.knowledge_unit_id or u.title: set(u.prerequisites) & set(ids)
+            for u in draft.knowledge_units}
+        _topological_ids(ids, dependencies)
+
+
+    def local(self, window: BlueprintWindow) -> PlanGroup:
         draft = self.generate("generate_local_blueprint", window.window_id, LocalBlueprintDraft,
-            lambda feedback: window_prompt(window, self.blocks, feedback), check)
+            partial(window_prompt, window, self.blocks), partial(self._check_local, window=window),
+            context={"window": window})
         self.context_digest = hashlib.sha256((self.context_digest + _json(draft.model_dump())).encode()).hexdigest()
         namespace = window.window_id.removeprefix("window-")
         ids = {(u.knowledge_unit_id or u.title): f"ku-{namespace}-{index:04d}"
                for index, u in enumerate(draft.knowledge_units, start=1)}
-        titles = {u.title: ids[u.knowledge_unit_id or u.title] for u in draft.knowledge_units}
         unit_ids: list[str] = []
         for item in draft.knowledge_units:
             unit_id = ids[item.knowledge_unit_id or item.title]
             self.units[unit_id] = KnowledgeUnit(artifact_id=unit_id, run_id=self.document.run_id,
                 version=1, status="accepted", created_by=f"provider:{self.provider.provider}", title=item.title,
                 kind=item.kind, learning_objectives=item.learning_objectives, source_refs=item.source_refs,
-                prerequisites=[ids.get(r, titles.get(r, r)) for r in item.prerequisites],
-                related_unit_ids=[ids.get(r, titles.get(r, r)) for r in item.related_unit_ids],
+                prerequisites=[ids.get(r, r) for r in item.prerequisites],
+                external_prerequisites=list(item.external_prerequisites),
+                related_unit_ids=[ids.get(r, r) for r in item.related_unit_ids],
                 structure_node_ids=[window.node_id])
             unit_ids.append(unit_id)
         record = next(r for r in self.trace.windows if r.window.window_id == window.window_id)
         record.status = "accepted" if unit_ids else "skipped"
         record.unit_ids = unit_ids
         record.skip_reason = draft.skip_reason
+        record.continues_before = [ids[key] for key in draft.continues_before]
+        record.continues_after = [ids[key] for key in draft.continues_after]
         representatives = [ids[r] for r in draft.representative_unit_ids]
         return PlanGroup(group_id=window.window_id, title=" / ".join(window.path),
             summary=draft.summary or draft.title, unit_ids=unit_ids,
             representative_unit_ids=representatives or unit_ids[:1])
 
+    def _unresolved(self, unit_ids: list[str], *, include_candidates: bool = True) -> list[dict[str, Any]]:
+        result = []
+        for unit_id in dict.fromkeys(self._canonical(key) for key in unit_ids):
+            unit = self.units[unit_id]
+            for field in ("prerequisites", "related_unit_ids"):
+                for ref in getattr(unit, field):
+                    if self._resolve_unit_ref(ref) is None:
+                        candidates = self.tool(BlueprintToolRequest(tool="search_units", query=ref[:200]))["items"] if include_candidates else []
+                        result.append({"unit_id": unit_id, "title": unit.title, "field": field,
+                            "reference": ref, "candidates": [c for c in candidates if c["unit_id"] != unit_id]})
+        return result
+
+    def _boundary_candidates(self, scope: set[str]) -> list[dict[str, Any]]:
+        candidates = []
+        for left, right in zip(self.trace.windows, self.trace.windows[1:]):
+            if not left.unit_ids or not right.unit_ids:
+                continue
+            left_id, right_id = self._canonical(left.unit_ids[-1]), self._canonical(right.unit_ids[0])
+            if left_id == right_id or not {left_id, right_id}.issubset(scope):
+                continue
+            if not left.continues_after and not right.continues_before:
+                continue
+            candidates.append({"left_id": left_id, "left_title": preview_text(self.units[left_id].title, 40),
+                "right_id": right_id, "right_title": preview_text(self.units[right_id].title, 40),
+                "continues_after": bool(left.continues_after), "continues_before": bool(right.continues_before)})
+        return candidates
+
     def _card(self, group: PlanGroup) -> dict[str, Any]:
         representatives = list(dict.fromkeys(self._canonical(u) for u in group.representative_unit_ids))
-        return {"group_id": group.group_id, "title": group.title, "summary": group.summary,
-            "unit_count": len(group.unit_ids), "representatives": [{"unit_id": u, "title": self.units[u].title}
-            for u in representatives if u in self.units]}
+        return {"group_id": group.group_id, "title": preview_text(group.title, 80), "summary": preview_text(group.summary, 240),
+            "unresolved_count": len(self._unresolved(group.unit_ids, include_candidates=False)),
+            "unit_count": len(group.unit_ids), "representatives": [{"unit_id": u, "title": preview_text(self.units[u].title, 40),
+                "objective_preview": [preview_text(text, 60) for text in self.units[u].objective_texts[:2]],
+                "prerequisite_count": len(self.units[u].prerequisites),
+                "related_count": len(self.units[u].related_unit_ids)}
+            for u in representatives[:6] if u in self.units]}
 
     def tool(self, request: BlueprintToolRequest) -> dict[str, Any]:
+        self._page_overhead = encoded_size(_json({"continuation": request.model_dump()})) + 32
+        try:
+            result = self._tool(request)
+        finally:
+            del self._page_overhead
+        if result.get("next_offset") is not None:
+            result["continuation"] = request.model_copy(update={"offset": result["next_offset"]}).model_dump()
+        # Cache complete teaching records by their actual unit content, never by
+        # ID alone: relation repair/merge/update invalidates stale evidence.
+        if request.tool == "read_units":
+            for item in result.get("items", []):
+                unit = self.units.get(item.get("unit_id"))
+                if unit is not None and "objectives" in item:
+                    self._unit_evidence[unit.artifact_id] = (_json(unit.model_dump(mode="json")), item)
+        return result
+
+    def _tool(self, request: BlueprintToolRequest) -> dict[str, Any]:
         result: dict[str, Any] = {"tool": request.tool, "items": []}
         if request.tool == "search_units":
             query = request.query.casefold().strip()
             if not query:
                 return {**result, "error": "query is required"}
-            terms = query.split()
-            ranked = sorted(self.units.values(), key=lambda u: sum(t in (u.title + " " + " ".join(u.objective_texts)).casefold() for t in terms), reverse=True)
-            matching = [u for u in ranked if any(t in (u.title + " " + " ".join(u.objective_texts)).casefold() for t in terms)]
-            selected = matching[request.offset:request.offset + 5]
-            result["items"] = [{"unit_id": u.artifact_id, "title": u.title, "structure_node_ids": u.structure_node_ids} for u in selected]
-            result["next_offset"] = request.offset + len(selected) if request.offset + len(selected) < len(matching) else None
+            query_grams = _grams(query)
+            ranked = []
+            nodes = {node.node_id: node for node in self.structure.nodes}
+            for unit in self.units.values():
+                path = []
+                for node_id in unit.structure_node_ids:
+                    while node_id in nodes:
+                        node = nodes[node_id]
+                        path.append(node.title)
+                        node_id = node.parent_id
+                text = " ".join([unit.title, *unit.objective_texts, *path])
+                score = len(query_grams & _grams(text)) / len(query_grams)
+                if score >= 0.3:
+                    ranked.append((score, unit, path))
+            ranked.sort(key=lambda row: (-row[0], row[1].artifact_id))
+            selected = ranked[:]
+            records = [{"unit_id": u.artifact_id, "title": preview_text(u.title, 60),
+                                "path": [preview_text(part, 40) for part in path[:3]], "score": score}
+                               for score, u, path in selected]
+            return self._tool_page(request.tool, records, request.offset, max_items=5)
         elif request.tool == "read_units":
+            records = []
             for unit_id in request.ids:
                 unit_id = self._canonical(unit_id)
-                result["items"].append(self.units[unit_id].model_dump(mode="json") if unit_id in self.units else {"unit_id": unit_id, "error": "unknown_unit"})
+                if unit_id not in self.units:
+                    records.append({"unit_id": unit_id, "error": "unknown_unit"})
+                    continue
+                unit = self.units[unit_id]
+                view = {"unit_id": unit_id, "title": unit.title,
+                    "objectives": unit.objective_texts, "prerequisites": unit.prerequisites,
+                    "external_prerequisites": unit.external_prerequisites,
+                    "related_unit_ids": unit.related_unit_ids, "source_refs": unit.source_refs,
+                    "path": [n.title for n in self.structure.nodes if n.node_id in unit.structure_node_ids]}
+                if encoded_size(_json(view)) <= min(512, max(192, self.budget.input_tokens // 12 - 64)):
+                    records.append(view)
+                else:
+                    # Large fields are accessible losslessly as ordered fragments.
+                    for field, values in view.items():
+                        if field == "unit_id":
+                            continue
+                        for index, value in enumerate(values if isinstance(values, list) else [values]):
+                            start = 0
+                            while start < max(1, len(value)):
+                                end = min(len(value), start + 240)
+                                while end > start + 1 and encoded_size(value[start:end]) > 128:
+                                    end = start + max(1, (end - start) // 2)
+                                records.append({"unit_id": unit_id, "field": field, "index": index,
+                                    "text_start": start, "text": value[start:end]})
+                                start = max(end, start + 1)
+            return self._tool_page(request.tool, records, request.offset)
+        elif request.tool == "read_boundaries":
+            scope = getattr(self, "coordination_scope", set(self.units))
+            return self._tool_page(request.tool, self._boundary_candidates(scope), request.offset)
+
         else:
-            for ref in request.ids:
+            result["deferred_ids"] = request.ids[1:]
+            for ref in request.ids[:1]:
                 if ref not in self.blocks:
                     result["items"].append({"source_ref": ref, "error": "unknown_source"})
                     continue
                 text = self.blocks[ref].text
-                end = min(len(text), request.offset + 600)
+                end = min(len(text), request.offset + 240)
+                while end > request.offset + 1 and encoded_size(text[request.offset:end]) > 256:
+                    end = request.offset + max(1, (end - request.offset) // 2)
                 result["items"].append({"source_ref": ref, "start": request.offset, "text": text[request.offset:end],
                     "next_offset": end if end < len(text) else None})
         return result
 
-    def coordinate(self, groups: list[PlanGroup], scope_id: str) -> PlanGroup:
-        cards = [self._card(g) for g in groups]
-        scope_units = {self._canonical(u) for g in groups for u in g.unit_ids}
-        tool_result: Any = []
-        history: list[dict[str, Any]] = []
+    def _tool_page(self, tool: str, records: list[dict[str, Any]], offset: int, *, max_items: int | None = None) -> dict[str, Any]:
+        result: dict[str, Any] = {"tool": tool, "items": [], "next_offset": None}
+        limit = getattr(self, "_tool_limit", min(4096, max(256, self.budget.input_tokens // 4)))
+        limit = max(128, limit - getattr(self, "_page_overhead", 0))
+        for record in records[offset:]:
+            if max_items is not None and len(result["items"]) >= max_items:
+                break
+            if encoded_size(_json({**result, "items": [*result["items"], record]})) > limit:
+                break
+            result["items"].append(record)
+        end = offset + len(result["items"])
+        result["next_offset"] = end if end < len(records) else None
+        if end == offset and offset < len(records):
+            result["error"] = "single_tool_record_over_budget"
+        return result
 
-        def check(decision: CoordinationDecision) -> None:
-            if decision.action == "read":
-                if not decision.requests:
-                    raise ValueError("read requires tool requests")
-                return
-            expected = [g.group_id for g in groups]
-            if len(decision.group_order) != len(expected) or set(decision.group_order) != set(expected):
-                raise ValueError(f"group_order must be an exact permutation of {expected}")
-            if set(decision.representative_unit_ids) - scope_units:
-                raise ValueError("representative units must belong to this scope")
-            if len({u.unit_id for u in decision.unit_updates}) != len(decision.unit_updates):
-                raise ValueError("duplicate unit update")
-            for update in decision.unit_updates:
-                if update.unit_id not in scope_units:
-                    raise ValueError("update target outside this scope")
-                if update.before_id and (update.before_id not in scope_units or update.before_id == update.unit_id):
-                    raise ValueError("before_id must be another unit in this scope")
-                for ref in [*(update.prerequisites or []), *(update.related_unit_ids or [])]:
-                    if self._canonical(ref) not in self.units:
-                        raise ValueError(f"unknown relationship target: {ref}; use tools to resolve it")
-                if update.prerequisites and update.unit_id in update.prerequisites:
-                    raise ValueError("a unit cannot be its own prerequisite")
-            removed: set[str] = set()
-            for merge in decision.merges:
-                if merge.duplicate_id not in scope_units or merge.canonical_id not in scope_units or merge.duplicate_id == merge.canonical_id:
-                    raise ValueError("merge must name two different units in this scope")
-                if merge.duplicate_id in removed or merge.canonical_id in removed or any(m.canonical_id == merge.duplicate_id for m in decision.merges):
-                    raise ValueError("merge chains/duplicate targets require separate coordination steps")
-                removed.add(merge.duplicate_id)
-            # Validate the candidate transaction before any mutation or cache write.
-            candidate = {k: v.model_copy(deep=True) for k, v in self.units.items()}
-            for update in decision.unit_updates:
-                if update.prerequisites is not None:
-                    candidate[update.unit_id].prerequisites = [self._canonical(r) for r in update.prerequisites]
-                if update.related_unit_ids is not None:
-                    candidate[update.unit_id].related_unit_ids = [self._canonical(r) for r in update.related_unit_ids]
-            aliases = {m.duplicate_id: m.canonical_id for m in decision.merges}
-            for merge in decision.merges:
-                canonical = candidate[merge.canonical_id]
-                duplicate = candidate.pop(merge.duplicate_id)
-                canonical.prerequisites = list(dict.fromkeys([*canonical.prerequisites, *duplicate.prerequisites]))
-                canonical.related_unit_ids = list(dict.fromkeys([*canonical.related_unit_ids, *duplicate.related_unit_ids]))
-            for unit in candidate.values():
-                unit.prerequisites = list(dict.fromkeys(aliases.get(r, self._canonical(r)) for r in unit.prerequisites if aliases.get(r, self._canonical(r)) != unit.artifact_id))
-            unresolved = {r for unit_id in scope_units - removed for r in [*candidate[unit_id].prerequisites, *candidate[unit_id].related_unit_ids]
-                if aliases.get(r, self._canonical(r)) not in candidate}
-            if unresolved:
-                raise ValueError(f"resolve named relationships in this scope before finalize: {sorted(unresolved)}; use search_units/read_units")
-            _dependency_order(list(candidate), candidate, allow_unresolved=True)
+    def _seed_evidence(self, scope_units, make_prompt, schema):
+        history = []
+        allowance = PromptBudget(max(0, self.budget.input_tokens - 3072), self.budget.output_tokens)
+        for unit_id in sorted(scope_units):
+            cached = self._unit_evidence.get(unit_id)
+            unit = self.units.get(unit_id)
+            if cached is None or unit is None or cached[0] != _json(unit.model_dump(mode="json")):
+                continue
+            entry = {"tool": "read_units", "items": [cached[1]], "reused": True}
+            # Do not fill the next level with the entire lower-level transcript.
+            if encoded_size(_json([*history, entry])) > self.budget.input_tokens // 4:
+                break
+            if allowance.fits(make_prompt([*history, entry]), schema):
+                history.append(entry)
+        return history
+
+    def _read_history(self, requests, history, seen, make_prompt, schema, scope_id, step):
+        current = []
+        # Spend the real remaining request budget on useful evidence, shared
+        # across this decision's tools, instead of a hard-coded 640-token page.
+        available = self.budget.input_tokens - self.budget.estimate(make_prompt([]), schema) - 1024
+        self._tool_limit = max(256, min(4096, available // max(1, len(requests))))
+        try:
+            for request in requests:
+                key = _json(request.model_dump())
+                result = {"tool": request.tool, "error": "already_read; use earlier evidence or change query/offset"} if key in seen else self.tool(request)
+                seen.add(key)
+                self.trace.tool_calls.append({"scope_id": scope_id, "step": step + 1, "request": request.model_dump(), "result": result})
+                current.append(result)
+        finally:
+            del self._tool_limit
+        budget = PromptBudget(max(0, self.budget.input_tokens - 768), self.budget.output_tokens)
+
+        def compact(receipts):
+            retained = set()
+            projected = []
+            for receipt in receipts:
+                view = dict(receipt)
+                items = []
+                for item in receipt.get("items", []):
+                    key = _json(item)
+                    if key not in retained:
+                        retained.add(key)
+                        items.append(item)
+                view["items"] = items
+                omitted = len(receipt.get("items", [])) - len(items)
+                if omitted:
+                    view["already_in_history"] = omitted
+                projected.append(view)
+            return projected
+
+        evicted = False
+        while True:
+            combined = compact([*history, *current])
+            if evicted:
+                combined.insert(0, {"tool": "history", "omitted": True,
+                    "message": "Earlier evidence evicted; rereading is allowed."})
+            if budget.fits(make_prompt(combined), schema):
+                break
+            if not history:
+                raise HierarchyStop(f"tool_response_over_budget:{scope_id}:step={step + 1}; request fewer IDs")
+            evicted = True
+            history = history[1:]
+        if evicted:
+            seen.clear()
+            seen.update(_json(request.model_dump()) for request in requests)
+        return combined
+
+    def _check_coordination(self, decision: CoordinationDecision, groups: list[PlanGroup], scope_units: set[str]) -> None:
+        if decision.action == "read":
+            if not decision.requests:
+                raise ValueError("read requires tool requests")
+            return
+        expected = [g.group_id for g in groups]
+        if len(decision.group_order) != len(expected) or set(decision.group_order) != set(expected):
+            raise ValueError(f"group_order must be an exact permutation of {expected}")
+        if set(decision.representative_unit_ids) - scope_units:
+            raise ValueError("representative units must belong to this scope")
+        if len({u.unit_id for u in decision.unit_updates}) != len(decision.unit_updates):
+            raise ValueError("duplicate unit update")
+        for update in decision.unit_updates:
+            if update.unit_id not in scope_units:
+                raise ValueError("update target outside this scope")
+            if update.before_id and (update.before_id not in scope_units or update.before_id == update.unit_id):
+                raise ValueError("before_id must be another unit in this scope")
+            for ref in [*(update.prerequisites or []), *(update.related_unit_ids or [])]:
+                if self._resolve_unit_ref(ref) is None:
+                    raise ValueError(f"unknown relationship target: {ref}; use tools to resolve it")
+            for field in ("prerequisites", "related_unit_ids"):
+                revised = getattr(update, field)
+                if revised is not None:
+                    previous = {self._resolve_unit_ref(r) or r for r in getattr(self.units[update.unit_id], field)}
+                    replacement = {self._resolve_unit_ref(r) or r for r in revised}
+                    if previous - replacement and not update.reason.strip():
+                        raise ValueError("removing a relationship requires an explicit reason")
+            if update.prerequisites and update.unit_id in update.prerequisites:
+                raise ValueError("a unit cannot be its own prerequisite")
+        removed: set[str] = set()
+        for merge in decision.merges:
+            if merge.duplicate_id not in scope_units or merge.canonical_id not in scope_units or merge.duplicate_id == merge.canonical_id:
+                raise ValueError("merge must name two different units in this scope")
+            if merge.duplicate_id in removed or merge.canonical_id in removed or any(m.canonical_id == merge.duplicate_id for m in decision.merges):
+                raise ValueError("merge chains/duplicate targets require separate coordination steps")
+            removed.add(merge.duplicate_id)
+        candidate = self._coordination_candidate(decision)
+        blueprint = self._blueprint(list(candidate.values()))
+        result = validate_blueprint(blueprint, valid_source_refs=set(self.blocks))
+        blocking = [issue.message for issue in result.issues
+                    if issue.severity == "blocking" and (issue.target_id in scope_units or issue.target_id == blueprint.artifact_id)]
+        if blocking:
+            raise ValueError("; ".join(blocking) + "; use search_units/read_units to resolve relationships")
+        _dependency_order(list(candidate), candidate, allow_unresolved=True)
+
+    def _blueprint(self, units: list[KnowledgeUnit]) -> LearningBlueprint:
+        return LearningBlueprint(artifact_id=f"bp-{self.document.artifact_id}", run_id=self.document.run_id,
+            version=1, status="accepted", created_by=f"provider:{self.provider.provider}",
+            title=self.document.title, source_refs=self.structure.ordered_source_refs, knowledge_units=units)
+
+    def _coordination_candidate(self, decision: CoordinationDecision) -> dict[str, KnowledgeUnit]:
+        candidate = {key: unit.model_copy(deep=True) for key, unit in self.units.items()}
+        for update in decision.unit_updates:
+            for field in ("prerequisites", "related_unit_ids"):
+                refs = getattr(update, field)
+                if refs is not None:
+                    setattr(candidate[update.unit_id], field, [self._canonical(ref) for ref in refs])
+        normalize_relationships(candidate)
+        if any(unit.artifact_id in unit.prerequisites for unit in candidate.values()):
+            raise ValueError("a unit cannot be its own prerequisite")
+        aliases = {merge.duplicate_id: merge.canonical_id for merge in decision.merges}
+        for merge in decision.merges:
+            duplicate = candidate.pop(merge.duplicate_id)
+            canonical = candidate[merge.canonical_id]
+            for field in ("source_refs", "structure_node_ids", "prerequisites", "related_unit_ids", "external_prerequisites"):
+                setattr(canonical, field, list(dict.fromkeys([*getattr(canonical, field), *getattr(duplicate, field)])))
+            canonical.learning_objectives = [*canonical.learning_objectives, *duplicate.learning_objectives]
+        for unit in candidate.values():
+            for field in ("prerequisites", "related_unit_ids"):
+                refs = [aliases.get(ref, ref) for ref in getattr(unit, field)]
+                # A merge can collapse a legitimate edge between its two members.
+                refs = [ref for ref in refs if ref != unit.artifact_id or unit.artifact_id not in aliases.values()]
+                setattr(unit, field, list(dict.fromkeys(refs)))
+        return candidate
+
+    def _coordination_prompt(self, feedback: str, *, cards: list[dict[str, Any]], tool_result: Any, remaining: int) -> str:
+        return load_prompt("coordinate_blueprint", GROUPS=_json(cards), TOOL_RESULT=_json(tool_result),
+                           FEEDBACK=f"Remaining decisions: {remaining}. Final decision must finalize.\n{feedback}")
+
+
+    def coordinate(self, groups: list[PlanGroup], scope_id: str) -> PlanGroup:
+        repair_relationships(self, [u for g in groups for u in g.unit_ids])
+        scope_units = {self._canonical(u) for g in groups for u in g.unit_ids}
+        self.coordination_scope = scope_units
+        cards = self._coordination_cards(groups)
+        history = self._seed_evidence(scope_units,
+            lambda evidence: self._coordination_prompt("", cards=cards, tool_result=evidence, remaining=self.tool_steps),
+            CoordinationDecision)
+        tool_result: Any = history
+        seen: set[str] = set()
 
         for step in range(self.tool_steps):
-            decision = self.generate("coordinate_blueprint", f"{scope_id}:step-{step + 1}", CoordinationDecision,
-                lambda feedback: load_prompt("coordinate_blueprint", GROUPS=_json(cards), TOOL_RESULT=_json(tool_result), FEEDBACK=feedback), check)
+            schema = FinalCoordinationDecision if step == self.tool_steps - 1 else CoordinationDecision
+            decision = self.generate("coordinate_blueprint", f"{scope_id}:step-{step + 1}", schema,
+                partial(self._coordination_prompt, cards=cards, tool_result=tool_result, remaining=self.tool_steps - step),
+                partial(self._check_coordination, groups=groups, scope_units=scope_units), context={"groups": cards})
             if decision.action == "read":
-                tool_result = []
-                for request in decision.requests:
-                    result = self.tool(request)
-                    self.trace.tool_calls.append({"scope_id": scope_id, "step": step + 1, "request": request.model_dump(), "result": result})
-                    tool_result.append(result)
-                # Tool results cannot overflow the next request. Return an explicit
-                # narrowing request, never silently truncate source evidence.
-                prompt = load_prompt("coordinate_blueprint", GROUPS=_json(cards), TOOL_RESULT=_json(tool_result), FEEDBACK="")
-                if not self.budget.fits(prompt, CoordinationDecision):
-                    tool_result = {"error": "tool_result_over_budget; request fewer IDs or use read_sources with offsets"}
-                # Retain earlier useful reads while they fit. Dropping the first
-                # search result after a subsequent source read would erase the
-                # very ID the agent needed to resolve a cross-chapter relation.
-                current = tool_result if isinstance(tool_result, list) else [tool_result]
-                candidate_history = [*history, *current]
-                prompt = load_prompt("coordinate_blueprint", GROUPS=_json(cards), TOOL_RESULT=_json(candidate_history), FEEDBACK="")
-                if self.budget.fits(prompt, CoordinationDecision):
-                    history = candidate_history
-                else:
-                    history = [{"notice": "earlier tool results omitted to respect budget; reread if needed"}, *current]
+                history = self._read_history(decision.requests, history, seen,
+                    lambda evidence: self._coordination_prompt("", cards=cards, tool_result=evidence, remaining=self.tool_steps - step - 1),
+                    CoordinationDecision, scope_id, step)
                 tool_result = history
                 continue
             ordered = list(dict.fromkeys(self._canonical(u) for group_id in decision.group_order for g in groups if g.group_id == group_id for u in g.unit_ids))
+            candidate = self._coordination_candidate(decision)
             for update in decision.unit_updates:
-                unit = self.units[update.unit_id]
-                if update.prerequisites is not None:
-                    unit.prerequisites = [self._canonical(r) for r in update.prerequisites]
-                if update.related_unit_ids is not None:
-                    unit.related_unit_ids = [self._canonical(r) for r in update.related_unit_ids]
+                for field in ("prerequisites", "related_unit_ids"):
+                    if getattr(update, field) is not None:
+                        for ref in set(getattr(self.units[update.unit_id], field)) - set(getattr(candidate.get(update.unit_id, self.units[update.unit_id]), field)):
+                            self.trace.reference_resolutions.append({"unit_id": update.unit_id, "field": field,
+                                "original": ref, "outcome": "remove", "reason": update.reason})
+            self.units = candidate
+            for update in decision.unit_updates:
                 if update.before_id:
                     ordered.remove(update.unit_id)
                     ordered.insert(ordered.index(update.before_id), update.unit_id)
-            for merge in decision.merges:
-                duplicate = self.units.pop(merge.duplicate_id)
-                canonical = self.units[merge.canonical_id]
-                for field in ("source_refs", "structure_node_ids", "prerequisites", "related_unit_ids"):
-                    setattr(canonical, field, list(dict.fromkeys([*getattr(canonical, field), *getattr(duplicate, field)])))
-                canonical.learning_objectives = [*canonical.learning_objectives, *duplicate.learning_objectives]
-                self.trace.merges[merge.duplicate_id] = merge.canonical_id
-            for unit in self.units.values():
-                for field in ("prerequisites", "related_unit_ids"):
-                    setattr(unit, field, list(dict.fromkeys(self._canonical(r) for r in getattr(unit, field) if self._canonical(r) != unit.artifact_id)))
+            self.trace.merges.update({merge.duplicate_id: merge.canonical_id for merge in decision.merges})
             ordered = list(dict.fromkeys(self._canonical(u) for u in ordered))
             group = PlanGroup(group_id=scope_id, title=groups[0].title if len(groups) == 1 else self.document.title,
                 summary=decision.summary, unit_ids=ordered,
@@ -462,6 +696,63 @@ class BlueprintEngine:
             self.context_digest = hashlib.sha256((self.context_digest + _json(decision.model_dump())).encode()).hexdigest()
             return group
         raise HierarchyStop(f"coordination_tool_steps_exhausted:{scope_id}")
+
+    def _coordination_cards(self, groups: list[PlanGroup]) -> list[dict[str, Any]]:
+        cards = [self._card(g) for g in groups]
+        scope = {self._canonical(u) for g in groups for u in g.unit_ids}
+        boundaries = self._boundary_candidates(scope)
+        cards[0]["boundary_candidates"] = boundaries[:4]
+        cards[0]["boundary_candidate_count"] = len(boundaries)
+        cards[0]["boundary_next_offset"] = 4 if len(boundaries) > 4 else None
+        return cards
+
+    def _coordination_fits(self, groups: list[PlanGroup]) -> bool:
+        prompt = self._coordination_prompt("", cards=self._coordination_cards(groups), tool_result=[], remaining=self.tool_steps)
+        reserve = min(3072, self.budget.input_tokens // 3)
+        return PromptBudget(max(0, self.budget.input_tokens - reserve), self.budget.output_tokens).fits(prompt, CoordinationDecision)
+
+    def _reduce_groups(self, children: list[PlanGroup], title: str) -> PlanGroup:
+        groups = children
+        while len(groups) > 1:
+            batches: list[list[PlanGroup]] = []
+            for group in groups:
+                if not self._coordination_fits([group]):
+                    estimate = self.budget.estimate(self._coordination_prompt("", cards=self._coordination_cards([group]),
+                        tool_result=[], remaining=self.tool_steps), CoordinationDecision)
+                    raise HierarchyStop(f"coordination_single_group_over_budget:{group.group_id}:node={title}:estimated={estimate}:budget={self.budget.input_tokens}")
+                if batches and len(batches[-1]) < 4 and self._coordination_fits([*batches[-1], group]):
+                    batches[-1].append(group)
+                else:
+                    batches.append([group])
+            if len(batches) >= len(groups):
+                raise HierarchyStop(f"coordination_budget_cannot_reduce_groups:node={title}:groups={[g.group_id for g in groups]}:budget={self.budget.input_tokens}")
+            groups = [batch[0] if len(batch) == 1 else self.coordinate(batch, f"group-{len(self.trace.groups) + 1}") for batch in batches]
+        result = groups[0]
+        result.title = title
+        return result
+
+
+    def _finish(self, group: PlanGroup) -> tuple[list[str], list[Any]]:
+        """Repair final gate failures only in the affected scope, at most once."""
+        order = group.unit_ids
+        for repair in range(2):
+            self.trace.reference_resolutions.extend(normalize_relationships(self.units))
+            check = validate_blueprint(self._blueprint(list(self.units.values())), valid_source_refs=set(self.blocks))
+            blocking = [issue for issue in check.issues if issue.severity == "blocking"]
+            if not blocking:
+                return _dependency_order(order, self.units), check.issues
+            affected = {issue.target_id for issue in blocking}
+            if repair or not affected.issubset(self.units):
+                raise HierarchyStop("final_blueprint_invalid:" + ";".join(i.message for i in blocking))
+            scoped_ids = [key for key in order if key in affected]
+            repair_group = PlanGroup(group_id="final-issues", title=group.title,
+                summary="Final check: " + ";".join(i.message for i in blocking),
+                unit_ids=scoped_ids, representative_unit_ids=scoped_ids[:6])
+            repaired = self.coordinate([repair_group], "group-final-repair")
+            replacements = iter(repaired.unit_ids)
+            revised = [next(replacements, None) if key in affected else self._canonical(key) for key in order]
+            order = list(dict.fromkeys(key for key in revised if key is not None))
+        raise HierarchyStop("final_repair_exhausted")
 
     def run(self, windows: list[BlueprintWindow]) -> LearningBlueprint | None:
         self.trace.windows = [WindowResult(window=w) for w in windows]
@@ -498,38 +789,7 @@ class BlueprintEngine:
                     raise
             if not self.units:
                 raise HierarchyStop("all_windows_skipped_no_learning_units")
-            group_counter = 0
-            coordination_count = 0
-
-            def reduce_groups(children: list[PlanGroup], title: str) -> PlanGroup:
-                nonlocal group_counter, coordination_count
-                groups = children
-                while len(groups) > 1:
-                    batches: list[list[PlanGroup]] = []
-                    for group in groups:
-                        if not batches:
-                            batches.append([])
-                        candidate = [*batches[-1], group]
-                        prompt = load_prompt("coordinate_blueprint", GROUPS=_json([self._card(g) for g in candidate]), TOOL_RESULT="[]", FEEDBACK="")
-                        if len(candidate) > 4 or not PromptBudget(max(0, self.budget.input_tokens - 1800), self.budget.output_tokens).fits(prompt, CoordinationDecision):
-                            batches.append([group])
-                        else:
-                            batches[-1].append(group)
-                    if len(batches) >= len(groups):
-                        raise HierarchyStop("coordination_budget_cannot_reduce_groups")
-                    next_groups = []
-                    for batch in batches:
-                        if len(batch) == 1:
-                            next_groups.append(batch[0])
-                        else:
-                            group_counter += 1
-                            coordination_count += 1
-                            next_groups.append(self.coordinate(batch, f"group-{group_counter}"))
-                    groups = next_groups
-                result = groups[0]
-                result.title = title
-                return result
-
+            repair_relationships(self, list(self.units))
             # Assemble actual textbook siblings first, then chapters, then the
             # book. Execution windows never become fabricated textbook sections.
             local_by_window = {g.group_id: g for g in groups}
@@ -549,12 +809,14 @@ class BlueprintEngine:
                     if child.node_id in node_groups)
                 located.sort(key=lambda value: (value[0], value[1]))
                 if located:
-                    node_groups[node.node_id] = reduce_groups([value[2] for value in located], node.title)
+                    node_groups[node.node_id] = self._reduce_groups([value[2] for value in located], node.title)
             groups = [node_groups[self.structure.nodes[0].node_id]]
             # A single group still needs a chance to resolve named relations.
-            if coordination_count == 0:
+            if not self.trace.groups:
                 groups = [self.coordinate(groups, "group-final")]
-            ordered = _dependency_order(groups[0].unit_ids, self.units)
+            ordered, final_issues = self._finish(groups[0])
+            self.trace.ordering = {"before": groups[0].unit_ids, "after": ordered,
+                                      "moved_count": sum(a != b for a, b in zip(groups[0].unit_ids, ordered))}
             for record in self.trace.windows:
                 for original_id in record.unit_ids:
                     unit_id = self._canonical(original_id)
@@ -563,14 +825,13 @@ class BlueprintEngine:
             blueprint = LearningBlueprint(artifact_id=f"bp-{uuid.uuid4().hex[:12]}", run_id=self.document.run_id,
                 version=1, status="accepted", created_by=f"provider:{self.provider.provider}", title=self.document.title,
                 source_refs=self.structure.ordered_source_refs, knowledge_units=[self.units[u] for u in ordered])
-            check = validate_blueprint(blueprint, valid_source_refs=set(self.blocks))
-            if check.status != "accepted":
-                raise HierarchyStop("final_blueprint_invalid:" + ";".join(i.message for i in check.issues))
-            blueprint.issues = check.issues
+            blueprint.issues = final_issues
+            self.trace.unresolved_references = self._unresolved(list(self.units))
             self.trace.final_status = "accepted"
             self.trace.stop_reason = "all_windows_accounted_and_coordinated"
             return blueprint
         except (HierarchyStop, ValueError) as exc:
+            self.trace.unresolved_references = self._unresolved(list(self.units))
             self.trace.final_status = "failed" if getattr(exc, "failed", False) else "blocked"
             self.trace.stop_reason = str(exc)
             return None

@@ -52,9 +52,6 @@ NODES = {
                 "ingest",
                 "prepare_blueprint",
                 "hierarchical_blueprint",
-                "generate_blueprint_attempt",
-                "check_blueprint_attempt",
-                "route_blueprint",
                 "record_blocked_run",
                 "record_failed_run",
             ),
@@ -99,10 +96,6 @@ def next_planning_route(state: WorkflowState) -> str:
     )
 
 
-def blueprint_mode(state: WorkflowState) -> str:
-    return state.get("blueprint_mode", "single")
-
-
 def document_route(state: WorkflowState) -> str:
     return "block" if state.get("workflow_status") == "blocked" else "accept"
 
@@ -110,8 +103,7 @@ def document_route(state: WorkflowState) -> str:
 # Scheduling lives here only. Checkpoints persist LangGraph's own next tasks.
 EDGES = {
     "ingest": "prepare_blueprint",
-    "generate_blueprint_attempt": "check_blueprint_attempt",
-    "check_blueprint_attempt": "route_blueprint",
+    "prepare_blueprint": "hierarchical_blueprint",
     "record_blocked_run": END,
     "record_failed_run": END,
     "record_content_task_planning_blocked_run": END,
@@ -125,27 +117,10 @@ EDGES = {
     "assemble": END,
 }
 CONDITIONAL_EDGES = {
-    "prepare_blueprint": (
-        blueprint_mode,
-        {
-            "single": "generate_blueprint_attempt",
-            "fixture": "generate_blueprint_attempt",
-            "hierarchical": "hierarchical_blueprint",
-        },
-    ),
     "hierarchical_blueprint": (
         next_blueprint_route,
         {
             "accept": "plan_content_tasks",
-            "block": "record_blocked_run",
-            "fail": "record_failed_run",
-        },
-    ),
-    "route_blueprint": (
-        next_blueprint_route,
-        {
-            "accept": "plan_content_tasks",
-            "revise": "generate_blueprint_attempt",
             "block": "record_blocked_run",
             "fail": "record_failed_run",
         },
@@ -300,8 +275,6 @@ def run_minimal_workflow(
     initial: WorkflowState = {
         "run_id": run_id,
         "prompt_profile": validate_prompt_profile(prompt_profile),
-        "blueprint_attempts": [],
-        "blueprint_trace_id": f"trace-{uuid.uuid4().hex[:12]}",
     }
     if blueprint:
         initial.update(blueprint=blueprint, blueprint_preloaded=True)

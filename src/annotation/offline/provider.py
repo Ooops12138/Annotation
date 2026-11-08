@@ -27,22 +27,6 @@ from .quiz import quiz_draft
 class OfflineWorkflowCapabilities(WorkflowProviderCapabilities):
     """Workflow fixtures supported by the explicit offline profile."""
 
-    def use_blueprint_fixture(self, provider: Any) -> bool:
-        return not bool(getattr(provider, "structured_payload", {}))
-
-    def blueprint_draft(self, schema: type[BaseModel], payload: Mapping[str, Any]) -> BaseModel:
-        return schema.model_validate(payload)
-
-    def blueprint_source_refs(self, unit: Any, state: Mapping[str, Any]) -> tuple[list[str], bool]:
-        valid = set(state["source_refs"])
-        refs = [ref for ref in unit.source_refs if ref in valid]
-        if refs:
-            return refs, False
-        return list(state["source_refs"][:3]), True
-
-    def blueprint_artifact_id(self, fallback: str) -> str:
-        return "bp-fixture-001"
-
     def fixture_metadata(self, agent: str) -> dict[str, Any]:
         return {"agent": agent, "provider": "offline", "model": "offline-fixture",
                 "base_url": None, "config_version": "offline-v1", "duration_ms": 0,
@@ -124,7 +108,19 @@ class OfflineFixtureProvider:
         schema_name = request.schema.__name__
         unit = request.context.get("unit")
         pack = request.context.get("context_pack")
-        if not payload and schema_name == "ContentDraft" and unit is not None and pack is not None:
+        if not payload and schema_name == "LocalBlueprintDraft":
+            window = request.context["window"]
+            payload = {"title": window.path[-1], "summary": "离线局部蓝图替身，不代表模型教材理解质量",
+                "knowledge_units": [{"knowledge_unit_id": "local-unit", "title": window.path[-1],
+                    "kind": "concept", "learning_objectives": ["理解本节教材内容"],
+                    "source_refs": list(dict.fromkeys(span.source_ref for span in window.slices))}]}
+        elif not payload and schema_name == "RelationBatchDecision":
+            raise ProviderError("offline fixture requires explicit relationship decisions; it cannot classify unresolved concepts", category="schema")
+        elif not payload and schema_name in {"CoordinationDecision", "FinalCoordinationDecision"}:
+            groups = request.context["groups"]
+            payload = {"action": "finalize", "group_order": [g["group_id"] for g in groups],
+                "summary": "离线协调替身，保持教材顺序"}
+        elif not payload and schema_name == "ContentDraft" and unit is not None and pack is not None:
             payload = self.workflow.content_draft(unit, pack).model_dump(mode="python")
         elif not payload and schema_name == "ContentCritiqueDraft":
             payload = self.workflow.content_critique().model_dump(mode="python")
@@ -147,19 +143,7 @@ class OfflineFixtureProvider:
         elif not payload and schema_name == "InteractiveComponentCritiqueDraft":
             payload = self.workflow.component_critique().model_dump(mode="python")
         if not payload:
-            if request.schema.__name__ == "BlueprintDraft":
-                payload = {
-                    "title": "实数系与复数系（离线回归）",
-                    "knowledge_units": [
-                        {"knowledge_unit_id": "ku-real-structure", "title": "实数公理与基本性质", "kind": "concept", "learning_objectives": ["说明实数的代数和有序结构", "区分开区间、闭区间和半开区间"], "source_refs": [], "related_unit_ids": []},
-                        {"knowledge_unit_id": "ku-supremum", "title": "上确界与完全公理", "kind": "formula", "learning_objectives": ["区分最大元与上确界", "用逼近性质理解上确界", "理解完全公理的作用"], "prerequisites": ["ku-real-structure"], "source_refs": [], "related_unit_ids": ["ku-irrational"]},
-                        {"knowledge_unit_id": "ku-integers-rationals", "title": "整数与有理数", "kind": "theorem", "learning_objectives": ["说明整数的基本性质", "解释有理数的表示和稠密性"], "prerequisites": ["ku-real-structure"], "source_refs": [], "related_unit_ids": ["ku-irrational"]},
-                        {"knowledge_unit_id": "ku-irrational", "title": "无理数", "kind": "theorem", "learning_objectives": ["区分有理数与无理数", "说明非完全平方数平方根的无理性论证", "根据教材复述 e 的无理性证明"], "prerequisites": ["ku-integers-rationals", "ku-supremum"], "source_refs": [], "related_unit_ids": ["ku-supremum"]},
-                        {"knowledge_unit_id": "ku-absolute-inequality", "title": "绝对值与不等式", "kind": "formula", "learning_objectives": ["解释绝对值的几何意义", "推导三角不等式或柯西-施瓦茨不等式"], "prerequisites": ["ku-real-structure"], "source_refs": [], "related_unit_ids": ["ku-complex"]},
-                        {"knowledge_unit_id": "ku-complex", "title": "复数系及其运算", "kind": "example", "learning_objectives": ["把复数写成 x+iy", "计算复数的模和辐角", "用指数形式表达复数并识别主值"], "prerequisites": ["ku-real-structure", "ku-absolute-inequality"], "source_refs": [], "related_unit_ids": []},
-                    ],
-                }
-            elif request.schema.__name__ == "ContentDraft":
+            if request.schema.__name__ == "ContentDraft":
                 payload = {
                     "title": "知识单元讲解（离线回归）",
                     "content": "## 讲解\n\n这是按单个知识单元生成的离线回归讲解。实际教材事实由 ContextPack 中的来源片段支持。",
@@ -169,7 +153,7 @@ class OfflineFixtureProvider:
             elif request.schema.__name__ == "ContentTaskPlanDraft":
                 payload = {"tasks": []}
         try:
-            value = self.workflow.blueprint_draft(request.schema, payload)
+            value = request.schema.model_validate(payload)
         except Exception as exc:
             raise ProviderError(
                 f"offline structured fixture does not match schema: {exc}",

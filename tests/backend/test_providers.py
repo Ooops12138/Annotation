@@ -7,7 +7,9 @@ import pytest
 
 from pydantic import BaseModel
 
-from annotation.workflow.models import BlueprintDraft, ContentDraft
+from annotation.workflow.models import ContentDraft
+from annotation.workflow.blueprint_hierarchy import LocalBlueprintDraft
+from annotation.domain.textbook import BlueprintWindow, SourceSlice
 
 from annotation.offline import OfflineFixtureProvider
 from annotation.providers import (
@@ -46,12 +48,13 @@ def test_offline_structured_output_validates_against_requested_schema() -> None:
 def test_offline_builtin_fixtures_are_selected_per_schema() -> None:
     provider = OfflineFixtureProvider()
     blueprint = provider.generate_structured(
-        StructuredGenerationRequest(prompt="{}", schema=BlueprintDraft)
+        StructuredGenerationRequest(prompt="{}", schema=LocalBlueprintDraft, context={"window": BlueprintWindow(
+            window_id="test", node_id="node", path=["Book"], slices=[SourceSlice(source_ref="src", start=0, end=10)])})
     )
     document = provider.generate_structured(
         StructuredGenerationRequest(prompt="{}", schema=ContentDraft)
     )
-    assert isinstance(blueprint.value, BlueprintDraft)
+    assert isinstance(blueprint.value, LocalBlueprintDraft)
     assert isinstance(document.value, ContentDraft)
 
 

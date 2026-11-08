@@ -356,7 +356,7 @@ def test_nodes_return_copies_and_document_validation_preserves_errors(monkeypatc
         knowledge_units=[state["unit"]],
     )
     before = blueprint.model_dump()
-    update = blueprint_nodes.check_blueprint_attempt(
+    update = blueprint_nodes.hierarchical_blueprint(
         ctx,
         {"blueprint": blueprint, "blueprint_preloaded": True, "source_refs": ["src-1"]},
     )

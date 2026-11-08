@@ -44,6 +44,7 @@ class WorkflowContentProvider:
                         "acceptance_criteria": ["使用测试教材证据。"],
                     }
                     for index, unit_id in enumerate(self.quiz_unit_ids, start=1)
+                    if unit_id in {u.artifact_id for u in request.context["blueprint"].knowledge_units}
                 ]
             }
         elif schema_name == "RetrievalDecision":
@@ -244,10 +245,14 @@ def test_agent_cannot_write_when_retrieved_evidence_exceeds_budget(monkeypatch) 
     assert all(trace.attempts[0].generation_status == "provider_error" for trace in state["content_loop_traces"])
 
 
-def test_offline_workflow_keeps_six_unit_quiz_regression_and_emits_six_content_traces() -> None:
+def test_offline_workflow_keeps_six_unit_quiz_regression_and_emits_six_content_traces(monkeypatch) -> None:
+    _install_source_fixture(monkeypatch)
+    bp = _blueprint("content-six")
+    bp.knowledge_units.extend([KnowledgeUnit.model_validate({**unit.model_dump(), "artifact_id": f"extra-{i}", "learning_objectives": unit.objective_texts}) for i, unit in enumerate(bp.knowledge_units)])
     state = run_minimal_workflow(
         provider=OfflineFixtureProvider(),
         run_id=f"content-mock-regression-{uuid.uuid4().hex[:8]}",
+        blueprint=bp,
     )
 
     assert len(state["blueprint"].knowledge_units) == 6
@@ -261,7 +266,7 @@ def test_offline_workflow_keeps_six_unit_quiz_regression_and_emits_six_content_t
     assert all("## 跟做材料" not in artifact.content for artifact in state["content_artifacts"])
     rendered_nodes = [node for section in state["document"].sections for node in section.children]
     assert {node.type for node in rendered_nodes}.issubset({"markdown", "callout", "quiz", "interactive_component"})
-    assert any(node.type == "interactive_component" for node in rendered_nodes)
+    assert not any(node.type == "interactive_component" for node in rendered_nodes)
     assert not any(node.type == "callout" for node in rendered_nodes)
     assert len(state["quiz_artifacts"]) == 6
 

@@ -78,6 +78,8 @@ class WindowResult(BaseModel):
     status: Literal["pending", "accepted", "skipped", "blocked", "failed"] = "pending"
     unit_ids: list[str] = Field(default_factory=list)
     skip_reason: str | None = None
+    continues_before: list[str] = Field(default_factory=list)
+    continues_after: list[str] = Field(default_factory=list)
 
 
 class HierarchicalBlueprintTrace(BaseModel):
@@ -88,6 +90,9 @@ class HierarchicalBlueprintTrace(BaseModel):
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)
     groups: list[dict[str, Any]] = Field(default_factory=list)
     merges: dict[str, str] = Field(default_factory=dict)
+    ordering: dict[str, Any] = Field(default_factory=dict)
+    reference_resolutions: list[dict[str, str]] = Field(default_factory=list)
+    unresolved_references: list[dict[str, Any]] = Field(default_factory=list)
     final_status: Literal["accepted", "blocked", "failed"] = "blocked"
     stop_reason: str = "not_started"
 

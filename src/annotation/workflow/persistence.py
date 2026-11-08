@@ -56,14 +56,6 @@ def _model_dump(value: Any) -> Any:
     return value
 
 
-def _blueprint_loop_payload(state: Mapping[str, Any]) -> dict[str, Any] | None:
-    trace = state.get("blueprint_loop_trace") or state.get("blueprint_trace")
-    if trace is None:
-        return None
-    payload = _model_dump(trace)
-    return dict(payload) if isinstance(payload, Mapping) else None
-
-
 def _content_loop_traces(state: Mapping[str, Any]) -> list[Any]:
     values = state.get("content_loop_traces") or []
     return [_model_dump(value) for value in values]
@@ -154,65 +146,26 @@ def _blueprint_loop_summary(
             "accepted_window_count": sum(w.get("status") in {"accepted", "skipped"} for w in trace.get("windows", [])),
             "final_status": trace.get("final_status"), "stop_reason": trace.get("stop_reason"),
             "trace_path": state.get("blueprint_trace_path") or (str(trace_path.resolve()) if trace_path else None)}
-    payload = _blueprint_loop_payload(state)
-    if payload is None:
-        return None
-    attempts = payload.get("attempts") or []
-    path_value = (
-        state.get("blueprint_trace_path")
-        or state.get("blueprint_loop_trace_path")
-        or payload.get("artifact_path")
-        or (str(trace_path.resolve()) if trace_path else None)
-    )
-    return {
-        "trace_id": payload.get("trace_id"),
-        "attempt_count": len(attempts),
-        "max_attempts": payload.get("max_attempts"),
-        "final_status": payload.get("final_status"),
-        "stop_reason": payload.get("stop_reason"),
-        "trace_path": path_value,
-    }
+    return None
 
 
 def write_blueprint_artifact(state: Mapping[str, Any], *, root: str | Path | None = None) -> Path | None:
-    """Write the Blueprint, quality gate and optional revision-loop trace.
-
-    A failed provider call may not yield a Blueprint at all, but its trace is
-    still an auditable artifact. Legacy callers without a trace retain the
-    original v1 payload shape.
-    """
-
+    """Write the Blueprint and the unified hierarchical trace, including failed runs."""
     blueprint = state.get("blueprint")
-    loop_trace = _blueprint_loop_payload(state)
     hierarchy = state.get("blueprint_hierarchy_trace")
-    if blueprint is None and loop_trace is None and hierarchy is None:
+    if blueprint is None and hierarchy is None:
         return None
-    run_id = str(state.get("run_id") or (blueprint.run_id if blueprint is not None else (loop_trace or {}).get("run_id", "run")))
+    run_id = str(state.get("run_id") or blueprint.run_id)
     version = getattr(blueprint, "version", 1)
     path = _immutable_path(artifact_directory(run_id, "blueprint", root) / f"blueprint-v{version}.json")
-    if loop_trace is not None:
-        loop_trace["artifact_path"] = str(path.resolve())
-        # Keep the in-memory typed trace and the serialized trace identical.
-        trace_object = state.get("blueprint_loop_trace") or state.get("blueprint_trace")
-        if trace_object is not None and hasattr(trace_object, "artifact_path"):
-            trace_object.artifact_path = str(path.resolve())
     check = state.get("blueprint_check")
-    payload: dict[str, Any] = {
-        "schema_version": "blueprint-artifact-v3" if hierarchy is not None else "blueprint-artifact-v2" if loop_trace is not None else "blueprint-artifact-v1",
-        "blueprint": _model_dump(blueprint) if blueprint is not None else None,
-        "blueprint_check": _model_dump(check) if check is not None else None,
-    }
-    if loop_trace is not None:
-        loop_trace["artifact_path"] = str(path.resolve())
-        payload["loop_trace"] = loop_trace
-    if state.get("textbook_structure") is not None:
-        payload["textbook_structure"] = _model_dump(state["textbook_structure"])
-    if hierarchy is not None:
-        payload["hierarchy_trace"] = _model_dump(hierarchy)
-    return _write_json(
-        path,
-        payload,
-    )
+    return _write_json(path, {
+        "schema_version": "blueprint-artifact-v3",
+        "blueprint": _model_dump(blueprint),
+        "blueprint_check": _model_dump(check),
+        "textbook_structure": _model_dump(state.get("textbook_structure")),
+        "hierarchy_trace": _model_dump(hierarchy),
+    })
 
 
 def write_document_artifact(state: Mapping[str, Any], *, root: str | Path | None = None) -> Path | None:
@@ -442,9 +395,8 @@ def persist_workflow_snapshots(state: dict[str, Any]) -> dict[str, Any]:
     state["fact_check_artifact_path"] = str(fact_check_path.resolve()) if fact_check_path else ""
     interactive_component_path = write_interactive_component_artifact(state)
     state["interactive_component_artifact_path"] = str(interactive_component_path.resolve()) if interactive_component_path else ""
-    if blueprint_path and (_blueprint_loop_payload(state) is not None or state.get("blueprint_hierarchy_trace") is not None):
+    if blueprint_path and state.get("blueprint_hierarchy_trace") is not None:
         state["blueprint_trace_path"] = str(blueprint_path.resolve())
-        state["blueprint_loop_trace_path"] = str(blueprint_path.resolve())
     manifest_path = write_run_manifest(
         state,
         blueprint_path=blueprint_path,

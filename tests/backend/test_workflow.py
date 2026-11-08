@@ -1,7 +1,7 @@
 from annotation.offline import OfflineFixtureProvider
 from annotation.workflow import run_minimal_workflow
 from annotation.workflow.content_support import _formula_format_issues
-from annotation.workflow.helpers import review_report_for, source_context
+from annotation.workflow.helpers import review_report_for
 from annotation.domain.artifacts import (
     CalloutNode,
     DocumentSection,
@@ -14,64 +14,15 @@ from annotation.domain.artifacts import (
 from pathlib import Path
 
 
-def test_source_context_uses_all_non_empty_blocks_by_default() -> None:
-    blocks = [
-        SourceBlock(
-            artifact_id="source-first-artifact",
-            source_ref="source-first",
-            document_id="source-document",
-            run_id="source-run",
-            version=1,
-            status="draft",
-            created_by="test",
-            page_number=1,
-            block_index=0,
-            text="第一段教材内容",
-            text_hash="hash-first",
-            parser_version="test",
-            bbox=(0, 0, 1, 1),
-        ),
-        SourceBlock(
-            artifact_id="source-empty-artifact",
-            source_ref="source-empty",
-            document_id="source-document",
-            run_id="source-run",
-            version=1,
-            status="draft",
-            created_by="test",
-            page_number=1,
-            block_index=1,
-            text="   ",
-            text_hash="hash-empty",
-            parser_version="test",
-            bbox=(0, 0, 1, 1),
-        ),
-        SourceBlock(
-            artifact_id="source-last-artifact",
-            source_ref="source-last",
-            document_id="source-document",
-            run_id="source-run",
-            version=1,
-            status="draft",
-            created_by="test",
-            page_number=2,
-            block_index=0,
-            text="最后一段教材内容",
-            text_hash="hash-last",
-            parser_version="test",
-            bbox=(0, 0, 1, 1),
-        ),
-    ]
-
-    context = source_context(blocks)
-
-    assert "[source-first]" in context
-    assert "[source-last]" in context
-    assert "[source-empty]" not in context
-    assert source_context(blocks, limit=1).count("[") == 1
+def _install_source_fixture(monkeypatch):
+    from test_blueprint_hierarchy import source
+    import annotation.workflow.blueprint_nodes as nodes
+    monkeypatch.setattr(nodes, "parse_pdf", lambda path, run_id: source([
+        "第1章 实数", "第2章 上确界", "第3章 整数", "第4章 无理数", "第5章 不等式", "第6章 复数"], run_id=run_id))
 
 
-def test_minimal_langgraph_workflow_produces_traceable_document() -> None:
+def test_minimal_langgraph_workflow_produces_traceable_document(monkeypatch) -> None:
+    _install_source_fixture(monkeypatch)
     state = run_minimal_workflow(provider=OfflineFixtureProvider(), run_id="run-test-001")
     assert not state.get("errors")
     assert state["blueprint"].run_id == "run-test-001"
@@ -79,12 +30,12 @@ def test_minimal_langgraph_workflow_produces_traceable_document() -> None:
     assert state["document"].status == (
         "published" if state["review_report"].status == "passed" else "accepted"
     )
-    assert state["document"].blueprint_version.startswith("bp-fixture-001:v1")
+    assert state["document"].blueprint_version == f"{state["blueprint"].artifact_id}:v1"
     assert state["provider_metadata"]["provider"] == "offline"
     assert len(state["document"].source_refs) <= 5
     assert not state.get("warnings")
     assert len(state["blueprint"].knowledge_units) >= 4
-    assert len(state["blueprint"].knowledge_units) == 6
+    assert len(state["blueprint"].knowledge_units) == len(state["blueprint_hierarchy_trace"].windows)
     assert state["blueprint_check"].status == "accepted"
     assert len(state["document"].sections) >= 3
     assert sum(len(section.children) for section in state["document"].sections) >= 10
@@ -96,7 +47,7 @@ def test_minimal_langgraph_workflow_produces_traceable_document() -> None:
     assert all(artifact.content_type == "explanation" for artifact in state["content_artifacts"])
     assert all(task.content_types == ["explanation", "quiz"] for task in state["content_tasks"])
     assert all(task.status == "accepted" for task in state["content_tasks"])
-    assert len(state["quiz_artifacts"]) == 6
+    assert len(state["quiz_artifacts"]) == len(state["content_tasks"])
     assert all(artifact.question_count == len(artifact.questions) for artifact in state["quiz_artifacts"])
     assert state["quiz_coverage_report"].status == "passed"
     assert sum(getattr(node, "type", "") == "quiz" for section in state["document"].sections for node in section.children) == sum(
@@ -110,7 +61,8 @@ def test_minimal_langgraph_workflow_produces_traceable_document() -> None:
     assert state["review_report"].checks["formula_format"] == "passed"
 
 
-def test_workflow_can_use_a_stable_logical_document_id() -> None:
+def test_workflow_can_use_a_stable_logical_document_id(monkeypatch) -> None:
+    _install_source_fixture(monkeypatch)
     state = run_minimal_workflow(
         provider=OfflineFixtureProvider(),
         run_id="run-stable-document-id",
@@ -139,7 +91,8 @@ def test_formula_format_review_keeps_text_math_and_rejects_malformed_math() -> N
     assert not any("正文节点“bracketed”" in issue for issue in issues)
 
 
-def test_review_report_version_is_incremented_for_a_repeated_run() -> None:
+def test_review_report_version_is_incremented_for_a_repeated_run(monkeypatch) -> None:
+    _install_source_fixture(monkeypatch)
     first = run_minimal_workflow(provider=OfflineFixtureProvider(), run_id="run-review-version-test")
     second = run_minimal_workflow(provider=OfflineFixtureProvider(), run_id="run-review-version-test")
     assert second["review_report"].version > first["review_report"].version

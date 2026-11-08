@@ -42,7 +42,22 @@ def build_textbook_structure(document: SourceDocument, blocks: list[SourceBlock]
         page_positions.setdefault(block.page_number, []).append(index)
     # Bookmarks are captured by the parser while the PDF is open. Never reopen
     # an unrelated path on fixture/preloaded imports.
-    for bookmark in document.run_metadata.get("toc", []):
+    bookmarks = document.run_metadata.get("toc", [])
+    # Export tools often generate one bookmark per scanned page, using the
+    # filename plus an increasing page number instead of actual chapter titles.
+    numbered = {}
+    for bookmark in bookmarks:
+        if (isinstance(bookmark, (list, tuple)) and len(bookmark) >= 3
+                and isinstance(bookmark[0], int) and isinstance(bookmark[2], int)
+                and bookmark[0] > 0 and bookmark[2] > 0):
+            match = re.fullmatch(r"(.{8,}?)\s+(\d+)", str(bookmark[1]).strip())
+            if match and _heading(match[1]) is None:
+                numbered.setdefault((bookmark[0], match[1]), []).append((bookmark[2], int(match[2])))
+    page_series = {key for key, entries in numbered.items() if len(entries) >= 3
+                   and len({page for page, _ in entries}) == len(entries)
+                   and len({number - page for page, number in entries
+                            if isinstance(page, int)}) == 1}
+    for bookmark in bookmarks:
         if not isinstance(bookmark, (list, tuple)) or len(bookmark) < 3:
             warnings.append("invalid_bookmark")
             continue
@@ -50,11 +65,15 @@ def build_textbook_structure(document: SourceDocument, blocks: list[SourceBlock]
         if not isinstance(level, int) or not isinstance(page, int) or level < 1 or page < 1:
             warnings.append("invalid_bookmark")
             continue
+        match = re.fullmatch(r"(.{8,}?)\s+(\d+)", str(title).strip())
         positions = page_positions.get(page, [])
         if not positions:
             warnings.append(f"bookmark_without_text:{page}:{title}")
             continue
         matches = [i for i in positions if _normalized(str(title)) in _normalized(ordered[i].text)]
+        if not matches and match and (level, match[1]) in page_series:
+            warnings.append(f"ignored_page_bookmark:{page}:{title}")
+            continue
         position = matches[0] if matches else positions[0]
         if not matches:
             warnings.append(f"bookmark_page_fallback:{page}:{title}")
@@ -94,6 +113,19 @@ def build_textbook_structure(document: SourceDocument, blocks: list[SourceBlock]
             node.owned_ranges[-1].end = index + 1
         else:
             node.owned_ranges.append(SourceRange(start=index, end=index + 1))
+    # A parent heading immediately followed by its first subheading belongs
+    # with that child's material. Keep the structural node, and every source ref.
+    for node in nodes:
+        children = [child for child in nodes if child.parent_id == node.node_id]
+        if not children or not node.owned_ranges:
+            continue
+        first = children[0]
+        indices = [i for span in node.owned_ranges for i in range(span.start, span.end)]
+        if indices and indices[-1] + 1 == first.start and all(
+                _heading(ordered[i].text) is not None
+                and len(ordered[i].text.strip().splitlines()) == 1 for i in indices):
+            first.owned_ranges = [*node.owned_ranges, *first.owned_ranges]
+            node.owned_ranges = []
     if len(nodes) == 1:
         warnings.append("unsectioned_textbook")
     warnings.extend(document.warnings)

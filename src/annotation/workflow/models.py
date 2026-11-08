@@ -7,9 +7,7 @@ from typing import Any, Literal, TypedDict
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from annotation.domain.artifacts import (
-    BlueprintAttemptTrace,
     BlueprintCheckResult,
-    BlueprintLoopTrace,
     ContentArtifact,
     EvidenceNote,
     ContentAttemptTrace,
@@ -26,7 +24,6 @@ from annotation.domain.artifacts import (
     InteractiveComponentSpec,
     InteractiveComponentTask,
     KnowledgeUnit,
-    LearningObjective,
     LearningBlueprint,
     LearningDocument,
     QuizArtifact,
@@ -37,23 +34,19 @@ from annotation.domain.artifacts import (
 )
 from annotation.domain.textbook import BlueprintWindow, HierarchicalBlueprintTrace, TextbookStructure
 
-class BlueprintDraftUnit(BaseModel):
+class LocalBlueprintUnit(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     knowledge_unit_id: str | None = Field(default=None, description=(
-        "Response-local reference key for a new unit, e.g. u1; the program assigns its final ID. "
-        "When revising an existing unit, copy its exact ID from the previous blueprint."
+        "Response-local reference key, e.g. u1; the program assigns its final ID."
     ))
     title: str
     kind: Literal["concept", "formula", "theorem", "example", "skill"] = "concept"
-    learning_objectives: list[str | LearningObjective] = Field(default_factory=list)
+    learning_objectives: list[str] = Field(default_factory=list)
     prerequisites: list[str] = Field(default_factory=list)
+    external_prerequisites: list[str] = Field(default_factory=list)
     source_refs: list[str] = Field(default_factory=list)
     related_unit_ids: list[str] = Field(default_factory=list)
-
-
-class BlueprintDraft(BaseModel):
-    title: str
-    knowledge_units: list[BlueprintDraftUnit] = Field(default_factory=list)
-    skip_reason: str | None = None
 
 
 class CalloutDraft(BaseModel):
@@ -316,25 +309,11 @@ class WorkflowState(TypedDict, total=False):
     source_refs: list[str]
     textbook_structure: TextbookStructure
     blueprint_windows: list[BlueprintWindow]
-    blueprint_mode: str
     blueprint_hierarchy_trace: HierarchicalBlueprintTrace
     blueprint: LearningBlueprint
     blueprint_check: BlueprintCheckResult
-    blueprint_attempt: int
-    blueprint_attempts: list[BlueprintAttemptTrace]
-    blueprint_generation_status: str
-    blueprint_generation_error: str
-    blueprint_generation_error_category: str
-    blueprint_generation_retryable: bool
-    blueprint_generation_prompt: str
-    blueprint_generation_raw_output: str
-    blueprint_generation_parsed_output: dict[str, Any] | None
-    blueprint_feedback: list[ReviewIssue]
     blueprint_route: str
-    blueprint_loop_trace: BlueprintLoopTrace
     blueprint_trace_path: str
-    blueprint_loop_trace_path: str
-    blueprint_trace_id: str
     blueprint_preloaded: bool
     workflow_status: str
     content_blueprint: LearningBlueprint

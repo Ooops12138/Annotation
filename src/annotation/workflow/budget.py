@@ -17,6 +17,23 @@ def encoded_size(text: str) -> int:
     return count_tokens(text)
 
 
+def preview_text(text: str, token_limit: int) -> str:
+    """Bound display hints by tokens; full evidence remains available through tools."""
+    if encoded_size(text) <= token_limit:
+        return text
+    left, right = 0, len(text)
+    result = ""
+    while left <= right:
+        middle = (left + right) // 2
+        candidate = text[:middle] + "…"
+        if encoded_size(candidate) <= token_limit:
+            result = candidate
+            left = middle + 1
+        else:
+            right = middle - 1
+    return result
+
+
 def positive_setting(name: str, default: int) -> int:
     value = int(os.getenv(name, str(default)))
     if value <= 0:

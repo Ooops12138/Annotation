@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import json
 import uuid
 
 from annotation.domain.artifacts import KnowledgeUnit, LearningBlueprint, SourceBlock, SourceDocument
-from annotation.providers import ProviderError
 from tests.support.providers import SequenceProvider
 from annotation.workflow import run_minimal_workflow
 
@@ -67,192 +65,28 @@ def _payload(*, refs: list[str] | None = None, warning: bool = False, unit_count
     }
 
 
-def _run(monkeypatch, provider, *, attempts: int = 3):
+def test_preloaded_blueprint_is_validated_without_blueprint_calls(monkeypatch):
     _install_source_fixture(monkeypatch)
-    return run_minimal_workflow(
-        provider=provider,
-        run_id=f"loop-test-{uuid.uuid4().hex[:10]}",
-        blueprint_max_attempts=attempts,
-    )
-
-
-def test_first_pass_accepts_with_one_blueprint_call(monkeypatch) -> None:
-    provider = SequenceProvider([_payload()])
-    state = _run(monkeypatch, provider)
-
-    assert len(provider.calls) == 1
-    assert state["workflow_status"] == "accepted"
-    trace = state["blueprint_loop_trace"]
-    assert trace.final_status == "accepted"
-    assert trace.final_attempt == 1
-    assert trace.attempts[0].route == "accept"
-    assert trace.attempts[0].raw_output
-
-
-def test_blueprint_unit_count_follows_learning_need(monkeypatch) -> None:
-    provider = SequenceProvider([_payload(unit_count=1)])
-    state = _run(monkeypatch, provider)
-
-    assert state["workflow_status"] == "accepted"
-    assert len(state["blueprint"].knowledge_units) == 1
-
-
-def test_blueprint_conversion_does_not_truncate_units(monkeypatch) -> None:
-    provider = SequenceProvider([_payload(unit_count=13)])
-    state = _run(monkeypatch, provider)
-
-    assert state["workflow_status"] == "accepted"
-    assert len(state["blueprint"].knowledge_units) == 13
-
-
-def test_empty_blueprint_sources_do_not_trigger_revision(monkeypatch) -> None:
-    provider = SequenceProvider([_payload(refs=[]), _payload()])
-    state = _run(monkeypatch, provider)
-
-    assert len(provider.calls) == 1
-    assert state["workflow_status"] == "accepted"
-    trace = state["blueprint_loop_trace"]
-    assert [attempt.route for attempt in trace.attempts] == ["accept"]
-
-
-def test_empty_blueprint_sources_are_optional_metadata(monkeypatch) -> None:
-    provider = SequenceProvider([_payload(refs=[]), _payload(refs=[]), _payload(refs=[])])
-    state = _run(monkeypatch, provider)
-
-    assert len(provider.calls) == 1
-    assert state["workflow_status"] == "accepted"
-    trace = state["blueprint_loop_trace"]
-    assert trace.final_status == "accepted"
-    assert trace.attempts[-1].route == "accept"
-
-
-def test_warning_only_does_not_revise(monkeypatch) -> None:
-    provider = SequenceProvider([_payload(warning=True)])
-    state = _run(monkeypatch, provider)
-
-    assert len(provider.calls) == 1
-    assert state["workflow_status"] == "accepted"
-    assert state["blueprint_loop_trace"].attempts[0].route == "accept"
-    assert state["blueprint_loop_trace"].attempts[0].check.issues
-    assert all(issue.severity == "warning" for issue in state["blueprint_loop_trace"].attempts[0].check.issues)
-
-
-def test_blueprint_sources_do_not_constrain_retrieval(monkeypatch) -> None:
-    provider = SequenceProvider([_payload(refs=["not-in-textbook"])])
-    state = _run(monkeypatch, provider, attempts=1)
-
-    assert state["workflow_status"] == "accepted"
-    assert state["blueprint"].knowledge_units[0].source_refs == ["not-in-textbook"]
-    assert not state["blueprint_loop_trace"].attempts[0].check.issues
-
-
-def test_schema_and_provider_errors_keep_distinct_terminal_statuses(monkeypatch) -> None:
-    invalid_kind = {**_payload(), "knowledge_units": [{"title": "错误", "kind": "unknown"}]}
-    schema_state = _run(monkeypatch, SequenceProvider([invalid_kind]), attempts=1)
-    schema_attempt = schema_state["blueprint_loop_trace"].attempts[0]
-    assert schema_state["workflow_status"] == "blocked"
-    assert schema_attempt.generation_status == "schema_error"
-    assert schema_attempt.raw_output
-
-    failed_state = _run(
-        monkeypatch,
-        SequenceProvider([ProviderError("bad credentials", category="authentication")]),
-    )
-    assert failed_state["workflow_status"] == "failed"
-    assert failed_state["blueprint_loop_trace"].final_status == "failed"
-    assert failed_state["blueprint_loop_trace"].stop_reason == "non_retryable_provider_error"
-
-
-def test_retryable_provider_error_can_recover(monkeypatch) -> None:
-    provider = SequenceProvider([
-        ProviderError("temporary timeout", category="timeout", retryable=True),
-        _payload(),
-    ])
-    state = _run(monkeypatch, provider)
-
-    assert len(provider.calls) == 2
-    assert state["workflow_status"] == "accepted"
-    assert state["blueprint_loop_trace"].attempts[0].generation_status == "provider_error"
-    assert state["blueprint_loop_trace"].attempts[0].route == "revise"
-
-
-def test_preloaded_blueprint_is_checked_without_model_call(monkeypatch) -> None:
-    _install_source_fixture(monkeypatch)
-    blueprint = LearningBlueprint(
-        artifact_id="preloaded-blueprint",
-        run_id="preloaded-run",
-        version=1,
-        status="accepted",
-        source_refs=["src-1"],
-        created_by="test",
-        title="预加载蓝图",
-        knowledge_units=[
-            KnowledgeUnit(
-                artifact_id=f"preloaded-unit-{index}",
-                run_id="preloaded-run",
-                version=1,
-                status="accepted",
-                source_refs=["src-1"],
-                created_by="test",
-                title=title,
-                kind=kind,
-                learning_objectives=["目标"],
-            )
-            for index, (title, kind) in enumerate((("概念", "concept"), ("定理", "theorem"), ("例题", "example")))
-        ],
-    )
+    bp = LearningBlueprint(artifact_id="preloaded", run_id="preloaded", version=1,
+        status="accepted", created_by="test", title="Book", knowledge_units=[KnowledgeUnit(
+            artifact_id="unit", run_id="preloaded", version=1, status="accepted", created_by="test",
+            title="Unit", kind="concept", learning_objectives=["Goal"])])
     provider = SequenceProvider([])
-    state = run_minimal_workflow(provider=provider, run_id="preloaded-run", blueprint=blueprint)
-
+    state = run_minimal_workflow(provider=provider, run_id=f"preloaded-{uuid.uuid4().hex[:8]}", blueprint=bp)
     assert provider.calls == []
-    assert state["blueprint_loop_trace"].attempts == []
-    assert state["blueprint_loop_trace"].final_attempt == 0
-    assert state["blueprint_loop_trace"].stop_reason == "preloaded"
+    assert state["blueprint_hierarchy_trace"].stop_reason == "preloaded"
     assert state["workflow_status"] == "accepted"
 
 
-def test_empty_preloaded_blueprint_is_blocked(monkeypatch) -> None:
+def test_single_window_uses_local_and_coordinator_nodes(monkeypatch):
+    from annotation.offline import OfflineFixtureProvider
     _install_source_fixture(monkeypatch)
-    blueprint = LearningBlueprint(
-        artifact_id="empty-preloaded-blueprint",
-        run_id="empty-preloaded-run",
-        version=1,
-        status="accepted",
-        source_refs=["src-1"],
-        created_by="test",
-        title="空蓝图",
-        knowledge_units=[],
-    )
-    state = run_minimal_workflow(
-        provider=SequenceProvider([]),
-        run_id="empty-preloaded-run",
-        blueprint=blueprint,
-    )
-
-    assert state["workflow_status"] == "blocked"
-    assert state["blueprint_check"].status == "needs_revision"
-    assert any(issue.issue_id == "blueprint-empty" for issue in state["blueprint_check"].issues)
-
-
-def test_trace_artifact_contains_loop_and_run_summary(monkeypatch) -> None:
-    provider = SequenceProvider([_payload(refs=[])])
-    state = _run(monkeypatch, provider)
-
-    blueprint_payload = json.loads(open(state["blueprint_artifact_path"], encoding="utf-8").read())
-    run_payload = json.loads(open(state["run_manifest_path"], encoding="utf-8").read())
-    assert blueprint_payload["schema_version"] == "blueprint-artifact-v2"
-    assert len(blueprint_payload["loop_trace"]["attempts"]) == 1
-    assert run_payload["blueprint_loop"]["attempt_count"] == 1
-    assert run_payload["blueprint_loop"]["trace_path"] == state["blueprint_trace_path"]
-
-
-def test_real_blueprint_duplicate_ids_are_rejected_without_renaming():
-    import pytest
-    from annotation.workflow.helpers import blueprint_from_draft
-    from annotation.workflow.models import BlueprintDraft
-    draft = BlueprintDraft.model_validate({"title": "chapter", "knowledge_units": [
-        {"knowledge_unit_id": "duplicate", "title": title, "source_refs": ["src-1"]}
-        for title in ["one", "two"]
-    ]})
-    with pytest.raises(ProviderError, match="duplicate knowledge unit id"):
-        blueprint_from_draft(draft=draft, state={"run_id": "r", "source_refs": ["src-1"]}, provider_name="test")
+    nodes = []
+    state = run_minimal_workflow(provider=OfflineFixtureProvider(), run_id=f"unified-{uuid.uuid4().hex[:8]}",
+        progress_callback=lambda name, state, event: nodes.append(name) if event == "started" else None)
+    assert state["workflow_status"] == "accepted"
+    assert nodes[:3] == ["ingest", "prepare_blueprint", "hierarchical_blueprint"]
+    trace = state["blueprint_hierarchy_trace"]
+    assert len(trace.windows) == 1
+    assert [call.phase for call in trace.calls] == ["generate_local_blueprint", "coordinate_blueprint"]
+    assert "blueprint_loop_trace" not in state

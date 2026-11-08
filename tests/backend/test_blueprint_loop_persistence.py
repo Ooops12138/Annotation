@@ -11,6 +11,8 @@ from tests.support.providers import SequenceProvider
 from annotation.workflow import run_minimal_workflow
 
 from test_blueprint_loop import _payload, _install_source_fixture
+from annotation.offline import OfflineFixtureProvider
+from test_blueprint_hierarchy import TeachingProvider
 
 
 def test_blocked_loop_keeps_previous_document_version_current(monkeypatch, tmp_path: Path) -> None:
@@ -21,7 +23,7 @@ def test_blocked_loop_keeps_previous_document_version_current(monkeypatch, tmp_p
     book = repo.register_book(pdf)
 
     accepted = run_minimal_workflow(
-        provider=SequenceProvider([_payload()]),
+        provider=OfflineFixtureProvider(),
         run_id="persist-accepted-loop",
         document_id="doc-stable-loop",
     )
@@ -33,7 +35,7 @@ def test_blocked_loop_keeps_previous_document_version_current(monkeypatch, tmp_p
     invalid = _payload()
     invalid["knowledge_units"][0]["prerequisites"] = ["missing-unit"]
     blocked = run_minimal_workflow(
-        provider=SequenceProvider([invalid, invalid, invalid]),
+        provider=TeachingProvider(lambda request: invalid if request.metadata["agent"] == "generate_local_blueprint" else None),
         run_id="persist-blocked-loop",
         document_id="doc-stable-loop",
     )
@@ -46,7 +48,7 @@ def test_blocked_loop_keeps_previous_document_version_current(monkeypatch, tmp_p
     assert repo.get_current_document_version("doc-stable-loop")["document_version_id"] == before["document_version_id"]
     loaded = load_run_payload(repo, blocked["run_id"])
     assert loaded and loaded["status"] == "blocked"
-    assert loaded["blueprint_loop"]["attempt_count"] == 3
+    assert loaded["blueprint_loop"]["attempt_count"] == 4
     assert loaded["blueprint_loop"]["trace_path"]
     repo.close()
 
@@ -60,7 +62,7 @@ def test_get_run_route_returns_loop_summary_and_trace_path(monkeypatch, tmp_path
     book = repo.register_book(pdf)
     run_id = "api-persistence-loop"
     state = run_minimal_workflow(
-        provider=SequenceProvider([_payload(refs=[])]),
+        provider=OfflineFixtureProvider(),
         run_id=run_id,
         pdf_path=pdf,
     )
@@ -78,7 +80,7 @@ def test_get_run_route_returns_loop_summary_and_trace_path(monkeypatch, tmp_path
     assert response.status_code == 200
     payload = response.json()
     loop = payload["blueprint_loop"]
-    assert loop["attempt_count"] == 1
+    assert loop["attempt_count"] == 2
     assert loop["final_status"] == "accepted"
     assert loop["trace_path"] == state["blueprint_trace_path"]
     assert "attempts" not in loop

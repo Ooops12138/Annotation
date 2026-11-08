@@ -36,7 +36,9 @@ class ArchitectProvider:
 
     def generate_structured(self, request: StructuredGenerationRequest[Any]) -> StructuredGenerationResponse[Any]:
         self.calls.append(request)
-        value = request.schema.model_validate(self.payload)
+        scope_ids = {u.artifact_id for u in request.context["blueprint"].knowledge_units}
+        payload = {"tasks": [item for item in self.payload["tasks"] if set(item["covered_objectives"]).issubset(scope_ids)]}
+        value = request.schema.model_validate(payload)
         return StructuredGenerationResponse(
             value=value,
             raw_text=value.model_dump_json(),
@@ -102,7 +104,7 @@ def test_course_architect_generates_structured_content_tasks() -> None:
     result = plan_content_tasks_with_architect(provider, run_id="run-architect", blueprint=_blueprint())
 
     tasks = result["content_tasks"]
-    assert [call.schema.__name__ for call in provider.calls] == ["ContentTaskPlanDraft"]
+    assert [call.schema.__name__ for call in provider.calls] == ["ContentTaskPlanDraft", "ContentTaskPlanDraft"]
     assert [task.knowledge_unit_id for task in tasks] == ["ku-sup", "ku-basic"]
     assert tasks[0].quiz_count == 2
     assert tasks[0].interactive_component_policy == "required"
@@ -129,7 +131,7 @@ def test_large_blueprint_task_planning_batches_without_losing_global_order(monke
     provider = BatchProvider({})
     result = plan_content_tasks_with_architect(provider, run_id="batch-run", blueprint=blueprint)
     assert result["content_task_planning_metadata"]["status"] == "succeeded"
-    assert len(provider.calls) == 1
+    assert len(provider.calls) == 23
     assert [t.knowledge_unit_id for t in result["content_tasks"]] == [u.artifact_id for u in blueprint.knowledge_units]
     assert len({t.task_id for t in result["content_tasks"]}) == 23
     assert all(t.depth_guidance == "detailed" and t.quiz_count == 0 for t in result["content_tasks"])
@@ -238,3 +240,54 @@ def test_interactive_planner_respects_content_task_policy() -> None:
     )
     assert result["interactive_component_status"] == "not_needed"
     assert result["interactive_component_artifacts"] == []
+
+
+def test_architect_cannot_merge_units_or_return_foreign_scope():
+    from annotation.workflow.models import ContentTaskPlanDraft
+    from annotation.workflow.course_architect import _tasks_from_draft
+    bp = _blueprint()
+    for objectives in [{"ku-sup": ["ku-sup-o1"], "ku-basic": ["ku-basic-o1"]}, {"ku-basic": ["ku-basic-o1"]}]:
+        scope = bp.model_copy(update={"knowledge_units": [bp.knowledge_units[0]]})
+        tasks, warnings = _tasks_from_draft(run_id="scope", blueprint=scope,
+            draft=ContentTaskPlanDraft(tasks=[{"title": "Illegal", "covered_objectives": objectives, "depth_guidance": "standard"}]))
+        assert not tasks
+        assert warnings
+
+
+def test_split_execution_dependencies_point_to_real_tasks_and_keep_global_order():
+    from annotation.workflow.models import ContentTaskPlanDraft
+    from annotation.workflow.course_architect import _tasks_from_draft, teaching_blueprint
+    bp = _blueprint()
+    bp.knowledge_units[1].prerequisites = ["ku-sup"]
+    draft = ContentTaskPlanDraft(tasks=[
+        {"title": "First half", "covered_objectives": {"ku-sup": ["ku-sup-o1"]}, "depth_guidance": "concise"},
+        {"title": "Second half", "covered_objectives": {"ku-sup": ["ku-sup-o1"]}, "depth_guidance": "detailed"},
+        {"title": "Next unit", "covered_objectives": {"ku-basic": ["ku-basic-o1"]}, "depth_guidance": "standard"}])
+    tasks, warnings = _tasks_from_draft(run_id="split", blueprint=bp, draft=draft)
+    assert not warnings
+    view = teaching_blueprint(bp, tasks)
+    first, second, third = view.knowledge_units
+    assert second.prerequisites == [first.artifact_id]
+    assert third.prerequisites == [second.artifact_id]
+    assert bp.knowledge_units[1].prerequisites == ["ku-sup"]
+    assert [t.depth_guidance for t in tasks] == ["concise", "detailed", "standard"]
+
+
+def test_external_prerequisites_survive_teaching_split_and_content_projection():
+    import json
+    from annotation.workflow.course_architect import teaching_blueprint, _blueprint_context
+    from annotation.workflow.content_support import _content_prompt_unit, _unit_context
+    unit = _unit("u", "函数极限", [])
+    unit.external_prerequisites = ["集合的基本记号"]
+    bp = LearningBlueprint(artifact_id="bp", run_id=unit.run_id, version=1,
+        status="accepted", created_by="test", title="教材", knowledge_units=[unit])
+    tasks = [ContentTask(task_id=f"t{i}", run_id=unit.run_id, blueprint_version="bp:v1",
+        knowledge_unit_id=f"split-{i}", title=f"拆分{i}", depth_guidance="standard",
+        covered_objectives={unit.artifact_id: unit.objective_ids}) for i in range(2)]
+    projected = teaching_blueprint(bp, tasks)
+    for child in projected.knowledge_units:
+        assert child.external_prerequisites == unit.external_prerequisites
+        assert json.loads(_content_prompt_unit(child))["external_prerequisites"] == unit.external_prerequisites
+        assert json.loads(_unit_context(child))["external_prerequisites"] == unit.external_prerequisites
+    assert json.loads(_blueprint_context(bp))["knowledge_units"][0]["external_prerequisites"] == unit.external_prerequisites
+    assert projected.knowledge_units[1].prerequisites == ["split-0"]
