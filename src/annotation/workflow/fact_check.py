@@ -46,14 +46,14 @@ from annotation.workflow.content import render_context_pack
 from annotation.workflow.content_support import _content_artifact_from_draft, _content_hard_check, _content_prompt_task
 from annotation.workflow.models import (
     ContentDraft, FactCheckAssessmentDraft, FactCheckAssessmentsDraft,
-    FactCheckClaimsDraft, FactCheckRetrievalDecision,
+    FactCheckClaimsDraft, FactCheckRetrievalDecision, FactCheckRetrievalPlan,
 )
 from annotation.workflow.quiz import validate_quiz_artifact, quiz_draft_issues, accepted_content_context
 
 
 EXTRACT_CLAIMS_PROMPT_VERSION = "extract_fact_check_claims:v4:quiz-context"
 FACT_CHECK_ASSESS_PROMPT_VERSION = "assess_fact_check_claims:v3:optional-subject"
-FACT_CHECK_RETRIEVAL_PROMPT_VERSION = "fact_check_retrieval:v4:mode-selection"
+FACT_CHECK_RETRIEVAL_PROMPT_VERSION = "fact_check_retrieval:v5:batch-plan"
 REGENERATE_QUIZ_PROMPT_VERSION = "regenerate_quiz_for_fact_check:v5:optional-subject"
 
 _LOGGER = logging.getLogger(__name__)
@@ -586,36 +586,41 @@ def _context_pack_evidence(context_pack: ContextPack) -> tuple[list[FactCheckEvi
     return evidence, "context_pack:used" if evidence else "context_pack:empty"
 
 
-def _fact_check_retrieval_decision(
+def _fact_check_retrieval_plan(
     provider: ModelProvider,
     *,
-    claim: FactCheckClaim,
+    claims: list[FactCheckClaim],
     context_pack: ContextPack,
     web_enabled: bool,
     available_modes: list[str] | None = None,
-) -> FactCheckRetrievalDecision:
-    """Let the fact-check agent choose whether and where to retrieve evidence."""
+) -> dict[str, FactCheckRetrievalDecision]:
+    """Choose retrieval for all factual claims in one model call."""
 
     prompt = load_prompt(
         "fact_check_retrieval",
         RETRIEVAL_CAPABILITIES=json.dumps(available_modes or ["keyword", "hybrid"]),
-        CLAIM=json.dumps(_dump(claim), ensure_ascii=False, indent=2),
+        CLAIMS=json.dumps([_dump(claim) for claim in claims], ensure_ascii=False, indent=2),
         CONTEXT=json.dumps([_dump(item) for item in _context_pack_evidence(context_pack)[0]], ensure_ascii=False),
     )
     response = provider.generate_structured(StructuredGenerationRequest(
         prompt=prompt,
-        schema=FactCheckRetrievalDecision,
+        schema=FactCheckRetrievalPlan,
         max_output_tokens=_output_limit(provider, 700),
-        metadata={"agent": "fact_check_retrieval", "prompt_version": FACT_CHECK_RETRIEVAL_PROMPT_VERSION, "claim_id": claim.claim_id},
+        metadata={"agent": "fact_check_retrieval", "prompt_version": FACT_CHECK_RETRIEVAL_PROMPT_VERSION, "claim_count": len(claims)},
     ))
-    decision = FactCheckRetrievalDecision.model_validate(response.value.model_dump(mode="python"))
-    if not web_enabled and decision.action in {"search_web", "search_both"}:
-        decision = decision.model_copy(update={
-            "action": "search_textbook",
-            "web_queries": [],
-            "textbook_queries": decision.textbook_queries or [claim.query],
-        })
-    return decision
+    plan = FactCheckRetrievalPlan.model_validate(response.value.model_dump(mode="python"))
+    result = {}
+    for item in plan.decisions:
+        decision = FactCheckRetrievalDecision.model_validate(item.model_dump(exclude={"claim_id"}))
+        if not web_enabled and decision.action in {"search_web", "search_both"}:
+            claim = next((claim for claim in claims if claim.claim_id == item.claim_id), None)
+            decision = decision.model_copy(update={
+                "action": "search_textbook",
+                "web_queries": [],
+                "textbook_queries": decision.textbook_queries or ([claim.query] if claim else []),
+            })
+        result[item.claim_id] = decision
+    return result
 
 
 def _check_unit(
@@ -669,6 +674,20 @@ def _check_unit(
         evidence: dict[str, tuple[list[FactCheckEvidence], list[FactCheckEvidence], list[str]]] = {}
         factual_claims: list[FactCheckClaim] = []
         assessments: list[FactCheckAssessment] = []
+        factual_claims = [claim for claim in claims if claim.kind != "stance"]
+        decisions: dict[str, FactCheckRetrievalDecision] = {
+            claim.claim_id: FactCheckRetrievalDecision(action="use_context")
+            for claim in factual_claims
+        }
+        if additional_retrieval_enabled and factual_claims:
+            try:
+                decisions.update(_fact_check_retrieval_plan(
+                    provider, claims=factual_claims, context_pack=context_pack,
+                    web_enabled=policy.web_enabled,
+                    available_modes=getattr(textbook_skill, "available_modes", None),
+                ))
+            except Exception as exc:
+                    _LOGGER.exception("Fact-check retrieval planning failed for %s", unit.artifact_id)
         for claim in claims:
             if claim.kind == "stance":
                 assessments.append(FactCheckAssessment(
@@ -677,19 +696,8 @@ def _check_unit(
                 ))
                 continue
             textbook, context_reason = _context_pack_evidence(context_pack)
-            decision = FactCheckRetrievalDecision(action="use_context")
+            decision = decisions[claim.claim_id]
             reasons = [context_reason]
-            if additional_retrieval_enabled:
-                try:
-                    decision = _fact_check_retrieval_decision(
-                        provider, claim=claim, context_pack=context_pack,
-                        web_enabled=policy.web_enabled,
-                        available_modes=getattr(textbook_skill, "available_modes", None),
-                    )
-                except Exception as exc:
-                    # A failed planning call must not discard usable context.
-                    reasons.append(_failure("retrieval_decision_error", exc))
-                    decision = FactCheckRetrievalDecision(action="use_context")
             claim_modes[claim.claim_id] = decision.textbook_mode
             if decision.action in {"search_textbook", "search_both"}:
                 for query in _unique(decision.textbook_queries):
@@ -707,7 +715,6 @@ def _check_unit(
                     if reason == "web:budget_exhausted":
                         break
             evidence[claim.claim_id] = (textbook, external, reasons)
-            factual_claims.append(claim)
 
         checked, assessment_error = _assess_claims(
             provider,

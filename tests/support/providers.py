@@ -55,7 +55,7 @@ class SequenceProvider:
     def generate_structured(
         self, request: StructuredGenerationRequest[BaseModel]
     ) -> StructuredGenerationResponse[BaseModel]:
-        if request.schema.__name__ in {"ContentDraft", "ContentCritiqueDraft", "RetrievalDecision", "FactCheckClaimsDraft", "FactCheckRetrievalDecision", "ContentTaskPlanDraft", "QuizDraft", "QuizRetrievalDecision", "InteractiveComponentDraft", "InteractiveComponentCritiqueDraft"}:
+        if request.schema.__name__ in {"ContentAgentStep", "ContentDraft", "ContentCritiqueDraft", "RetrievalDecision", "FactCheckClaimsDraft", "FactCheckRetrievalDecision", "FactCheckRetrievalPlan", "ContentTaskPlanDraft", "QuizDraft", "QuizAgentStep", "InteractiveComponentDraft", "InteractiveComponentCritiqueDraft"}:
             from annotation.offline import OfflineFixtureProvider
             return OfflineFixtureProvider().generate_structured(request)
         self.calls.append(request)

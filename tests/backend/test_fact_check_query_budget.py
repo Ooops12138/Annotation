@@ -20,9 +20,9 @@ def test_all_queries_share_unit_budget(monkeypatch, budget, insufficient, correc
         knowledge_unit_id=task.knowledge_unit_id, target_id=content.artifact_id,
         role="explanation", kind="fact", text=f"claim{i}", query=f"follow{i}") for i in range(2)]
     monkeypatch.setattr(fc, "_extract_claims", lambda *a, **kw: (claims, None))
-    monkeypatch.setattr(fc, "_fact_check_retrieval_decision", lambda *a, **kw:
-        FactCheckRetrievalDecision(action="search_both", textbook_queries=["t1", "t2", "t3"],
-                                   web_queries=["w1", "w2"]))
+    monkeypatch.setattr(fc, "_fact_check_retrieval_plan", lambda *a, claims, **kw:
+        {claim.claim_id: FactCheckRetrievalDecision(action="search_both", textbook_queries=["t1", "t2", "t3"],
+                                   web_queries=["w1", "w2"]) for claim in claims})
 
     def evidence(kind, query):
         return FactCheckEvidence(evidence_id=f"{kind}-{query}", source_kind=kind,

@@ -21,6 +21,7 @@ from annotation.workflow.quiz import (
     validate_quiz_artifact,
     validate_quiz_coverage,
 )
+from annotation.workflow.models import QuizAgentStep
 
 
 @pytest.mark.parametrize("command", ["frac{a}{b}", "neq", "text{x}", "beta", "right)"])
@@ -69,9 +70,8 @@ def test_workflow_quiz_receives_accepted_explanation_and_callouts(monkeypatch):
         def generate_structured(self, request):
             self.prompt = request.prompt
             draft = QuizDraft(knowledge_unit_id=unit.artifact_id, target_objectives=unit.objective_ids, questions=[_question(unit, "q1")])
-            return SimpleNamespace(value=draft, raw_text=draft.model_dump_json())
+            return SimpleNamespace(value=QuizAgentStep(action="write", draft=draft), raw_text=draft.model_dump_json())
     provider = Provider()
-    monkeypatch.setattr(content_nodes, "retrieve_quiz_context", lambda *args, **kwargs: kwargs["context_pack"])
     result = content_nodes.generate_task_quiz(SimpleNamespace(provider=provider),
         {"run_id": unit.run_id, "content_artifacts": [wrong, explanation]}, task,
         units={unit.artifact_id: unit}, packs={task.task_id: pack}, retrieval_service=None)
@@ -460,7 +460,7 @@ def test_provider_draft_unit_mismatch_blocks_artifact() -> None:
 
     def generate_structured(request):
         response = original(request)
-        response.value = QuizDraft.model_validate(response.value)
+        response.value = QuizAgentStep(action="write", draft=QuizDraft.model_validate(response.value))
         return response
 
     provider.generate_structured = generate_structured
@@ -488,7 +488,7 @@ def test_architect_question_count_mismatch_blocks_artifact() -> None:
                 "Response",
                 (),
                 {
-                    "value": draft,
+                    "value": QuizAgentStep(action="write", draft=draft),
                     "raw_text": draft.model_dump_json(),
                     "provider": self.provider,
                     "model": self.model,

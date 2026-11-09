@@ -22,7 +22,8 @@ def blueprint(*units):
 
 def plan(bp, scopes):
     draft = ContentTaskPlanDraft.model_validate({"tasks": [{"title": str(i),
-        "covered_objectives": scope, "depth_guidance": "standard"} for i, scope in enumerate(scopes)]})
+        "covered_objectives": scope, "depth_guidance": "standard",
+        "split_reason": "output_budget", "acceptance_criteria": ["Keep each scoped explanation within the output budget."]} for i, scope in enumerate(scopes)]})
     return _tasks_from_draft(run_id="r", blueprint=bp, draft=draft)
 
 

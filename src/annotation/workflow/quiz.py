@@ -34,12 +34,11 @@ from annotation.prompt_loader import load_prompt
 from annotation.providers.models import ModelProvider, ProviderError, StructuredGenerationRequest
 from annotation.workflow.content import render_context_pack
 from annotation.config import model_max_output_tokens
-from annotation.workflow.models import QuizRetrievalDecision
+from annotation.workflow.models import QuizAgentStep
 from annotation.workflow.content_support import _markdown_formula_format_issues
 
 
-QUIZ_PROMPT_VERSION = "generate_quiz_artifact:v9:optional-subject"
-QUIZ_RETRIEVAL_PROMPT_VERSION = "quiz_retrieval:v4:mode-selection"
+QUIZ_PROMPT_VERSION = "quiz_agent_step:v1"
 logger = logging.getLogger(__name__)
 # There is intentionally no default or minimum quiz size.  The agent decides
 # how many evidence-supported items are useful for a unit, including zero.
@@ -689,32 +688,19 @@ def _response_metadata(response: Any) -> dict[str, Any]:
     }
 
 
-def retrieve_quiz_context(
-    provider: ModelProvider,
+def _apply_quiz_search(
     *,
     task: ContentTask,
     unit: KnowledgeUnit,
     context_pack: ContextPack,
     retrieval_service: Any | None,
     semantic_blocks: Iterable[SourceBlock] = (),
+    decision: Any,
 ) -> ContextPack:
     """Let the exercise agent request additional textbook evidence."""
 
     if retrieval_service is None:
         return context_pack
-    prompt = load_prompt(
-        "quiz_retrieval",
-        RETRIEVAL_CAPABILITIES=json.dumps(getattr(retrieval_service, "available_modes", ["keyword", "hybrid"])),
-        UNIT=json.dumps(_unit_context(unit), ensure_ascii=False),
-        CONTEXT=render_context_pack(context_pack),
-    )
-    response = provider.generate_structured(StructuredGenerationRequest(
-        prompt=prompt,
-        schema=QuizRetrievalDecision,
-        max_output_tokens=min(700, model_max_output_tokens()),
-        metadata={"agent": "quiz_retrieval", "prompt_version": QUIZ_RETRIEVAL_PROMPT_VERSION, "task_id": task.task_id},
-    ))
-    decision = QuizRetrievalDecision.model_validate(response.value.model_dump(mode="python"))
     if decision.action == "use_context":
         return context_pack
     excerpts = list(context_pack.excerpts)
@@ -817,6 +803,7 @@ def generate_quiz_artifact(
     run_id: str | None = None,
     max_attempts: int = 2,
     retrieval_service: Any | None = None,
+    semantic_blocks: Iterable[SourceBlock] = (),
     accepted_content: ContentArtifact | None = None,
 ) -> QuizArtifact:
     """Generate, hard-check, and revise one quiz set within a bounded loop."""
@@ -830,19 +817,16 @@ def generate_quiz_artifact(
             generation_metadata={"question_count": 0, "stop_reason": "not_requested"},
         )
     attempts: list[dict[str, Any]] = []
-    try:
-        context_pack = retrieve_quiz_context(
-            provider, task=task, unit=unit, context_pack=context_pack,
-            retrieval_service=retrieval_service,
-        )
-    except Exception:
-        # Keep the original evidence boundary when the optional planning call
-        # fails; deterministic validation will still guard the artifact.
-        logger.exception("Quiz retrieval planning failed for %s", task.task_id)
     feedback: list[str] = []
     last: QuizArtifact | None = None
     for attempt in range(1, max(1, max_attempts) + 1):
-        prompt = build_quiz_prompt(task, unit, context_pack, revision_feedback=feedback, accepted_content=accepted_content)
+        prompt = load_prompt(
+            "quiz_agent_step",
+            CAPABILITIES=json.dumps(getattr(retrieval_service, "available_modes", [])),
+            UNIT=json.dumps(_unit_context(unit), ensure_ascii=False),
+            CONTEXT=render_context_pack(context_pack),
+            QUIZ_PROMPT=build_quiz_prompt(task, unit, context_pack, revision_feedback=feedback, accepted_content=accepted_content),
+        )
         metadata: dict[str, Any] = {
             "agent": "generate_quiz_artifact", "task_id": task.task_id,
             "context_pack_id": context_pack.context_pack_id, "attempt": attempt,
@@ -852,13 +836,22 @@ def generate_quiz_artifact(
         try:
             response = provider.generate_structured(StructuredGenerationRequest(
                 prompt=prompt,
-                schema=QuizDraft,
+                schema=QuizAgentStep,
                 context={"unit": unit, "context_pack": context_pack, "task": task},
                 max_output_tokens=min(3500, model_max_output_tokens(), getattr(getattr(provider, "capabilities", None), "max_output_tokens", 3500) or 3500),
                 metadata=metadata,
             ))
             raw_response = str(getattr(response, "raw_text", "") or "")
-            draft = QuizDraft.model_validate(response.value.model_dump(mode="python"))
+            step = QuizAgentStep.model_validate(response.value.model_dump(mode="python"))
+            if step.action == "search":
+                context_pack = _apply_quiz_search(
+                    task=task, unit=unit, context_pack=context_pack,
+                    retrieval_service=retrieval_service, decision=step,
+                    semantic_blocks=semantic_blocks,
+                )
+                feedback = []
+                continue
+            draft = QuizDraft.model_validate(step.draft.model_dump(mode="python"))
             metadata.update(_response_metadata(response))
             raw_response = raw_response or draft.model_dump_json()
             count = len(draft.questions)

@@ -131,7 +131,7 @@ def _content_artifact_from_draft(
     run_id: str,
     provider_name: str,
     attempt: int = 1,
-    prompt_version: str = "generate_content_artifact:v2",
+    prompt_version: str = "content_agent_step:v1",
 ) -> ContentArtifact:
     refs = _lossless_refs(draft.source_refs)
     content = draft.content
@@ -438,6 +438,8 @@ def content_loop_summary(traces: list[ContentUnitLoopTrace]) -> dict[str, Any]:
             "stop_reason": trace.stop_reason,
         })
         for item in trace.attempts:
+            if item.generation_provider_metadata.get('cache_hit'):
+                continue
             if item.generation_status != "skipped":
                 generation_call_count += 1
                 if item.generation_stage == "revision":
@@ -459,6 +461,7 @@ def content_loop_summary(traces: list[ContentUnitLoopTrace]) -> dict[str, Any]:
         "skipped_count": sum(status == "skipped" for status in statuses),
         "attempt_count": sum(len(trace.attempts) for trace in traces),
         "generation_call_count": generation_call_count,
+        "cache_hit_count": sum(bool(t.attempts and t.attempts[-1].generation_provider_metadata.get('cache_hit')) for t in traces),
         "revision_call_count": revision_call_count,
         "critic_call_count": critic_call_count,
         "duration_ms": duration_ms,
@@ -550,5 +553,3 @@ def _interactive_prompt_content(artifact: ContentArtifact) -> str:
         ensure_ascii=False,
         indent=2,
     )
-
-

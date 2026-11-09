@@ -195,5 +195,6 @@ def test_semantic_context_keeps_raw_citations_and_chunk_audit_ref():
     assert excerpt.chunk_ref == semantic[0].source_ref
     assert pack.source_refs == ["raw-1", "raw-2"]
     rendered = render_context_pack(pack)
-    assert semantic[0].source_ref in rendered
+    assert "raw-1" in rendered and "raw-2" in rendered
+    assert semantic[0].source_ref == pack.excerpts[0].chunk_ref
     assert "raw-1,raw-2" in rendered

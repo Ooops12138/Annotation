@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import hashlib
 import logging
 import uuid
 from typing import Any
@@ -17,12 +16,12 @@ from annotation.domain.artifacts import (
     ContentTask,
     ContentUnitLoopTrace,
     KnowledgeUnit,
-    RetrievalCall,
 )
 from annotation.prompt_loader import load_prompt
 from annotation.providers import ModelProvider, ProviderError, StructuredGenerationRequest
-from annotation.ingestion.semantic_chunker import build_semantic_blocks
-from annotation.workflow.content import build_context_pack, render_context_pack
+from annotation.workflow.content import render_context_pack, expand_source_aliases, candidate_prompt_data
+from annotation.workflow.content_agent import author_with_tools
+from annotation.workflow.budget import PromptBudget
 from annotation.workflow.content_support import (
     blocked_content_artifact,
     _content_prompt_task,
@@ -35,12 +34,10 @@ from annotation.workflow.content_support import (
     _unit_context,
 )
 from annotation.workflow.helpers import response_metadata, provider_metadata
-from annotation.workflow.models import ContentDraft, ContentReflectionState, RetrievalDecision
-from annotation.config import model_max_output_tokens
-from annotation.token_counting import count_tokens
+from annotation.workflow.models import ContentDraft, ContentReflectionState
 
-CONTENT_RETRIEVAL_PROMPT_VERSION = "content_agent_retrieval:v4:mode-selection"
-CONTENT_CRITIC_PROMPT_VERSION = "critique_content_artifact:v3:optional-subject"
+CONTENT_CRITIC_PROMPT_VERSION = "critique_content_artifact:v4:compact-sources"
+
 
 def build_content_reflection_subgraph(
     provider: ModelProvider,
@@ -83,131 +80,33 @@ def build_content_reflection_subgraph(
         )
         return primary
 
-    def plan_and_retrieve(state: ContentReflectionState) -> tuple[ContentReflectionState, dict[str, Any]]:
-        """Observe evidence and feedback, then choose tool use or writing."""
-        task = state["task"]
-        unit = state["unit"]
-        plan = RetrievalDecision(action="search", textbook_queries=[unit.title])
-        pack = state["context_pack"]
-        semantic_blocks = state.get("semantic_blocks")
-        if semantic_blocks is None:
-            semantic_blocks = build_semantic_blocks(state.get("source_blocks", []))
-        for round_number in range(3):
-            prompt = load_prompt(
-                "content_agent_retrieval",
-                RETRIEVAL_CAPABILITIES=json.dumps(getattr(retrieval_service, "available_modes", ["keyword", "hybrid"])),
-                KNOWLEDGE_UNIT_CONTEXT=_content_prompt_unit(unit),
-                CONTENT_TASK=_content_prompt_task(task),
-                RETRIEVAL_CONTEXT=render_context_pack(pack),
-                REVISION_CONTEXT=json.dumps({
-                    "candidate": state["candidate_artifact"].model_dump(mode="json") if state.get("candidate_artifact") else None,
-                    "hard_check": state["hard_check"].model_dump(mode="json") if state.get("hard_check") else None,
-                    "critique": state.get("critic_parsed_output"),
-                    "error": state.get("generation_error"), "searches_remaining": 2 - round_number,
-                }, ensure_ascii=False),
-            )
-            response = provider.generate_structured(StructuredGenerationRequest(
-                prompt=prompt,
-                schema=RetrievalDecision,
-                context={"unit": unit, "context_pack": pack, "source_blocks": semantic_blocks},
-                max_output_tokens=response_limit(900),
-                metadata={"agent": "content_agent", "phase": "retrieval_decision", "prompt_version": CONTENT_RETRIEVAL_PROMPT_VERSION, "run_id": state["run_id"], "task_id": task.task_id, "attempt": int(state.get("attempt", 0)) + 1, "round": round_number + 1},
-            ))
-            plan = RetrievalDecision.model_validate(response.value.model_dump(mode="python"))
-            if plan.action == "write":
-                break
-            if round_number == 2:
-                error = ProviderError("content agent retrieval budget exhausted", category="retrieval_budget")
-                error.context_pack = pack
-                raise error
-            round_queries = [("textbook", query.strip()) for query in plan.textbook_queries if query.strip()]
-            round_queries.extend(("web", query.strip()) for query in plan.web_queries if query.strip())
-            if not any(q.strip() for _, q in round_queries):
-                raise ProviderError("search requires a query", category="schema")
-            new_pack = build_context_pack(
-                task, unit, state["blueprint"],
-                semantic_blocks,
-                search_tool=retrieval_service, retrieval_queries=round_queries, textbook_mode=plan.textbook_mode,
-            )
-            seen = {e.chunk_ref or e.source_ref for e in pack.excerpts}
-            excerpts = list(pack.excerpts)
-            used = sum(count_tokens(e.text) for e in excerpts)
-            for e in new_pack.excerpts:
-                key = e.chunk_ref or e.source_ref
-                if key not in seen and used + count_tokens(e.text) <= new_pack.input_budget_tokens:
-                    excerpts.append(e)
-                    seen.add(key)
-                    used += count_tokens(e.text)
-            refs = list(dict.fromkeys(r for e in excerpts for r in (e.source_refs or [e.source_ref])))
-            pack = new_pack.model_copy(update={"excerpts": excerpts, "source_refs": refs,
-                "selected_source_refs": refs, "retrieved_source_refs": refs,
-                "retrieval_calls": [*pack.retrieval_calls, *[call.model_copy(update={
-                    "call_id": f"call-{task.task_id}-{len(pack.retrieval_calls) + i + 1:03d}"})
-                    for i, call in enumerate(new_pack.retrieval_calls)]],
-                "estimated_input_tokens": used,
-                "source_snapshot": hashlib.sha256(json.dumps([e.model_dump(mode="json") for e in excerpts], sort_keys=True).encode()).hexdigest() if excerpts else None})
-        return {
-            **state,
-            "context_pack": pack,
-            "semantic_blocks": semantic_blocks,
-            "retrieval_decision": plan,
-            "valid_source_refs": list(dict.fromkeys([*state.get("valid_source_refs", []), *pack.source_refs])),
-        }, {"retrieval_decision": plan, "context_pack": pack, "semantic_blocks": semantic_blocks}
-
     def generate_candidate(state: ContentReflectionState) -> dict[str, Any]:
         retrieval_result: dict[str, Any] = {}
-        # The production graph supplies a retrieval service. Direct subgraph
-        # fixture callers retain the prebuilt ContextPack contract.
-        if retrieval_service is not None:
-            try:
-                planned_state, retrieval_result = plan_and_retrieve(state)
-                state = planned_state
-            except ProviderError as exc:
-                return {"attempt": int(state.get("attempt", 0)) + 1,
-                    "generation_status": "provider_error", "generation_error": str(exc),
-                    "generation_error_category": exc.category, "generation_retryable": exc.retryable,
-                    "context_pack": getattr(exc, "context_pack", state["context_pack"])}
-            except Exception as exc:
-                logging.getLogger(__name__).exception("Unexpected content reflection failure")
-                return {"attempt": int(state.get("attempt", 0)) + 1, "generation_status": "provider_error", "generation_error": str(exc), "generation_error_category": "retrieval", "generation_retryable": False}
+        try:
+            response, pack, decision, prompt = author_with_tools(provider, state, retrieval_service)
+            state = {**state, "context_pack": pack, "retrieval_decision": decision}
+            retrieval_result = {"context_pack": pack, "retrieval_decision": decision}
+        except ProviderError as exc:
+            return {
+                "attempt": int(state.get("attempt", 0)) + 1,
+                "generation_stage": "revision" if state.get("candidate_artifact") else "initial",
+                "generation_prompt": getattr(exc, "prompt", ""),
+                "generation_status": "provider_error",
+                "generation_error": str(exc),
+                "generation_raw_output": str(getattr(exc, "raw_output", "") or ""),
+                "generation_error_category": exc.category,
+                "generation_retryable": bool(exc.retryable or exc.category == "schema"),
+                "generation_provider_metadata": {**provider_metadata(provider), "agent": "content_agent_step"},
+                "context_pack": getattr(exc, "context_pack", state["context_pack"]),
+            }
+
         attempt = int(state.get("attempt", 0)) + 1
         task = state["task"]
         unit = state["unit"]
         pack = state["context_pack"]
-        previous = state.get("candidate_artifact")
-        is_revision = previous is not None
-        if is_revision:
-            prompt = load_prompt(
-                "revise_content_artifact",
-                KNOWLEDGE_UNIT_CONTEXT=_content_prompt_unit(unit),
-                CONTENT_TASK=_content_prompt_task(task),
-                CONTEXT_PACK=render_context_pack(pack),
-                ACCEPTANCE_CRITERIA=json.dumps(task.acceptance_criteria, ensure_ascii=False),
-                CANDIDATE_ARTIFACT=json.dumps(
-                    previous.model_dump(mode="json") if previous is not None else {},
-                    ensure_ascii=False,
-                    indent=2,
-                ),
-                HARD_CHECK_RESULT=json.dumps(
-                    state.get("hard_check").model_dump(mode="json") if state.get("hard_check") else {},
-                    ensure_ascii=False,
-                    indent=2,
-                ),
-                CRITIQUE_RESULT=json.dumps(state.get("critic_parsed_output") or {"issues": []}, ensure_ascii=False, indent=2),
-                GENERATION_ERROR=str(state.get("generation_error") or ""),
-            )
-            agent = "revise_content_artifact"
-            prompt_version = "revise_content_artifact:v4:optional-subject"
-        else:
-            prompt = load_prompt(
-                "generate_content_artifact",
-                KNOWLEDGE_UNIT_CONTEXT=_content_prompt_unit(unit),
-                CONTENT_TASK=_content_prompt_task(task),
-                CONTEXT_PACK=render_context_pack(pack),
-                ACCEPTANCE_CRITERIA=json.dumps(task.acceptance_criteria, ensure_ascii=False),
-            )
-            agent = "generate_content_artifact"
-            prompt_version = "generate_content_artifact:v4:optional-subject"
+        is_revision = state.get("candidate_artifact") is not None
+        agent = "content_agent_step"
+        prompt_version = "content_agent_step:v1"
         result: dict[str, Any] = {
             "attempt": attempt,
             "generation_stage": "revision" if is_revision else "initial",
@@ -240,37 +139,22 @@ def build_content_reflection_subgraph(
                 result.update(generation_error="教材检索未返回可用证据，未生成正文。",
                               generation_error_category="no_evidence")
                 return result
-            response = provider.generate_structured(StructuredGenerationRequest(
-                prompt=prompt,
-                schema=ContentDraft,
-                context={"unit": unit, "context_pack": pack},
-                # Include the JSON/LaTeX envelope within the configured limit.
-                max_output_tokens=response_limit(model_max_output_tokens()),
-                metadata={
-                    "agent": agent,
-                    "run_id": state["run_id"],
-                    "task_id": task.task_id,
-                    "knowledge_unit_id": unit.artifact_id,
-                    "context_pack_id": pack.context_pack_id,
-                    "attempt": attempt,
-                },
-            ))
             draft = ContentDraft.model_validate(response.value.model_dump(mode="python"))
+            draft.source_refs = expand_source_aliases(draft.source_refs, pack)
+            for note in draft.evidence_notes:
+                note.source_refs = expand_source_aliases(note.source_refs, pack)
             metadata = response_metadata(response)
             metadata["agent"] = agent
-            raw_output = response.raw_text
             result.update({
                 "generation_status": "succeeded",
-                "generation_raw_output": raw_output,
+                "generation_raw_output": response.raw_text,
                 "generation_parsed_output": draft.model_dump(mode="json"),
                 "generation_provider_metadata": metadata,
                 "candidate_draft": draft,
             })
             result["candidate_artifact"] = artifact_from_draft(
-                draft=draft,
-                state={**state, **result},
-                attempt=attempt,
-                prompt_version=prompt_version,
+                draft=draft, state={**state, **result},
+                attempt=attempt, prompt_version=prompt_version,
             )
         except ProviderError as exc:
             category = getattr(exc, "category", "provider")
@@ -298,6 +182,7 @@ def build_content_reflection_subgraph(
             })
         return result
 
+
     def hard_check_candidate(state: ContentReflectionState) -> dict[str, Any]:
         if state.get("generation_status") != "succeeded":
             return {"hard_check": None}
@@ -323,9 +208,9 @@ def build_content_reflection_subgraph(
             KNOWLEDGE_UNIT_CONTEXT=_content_prompt_unit(unit),
             DEPTH_GUIDANCE=task.depth_guidance,
             ACCEPTANCE_CRITERIA=json.dumps(task.acceptance_criteria, ensure_ascii=False),
-            CONTEXT_PACK=render_context_pack(state["context_pack"]),
+            CONTEXT_PACK=render_context_pack(state["context_pack"], aliases=True),
             CANDIDATE_ARTIFACT=json.dumps(
-                candidate.model_dump(mode="json") if candidate is not None else {},
+                candidate_prompt_data(candidate, state["context_pack"]) or {},
                 ensure_ascii=False,
                 indent=2,
             ),
@@ -343,6 +228,7 @@ def build_content_reflection_subgraph(
             "critic_feedback": [],
         }
         try:
+            PromptBudget.for_provider(provider, output_limit=1200).check(prompt, ContentCritiqueDraft)
             response = provider.generate_structured(StructuredGenerationRequest(
                 prompt=prompt,
                 schema=ContentCritiqueDraft,

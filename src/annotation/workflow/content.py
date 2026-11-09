@@ -30,21 +30,46 @@ from annotation.fact_checking.contracts import TextbookSearchTool
 from annotation.retrieval import InMemoryTextbookSearchTool
 
 
-def render_context_pack(pack: ContextPack) -> str:
+def source_aliases(pack: ContextPack) -> dict[str, list[str]]:
+    """Request-local identifiers; the durable snapshot retains full references."""
+    return {f"E{i}": list(e.source_refs or [e.source_ref])
+            for i, e in enumerate(pack.excerpts, 1)}
+
+
+def expand_source_aliases(refs: list[str], pack: ContextPack) -> list[str]:
+    aliases = source_aliases(pack)
+    # Unknown references deliberately survive for the normal hard check.
+    return list(dict.fromkeys(ref for value in refs for ref in aliases.get(value, [value])))
+
+
+def candidate_prompt_data(candidate: Any, pack: ContextPack) -> dict[str, Any] | None:
+    """Use the same local citations in the candidate and its evidence view."""
+    if candidate is None:
+        return None
+    aliases = source_aliases(pack)
+
+    def shorten(refs):
+        return list(dict.fromkeys(alias for ref in refs
+            for alias in ([key for key, values in aliases.items() if ref in values] or [ref])))
+
+    notes = [{**note, 'source_refs': shorten(note.get('source_refs', []))}
+             for note in candidate.metadata.get('evidence_notes', [])]
+    return {'title': candidate.title, 'content': candidate.content,
+            'source_refs': shorten(candidate.source_refs),
+            'metadata': {'callouts': candidate.metadata.get('callouts', []), 'evidence_notes': notes}}
+
+
+def render_context_pack(pack: ContextPack, *, aliases: bool = False) -> str:
     lines = [
         f"ContextPack {pack.context_pack_id}; input_budget_tokens={pack.input_budget_tokens}; "
         f"estimated_input_tokens={pack.estimated_input_tokens}",
         "证据片段（仅可使用这些来源支持教材事实）：",
     ]
-    lines.extend(
-        f"[{excerpt.source_ref} p{excerpt.page_number}-b{excerpt.block_index}; chunk={excerpt.chunk_ref or excerpt.source_ref}; constituents={','.join(excerpt.source_refs or [excerpt.source_ref])}] {excerpt.text}"
-        for excerpt in pack.excerpts
-    )
-    if pack.retrieval_calls:
-        lines.append("工具调用记录：" + json.dumps([
-            {"query": c.query, "status": c.status, "error_code": c.error_code,
-             "metadata": c.metadata, "returned_count": len(c.returned_excerpts)} for c in pack.retrieval_calls
-        ], ensure_ascii=False))
+    for i, excerpt in enumerate(pack.excerpts, 1):
+        refs = f"E{i}" if aliases else ','.join(excerpt.source_refs or [excerpt.source_ref])
+        lines.append(f"[{refs} p{excerpt.page_number}] {excerpt.text}")
+    if aliases:
+        lines.append("Cite E identifiers in source_refs; the application restores the full source mapping.")
     if pack.prerequisite_titles:
         lines.append("直接前置知识单元：" + "、".join(pack.prerequisite_titles))
     if pack.omitted_source_refs:

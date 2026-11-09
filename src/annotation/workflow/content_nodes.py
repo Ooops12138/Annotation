@@ -34,7 +34,6 @@ from annotation.workflow.models import WorkflowState
 from annotation.workflow.quiz import (
     blocked_quiz_artifact,
     generate_quiz_artifact,
-    retrieve_quiz_context,
     validate_quiz_coverage,
 )
 from annotation.workflow.context import WorkflowContext
@@ -135,7 +134,23 @@ def content_preflight_trace(
     return trace, [candidate_artifact] if candidate_artifact is not None else []
 
 
-def generate_content_task(
+def generate_content_task(batch: ContentGenerationContext, task: ContentTask) -> dict[str, Any]:
+    from annotation.workflow import content_task_cache
+    if batch.ctx.run_control:
+        batch.ctx.run_control.raise_if_stopped()
+    path = content_task_cache.location(batch,task)
+    if path is not None and path.is_file():
+        cached = content_task_cache.load(batch,task,path)
+        if cached is not None:
+            return cached
+    result = _generate_content_task(batch,task)
+    # Save before dispatching the next batch, including failed diagnostics.
+    if path is not None:
+        content_task_cache.save(path,result)
+    return result
+
+
+def _generate_content_task(
     batch: ContentGenerationContext, task: ContentTask
 ) -> dict[str, Any]:
     task = task.model_copy(deep=True)
@@ -474,18 +489,6 @@ def generate_task_quiz(
             pack,
         )
     pack = pack.model_copy(deep=True)
-    if task.quiz_count != 0:
-        try:
-            pack = retrieve_quiz_context(
-                ctx.provider,
-                task=task,
-                unit=unit,
-                context_pack=pack,
-                retrieval_service=retrieval_service,
-                semantic_blocks=state.get("semantic_blocks", []),
-            )
-        except Exception:
-            logger.exception("Quiz retrieval planning failed for %s", task.task_id)
     try:
         artifact = generate_quiz_artifact(
             ctx.provider,
@@ -493,7 +496,8 @@ def generate_task_quiz(
             unit=unit,
             context_pack=pack,
             run_id=state["run_id"],
-            retrieval_service=None,
+            retrieval_service=retrieval_service,
+            semantic_blocks=state.get("semantic_blocks", []),
             accepted_content=next((content for content in state.get("content_artifacts", [])
                 if content.task_id == task.task_id and content.status == "accepted"), None),
         )

@@ -187,6 +187,14 @@ class ScriptedFactCheckProvider:
                 }]
                 if round_number <= self.claims_through_round else [],
             }
+        elif schema_name == "FactCheckRetrievalPlan":
+            claim_ids = list(dict.fromkeys(re.findall(r'"claim_id":\s*"([^"]+)"', request.prompt)))
+            payload = {"decisions": [{
+                "claim_id": claim_id,
+                "action": "search_textbook",
+                "textbook_queries": [self.query],
+                "web_queries": [],
+            } for claim_id in claim_ids]}
         elif schema_name == "FactCheckAssessmentsDraft":
             claim_ids = list(dict.fromkeys(re.findall(r'"claim_id":\s*"([^"]+)"', request.prompt)))
             payload = {
@@ -197,17 +205,20 @@ class ScriptedFactCheckProvider:
                     "sufficient_textbook_evidence": self.verdict == "contradicted",
                 } for claim_id in claim_ids],
             }
-        elif schema_name == "ContentDraft":
+        elif schema_name in {"ContentDraft", "ContentAgentStep"}:
             payload = {
                 "title": "上确界",
                 "content": (
                     getattr(self, "initial_content", None)
-                    if request.metadata.get("agent") == "generate_content_artifact"
+                    if schema_name == "ContentAgentStep" or request.metadata.get("agent") == "generate_content_artifact"
                     else self.corrected_content
                 ) or self.corrected_content,
                 "callouts": [],
                 "source_refs": ["src-1"],
             }
+            if schema_name == "ContentAgentStep":
+                payload = ({"action": "write", "draft": payload} if request.context["context_pack"].excerpts
+                           else {"action": "search", "textbook_queries": [self.query]})
         elif schema_name == "ContentCritiqueDraft":
             payload = {"issues": []}
         elif schema_name == "QuizDraft":
@@ -609,7 +620,7 @@ def test_nonempty_irrelevant_context_triggers_supplemental_textbook_search():
     assessment = trace.rounds[0].assessments[0]
     assert "textbook:ok" in assessment.stop_reason
     assert len(assessment.textbook_evidence) == 2
-    assert len([r for r in provider.calls if r.schema.__name__ == "FactCheckAssessmentsDraft"]) == 2
+    assert len([r for r in provider.calls if r.schema.__name__ == "FactCheckAssessmentsDraft"]) == 1
 
     disabled_provider = EvidenceAwareProvider(claim_target_index=0, claim_text="上确界是最小上界。", verdict="insufficient")
     disabled = run_fact_check_loop(disabled_provider, run_id="fact-check-test", blueprint=blueprint, tasks=[task],

@@ -105,10 +105,9 @@ def test_failed_textbook_reassessment_preserves_original_insufficient_verdict(ca
     provider = Provider(claim_target_index=0, claim_text="上确界是最小上界。", verdict="insufficient")
     result = _run(provider, fixture, additional=True)
     assessment = result["fact_check_artifact"].unit_traces[0].rounds[0].assessments[0]
-    assert provider.assessments == 2
+    assert provider.assessments == 1
     assert assessment.verdict == "insufficient"
-    assert "reassessment bug" in assessment.stop_reason
-    assert "reassessment bug" in caplog.text
+    assert assessment.stop_reason == "context_pack:used;textbook:ok"
 
 
 def test_schema_retry_without_candidate_uses_generation_prompt():
@@ -116,7 +115,7 @@ def test_schema_retry_without_candidate_uses_generation_prompt():
                                        _draft(refs=["src-1"]), {"issues": []}])
     result = build_content_reflection_subgraph(provider, max_attempts=3).invoke(_state())
     assert result["route"] == "accept"
-    assert provider.calls[1].metadata["agent"] == "generate_content_artifact"
+    assert provider.calls[1].metadata["agent"] == "content_agent_step"
     assert result["attempts"][1].generation_stage == "initial"
     assert result["attempts"][1].revision_prompt is None
 
@@ -162,4 +161,4 @@ def test_offline_content_and_fact_check_use_the_provider_interface():
     result = build_content_reflection_subgraph(provider, max_attempts=3).invoke(_state())
     assert result["route"] == "accept"
     _run(provider, _fixture())
-    assert provider.calls == ["ContentDraft", "ContentCritiqueDraft", "FactCheckClaimsDraft"]
+    assert provider.calls == ["ContentAgentStep", "ContentCritiqueDraft", "FactCheckClaimsDraft"]

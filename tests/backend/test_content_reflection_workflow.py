@@ -49,13 +49,16 @@ class WorkflowContentProvider:
             }
         elif schema_name == "RetrievalDecision":
             payload = {"action": "search", "textbook_queries": ["测试教材证据"]} if 'estimated_input_tokens=0' in request.prompt else {"action": "write"}
-        elif schema_name == "ContentDraft":
+        elif schema_name in {"ContentDraft", "ContentAgentStep"}:
             payload: dict[str, Any] = {
                 "title": "测试单元",
                 "content": "## 讲解\n\n先解释定义，再用 $x^2$ 说明一个教材例子。",
                 "callouts": [],
                 "source_refs": ["unknown-source"] if self.mode == "blocking" else ["src-1"],
             }
+            if schema_name == "ContentAgentStep":
+                payload = ({"action": "write", "draft": payload} if request.context["context_pack"].excerpts
+                           else {"action": "search", "textbook_queries": ["测试教材证据"]})
         elif schema_name == "ContentCritiqueDraft":
             if self.mode == "blocking":
                 raise AssertionError("hard-check failures must not call the Critic")
@@ -211,12 +214,12 @@ def test_exhausted_content_loop_blocks_run_and_skips_quiz_and_document(monkeypat
     assert all(trace.final_status == "blocked" for trace in state["content_loop_traces"])
     assert all(len(trace.attempts) == 3 for trace in state["content_loop_traces"])
     assert all(attempt.critic_status == "skipped" for trace in state["content_loop_traces"] for attempt in trace.attempts)
-    assert all(call.schema.__name__ in {"ContentTaskPlanDraft", "ContentDraft", "RetrievalDecision"} for call in provider.calls)
+    assert all(call.schema.__name__ in {"ContentTaskPlanDraft", "ContentAgentStep"} for call in provider.calls)
 
 
 def test_agent_cannot_write_when_retrieved_evidence_exceeds_budget(monkeypatch) -> None:
     _install_source_fixture(monkeypatch)
-    import annotation.workflow.content_reflection as runtime
+    import annotation.workflow.content_agent as runtime
     original_context_pack = runtime.build_context_pack
 
     def tiny_content_budget(*args, **kwargs):
@@ -271,21 +274,21 @@ def test_offline_workflow_keeps_six_unit_quiz_regression_and_emits_six_content_t
     assert len(state["quiz_artifacts"]) == 6
 
 
-def test_enabled_vector_initialization_failure_keeps_workflow_fts(monkeypatch):
-    _install_source_fixture(monkeypatch)
+def test_enabled_vector_initialization_failure_stops_before_author(monkeypatch):
+    import pytest
+    from annotation.providers import ProviderError
     import annotation.workflow.context as resources
-    import annotation.workflow.content_nodes as runtime
+    _install_source_fixture(monkeypatch)
     monkeypatch.setenv("RAG_ENABLED", "true")
     def broken_vector(*args, **kwargs):
         raise RuntimeError("index unavailable")
     monkeypatch.setattr(resources, "LlamaIndexChromaTextbookSearchTool", broken_vector)
-    run_id = f"rag-degraded-{uuid.uuid4().hex[:8]}"
-    state = run_minimal_workflow(provider=OfflineFixtureProvider(), run_id=run_id, blueprint=_blueprint(run_id))
-    assert "vector_index_initialization_failed:RuntimeError" in state["warnings"]
-    calls = [c for pack in state["context_packs"] for c in pack.retrieval_calls]
-    assert calls
-    assert any(c.metadata.get("degraded") and c.metadata.get("branch_1_status") == "error" for c in calls)
-    assert state["content_artifacts"]
+    run_id = f"rag-unhealthy-{uuid.uuid4().hex[:8]}"
+    provider = WorkflowContentProvider(mode="warning", quiz_unit_ids=[u.artifact_id for u in _blueprint(run_id).knowledge_units])
+    with pytest.raises(ProviderError) as caught:
+        run_minimal_workflow(provider=provider, run_id=run_id, blueprint=_blueprint(run_id))
+    assert caught.value.category == "retrieval_health"
+    assert not any(c.schema.__name__ == "ContentAgentStep" for c in provider.calls)
 
 
 def test_enabled_vector_reaches_content_agent_and_context_audit(monkeypatch):
@@ -322,7 +325,7 @@ def test_content_reuses_chunks_and_fts_across_units_and_runs(monkeypatch):
     import pytest
     import annotation.workflow.context as resources
     import annotation.workflow.content_nodes as runtime
-    import annotation.workflow.content_reflection as reflection
+    import annotation.workflow.content_agent as reflection
 
     _install_source_fixture(monkeypatch)
     monkeypatch.setenv("RAG_ENABLED", "false")

@@ -101,6 +101,11 @@ class UnifiedRetrievalService:
             modes.insert(1, "vector")
         return modes
 
+    @property
+    def web_enabled(self) -> bool:
+        from annotation.fact_checking import DisabledWebResourceSearchSkill
+        return self.web is not None and not isinstance(self.web, DisabledWebResourceSearchSkill)
+
     def search(self, query: str, *, source: str = "textbook", limit: int = 5,
                mode: str = "hybrid", allowed_source_refs: Iterable[str] | None = None) -> SearchResult:
         if source == "web":

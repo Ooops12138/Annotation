@@ -27,6 +27,7 @@ from annotation.domain.artifacts import (
     LearningBlueprint,
     LearningDocument,
     QuizArtifact,
+    QuizDraft,
     ReviewIssue,
     ReviewReport,
     SourceBlock,
@@ -94,6 +95,20 @@ class RetrievalDecision(BaseModel):
 
 
 
+class ContentAgentStep(RetrievalDecision):
+    """One agent response either requests evidence or delivers the explanation."""
+
+    draft: ContentDraft | None = None
+
+    @model_validator(mode="after")
+    def validate_draft(self):
+        if self.action == "write" and self.draft is None:
+            raise ValueError("write requires a complete draft")
+        if self.action == "search" and self.draft is not None:
+            raise ValueError("search cannot deliver a draft")
+        return self
+
+
 class ContentTaskDraft(BaseModel):
     """One structured course-architect decision mapped to ContentTask."""
 
@@ -106,6 +121,7 @@ class ContentTaskDraft(BaseModel):
     source_refs: list[str] = Field(default_factory=list)
     interactive_component_policy: Literal["required", "skip"] = "skip"
     acceptance_criteria: list[str] = Field(default_factory=list)
+    split_reason: Literal["independent_topic", "evidence_scope", "output_budget"] | None = None
 
 
 class ContentTaskPlanDraft(BaseModel):
@@ -155,22 +171,35 @@ class FactCheckRetrievalDecision(BaseModel):
         return self
 
 
-class QuizRetrievalDecision(BaseModel):
-    """Evidence tool choice made by the exercise agent."""
+class FactCheckRetrievalPlanItem(FactCheckRetrievalDecision):
+    claim_id: str = Field(min_length=1)
+
+
+class FactCheckRetrievalPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decisions: list[FactCheckRetrievalPlanItem] = Field(default_factory=list)
+
+
+class QuizAgentStep(BaseModel):
+    """One quiz response that either searches or returns the complete quiz."""
 
     model_config = ConfigDict(extra="forbid")
 
-    action: Literal["use_context", "search"]
+    action: Literal["search", "write"]
     textbook_mode: Literal["keyword", "vector", "hybrid"] = "hybrid"
     textbook_queries: list[str] = Field(default_factory=list, max_length=3)
-    reason: str = ""
+    draft: QuizDraft | None = None
 
     @model_validator(mode="after")
-    def validate_queries(self) -> "QuizRetrievalDecision":
-        if self.action == "search" and not any(q.strip() for q in self.textbook_queries):
-            raise ValueError("search requires a query")
-        if self.action == "use_context" and self.textbook_queries:
-            raise ValueError("use_context cannot include queries")
+    def validate_step(self) -> "QuizAgentStep":
+        if self.action == "search":
+            if not any(query.strip() for query in self.textbook_queries):
+                raise ValueError("search requires a query")
+            if self.draft is not None:
+                raise ValueError("search cannot include a draft")
+        elif self.textbook_queries or self.draft is None:
+            raise ValueError("write requires a draft and no queries")
         return self
 
 

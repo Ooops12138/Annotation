@@ -7,7 +7,7 @@ from pydantic import ValidationError
 from annotation.fact_checking.contracts import EvidenceKind, EvidenceRecord, SearchResult, SearchStatus
 from annotation.retrieval.tool import HybridTextbookSearchTool, UnifiedRetrievalService
 from annotation.retrieval.llamaindex_chroma import UnavailableVectorTextbookSearchTool
-from annotation.workflow.models import RetrievalDecision, QuizRetrievalDecision, FactCheckRetrievalDecision
+from annotation.workflow.models import RetrievalDecision, QuizAgentStep, FactCheckRetrievalDecision
 from test_content_context import _block
 
 
@@ -81,7 +81,7 @@ def test_raw_scope_requires_all_chunk_constituents_and_maps_provenance(mode):
     assert (len(keyword.calls), len(vector.calls)) == counts
 
 
-@pytest.mark.parametrize("schema,action", [(RetrievalDecision, "search"), (QuizRetrievalDecision, "search"),
+@pytest.mark.parametrize("schema,action", [(RetrievalDecision, "search"), (QuizAgentStep, "search"),
                                          (FactCheckRetrievalDecision, "search_textbook")])
 def test_decisions_validate_mode(schema, action):
     with pytest.raises(ValidationError):
@@ -121,13 +121,13 @@ def test_content_quiz_and_fact_check_use_model_mode(monkeypatch, mode):
     class Provider(OfflineFixtureProvider):
         def generate_structured(self, request):
             name = request.schema.__name__
-            if name in {"RetrievalDecision", "QuizRetrievalDecision", "FactCheckRetrievalDecision"}:
+            if name in {"ContentAgentStep", "RetrievalDecision", "QuizAgentStep", "FactCheckRetrievalPlan"}:
                 assert "keyword" in request.prompt and "vector" in request.prompt
             response = super().generate_structured(request)
             value = response.value
-            if name == "RetrievalDecision":
+            if name in {"ContentAgentStep", "RetrievalDecision"}:
                 value = value.model_copy(update={"textbook_mode": mode})
-            elif name == "QuizRetrievalDecision":
+            elif name == "QuizAgentStep":
                 value = request.schema(action="search", textbook_queries=["公理"], textbook_mode=mode)
             elif name == "FactCheckClaimsDraft":
                 # A real claim forces the production fact-check retrieval path.
@@ -136,14 +136,16 @@ def test_content_quiz_and_fact_check_use_model_mode(monkeypatch, mode):
                 matches = re.findall(r'"target_id":\s*"([^"\n]+)"', request.prompt)
                 if matches:
                     value = request.schema(claims=[{"target_id": matches[-1], "kind": "fact", "text": "公理", "query": "公理"}])
-            elif name == "FactCheckRetrievalDecision":
-                value = request.schema(action="search_textbook", textbook_queries=["公理"], textbook_mode=mode)
+            elif name == "FactCheckRetrievalPlan":
+                import re
+                claim_ids = list(dict.fromkeys(re.findall(r'"claim_id":\s*"([^"]+)"', request.prompt)))
+                value = request.schema(decisions=[{"claim_id": claim_id, "action": "search_textbook", "textbook_queries": ["公理"], "textbook_mode": mode} for claim_id in claim_ids])
             return replace(response, value=value, raw_text=value.model_dump_json())
 
     state = run_minimal_workflow(provider=Provider(), run_id="mode-" + mode,
         interactive_component_sandbox_runner=lambda *a, **kw: InteractiveComponentSandboxReport(status="passed"))
     assert observed and len(instances) == 1
-    assert all(kwargs.get("mode") == mode for _, kwargs, _ in observed)
+    assert all(kwargs.get("mode") == mode for _, kwargs, _ in observed if "allowed_source_refs" in kwargs)
     assert len({id(service) for service, _, _ in observed}) == 1
     assert any("allowed_source_refs" in kwargs for _, kwargs, _ in observed)
     assert any(c.metadata["requested_mode"] == mode for t in state["fact_check_artifact"].unit_traces for c in t.retrieval_calls)

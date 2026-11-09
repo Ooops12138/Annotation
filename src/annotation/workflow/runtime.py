@@ -306,6 +306,12 @@ def run_minimal_workflow(
             config = resume_checkpoint["config"]
             snapshot = graph.get_state(config)
             validate_prompt_profile(snapshot.values.get("prompt_profile"))
+            if not snapshot.next and snapshot.values.get('content_loop_status') in {'failed','blocked'}:
+                # Terminal diagnostic nodes have no pending next step. Re-enter the
+                # failed stage; accepted tasks are validated from the task store.
+                config = graph.update_state(config,{'errors':[], 'workflow_status':'',
+                    'content_loop_status':''},as_node='prepare_content_tools')
+                snapshot = graph.get_state(config)
             value = (
                 Command(resume=True)
                 if any(task.interrupts for task in snapshot.tasks)

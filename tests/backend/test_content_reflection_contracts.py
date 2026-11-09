@@ -177,7 +177,9 @@ def test_content_reflection_prompts_render_all_auditable_inputs() -> None:
         "critique_content_artifact",
         **{key: values[key] for key in ("KNOWLEDGE_UNIT_CONTEXT", "DEPTH_GUIDANCE", "ACCEPTANCE_CRITERIA", "CONTEXT_PACK", "CANDIDATE_ARTIFACT")},
     )
-    revision = load_prompt("revise_content_artifact", **values)
+    revision = load_prompt("content_agent_step", CAPABILITIES="{}", REVISION_CONTEXT="{}",
+                           KNOWLEDGE_UNIT_CONTEXT=values["KNOWLEDGE_UNIT_CONTEXT"],
+                           CONTENT_TASK=values["CONTENT_TASK"], CONTEXT_PACK=values["CONTEXT_PACK"])
 
     assert critic.startswith("## Role\n")
     assert "(`critique_content_artifact`)." in critic.split("## Task", 1)[0]
@@ -187,11 +189,9 @@ def test_content_reflection_prompts_render_all_auditable_inputs() -> None:
     assert "gap belongs in the candidate evidence_notes metadata" in critic
     assert "{{CANDIDATE_ARTIFACT}}" not in critic
     assert revision.startswith("## Role\n")
-    assert "(`revise_content_artifact`)." in revision.split("## Task", 1)[0]
+    assert "textbook learning-content author" in revision.split("## Task", 1)[0]
     assert "[src-1] 教材证据" in revision
-    assert "{{HARD_CHECK_RESULT}}" not in revision
-    assert "{{GENERATION_ERROR}}" not in revision
-    assert "Never add `quiz`" in revision
+    assert "{{REVISION_CONTEXT}}" not in revision
 
 
 @pytest.mark.parametrize("refs", [None, "src-1", 123, [123], {"source_ref": "src-1"}])

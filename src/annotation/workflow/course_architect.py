@@ -11,6 +11,7 @@ from annotation.providers import ModelProvider, ProviderError, StructuredGenerat
 from annotation.workflow.helpers import response_metadata, provider_metadata
 from annotation.workflow.models import ContentTaskDraft, ContentTaskPlanDraft
 from annotation.workflow.budget import PromptBudget
+from annotation.token_counting import count_tokens
 
 
 def _blueprint_context(blueprint: LearningBlueprint) -> str:
@@ -94,6 +95,9 @@ def _tasks_from_draft(
         if invalid:
             continue
         key = next(iter(item.covered_objectives))
+        if occurrences[key] > 1 and item.split_reason is None:
+            warnings.append(f"course_architect_revision_required:{key}:split_reason_required")
+            continue
         unit_id = key if occurrences[key] == 1 else f"teaching-{run_id}-{index:03d}"
         tasks.append(ContentTask(task_id=f"task-{run_id}-{index:03d}", run_id=run_id,
             blueprint_version=f"{blueprint.artifact_id}:v{blueprint.version}",
@@ -139,19 +143,23 @@ def teaching_blueprint(blueprint: LearningBlueprint, tasks: list[ContentTask]) -
     return blueprint.model_copy(update={"knowledge_units": units})
 
 
-def _plan_unit_tasks(
+def _plan_unit_attempt(
     provider: ModelProvider,
     *,
     run_id: str,
     blueprint: LearningBlueprint,
     global_offset: int = 0,
+    feedback: str = "",
 ) -> dict[str, Any]:
     """Return ContentTask objects planned by the course architect agent."""
 
     prompt = load_prompt("plan_content_tasks", BLUEPRINT=_blueprint_context(blueprint))
+    if feedback:
+        prompt += "\n\n### Previous candidate and validation feedback (data)\n" + feedback
+        prompt += "\nReturn a complete corrected plan covering every original objective."
     metadata: dict[str, Any] = {
         "agent": "plan_content_tasks",
-        "prompt_version": "plan_content_tasks:v4:unit-scope",
+        "prompt_version": "plan_content_tasks:v5:coherent-unit",
         "run_id": run_id,
         "blueprint_artifact_id": blueprint.artifact_id,
         "blueprint_version": blueprint.version,
@@ -217,16 +225,53 @@ def _plan_unit_tasks(
     }
 
 
+def _plan_unit_tasks(
+    provider: ModelProvider, *, run_id: str, blueprint: LearningBlueprint,
+    global_offset: int = 0,
+) -> dict[str, Any]:
+    attempts = []
+    feedback = ""
+    for _ in range(3):
+        result = _plan_unit_attempt(provider, run_id=run_id, blueprint=blueprint,
+                                    global_offset=global_offset, feedback=feedback)
+        metadata = result["content_task_planning_metadata"]
+        attempts.append(dict(metadata))
+        if metadata["status"] not in {"needs_revision", "schema_error"}:
+            break
+        feedback = json.dumps({"candidate": metadata.get("parsed_output", metadata.get("raw_output")),
+                               "validation_errors": result["warnings"],
+                               "required_objective_ids_by_unit": {
+                                   unit.artifact_id: unit.objective_ids for unit in blueprint.knowledge_units
+                               },
+                               "id_rule": "Copy objective IDs exactly, including their -o suffix; unit IDs are not objective IDs."
+                               }, ensure_ascii=False)
+    metadata["attempts"] = attempts
+    return result
+
+
 def plan_content_tasks_with_architect(
     provider: ModelProvider, *, run_id: str, blueprint: LearningBlueprint,
 ) -> dict[str, Any]:
-    """Split one accepted unit at a time; preserve the coordinator's global order."""
+    """Plan bounded batches of units while preserving unit boundaries and order."""
     tasks: list[ContentTask] = []
     scopes = []
     warnings = []
     status = "succeeded"
+    batches: list[list[KnowledgeUnit]] = []
+    current: list[KnowledgeUnit] = []
+    input_limit = PromptBudget.for_provider(provider, output_limit=5000).input_tokens
     for unit in blueprint.knowledge_units:
-        scope = blueprint.model_copy(update={"knowledge_units": [unit]})
+        candidate = [*current, unit]
+        scope = blueprint.model_copy(update={"knowledge_units": candidate})
+        if current and (len(current) >= 8 or count_tokens(_blueprint_context(scope)) > input_limit // 2):
+            batches.append(current)
+            current = [unit]
+        else:
+            current = candidate
+    if current:
+        batches.append(current)
+    for batch in batches:
+        scope = blueprint.model_copy(update={"knowledge_units": batch})
         result = _plan_unit_tasks(provider, run_id=run_id, blueprint=scope, global_offset=len(tasks))
         metadata = result["content_task_planning_metadata"]
         scopes.append(metadata)
@@ -240,4 +285,4 @@ def plan_content_tasks_with_architect(
         warnings.append("course_architect_revision_required:empty_blueprint")
     return {"content_tasks": tasks if status == "succeeded" else [],
         "content_task_planning_metadata": {"agent": "plan_content_tasks", "status": status,
-            "scope": "knowledge_unit", "scopes": scopes}, "warnings": warnings}
+            "scope": "knowledge_unit_batch", "scopes": scopes}, "warnings": warnings}

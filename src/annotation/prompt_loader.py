@@ -115,12 +115,13 @@ def load_prompt(agent: str, *, profile: str | None = None, **values: object) -> 
         if "{{" + key + "}}" in template:
             template = template.replace("{{" + key + "}}", (_PROMPTS_DIR / "shared" / f"{filename}.md").read_text(encoding="utf-8").strip())
     if "{{OUTPUT_SCHEMA}}" in template:
-        from annotation.workflow.models import ContentDraft
+        from annotation.workflow.models import ContentDraft, ContentAgentStep, QuizAgentStep, FactCheckRetrievalPlan
         from annotation.domain.artifacts import QuizDraft
 
         schema = {
-            "generate_content_artifact": ContentDraft,
-            "revise_content_artifact": ContentDraft,
+            "content_agent_step": ContentAgentStep,
+            "quiz_agent_step": QuizAgentStep,
+            "fact_check_retrieval": FactCheckRetrievalPlan,
             "revise_content_for_fact_check": ContentDraft,
             "generate_quiz_artifact": QuizDraft,
             "regenerate_quiz_for_fact_check": QuizDraft,

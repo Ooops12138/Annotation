@@ -79,6 +79,55 @@ def _blueprint() -> LearningBlueprint:
     )
 
 
+def test_course_architect_repairs_missing_objectives_with_feedback():
+    class RepairProvider(ArchitectProvider):
+        def generate_structured(self, request):
+            unit = request.context["blueprint"].knowledge_units[0]
+            self.payload = {"tasks": [] if not self.calls else [{
+                "title": unit.title, "covered_objectives": {unit.artifact_id: unit.objective_ids},
+                "depth_guidance": "standard",
+            }]}
+            return super().generate_structured(request)
+    provider = RepairProvider({})
+    blueprint = _blueprint()
+    blueprint.knowledge_units = blueprint.knowledge_units[:1]
+    result = plan_content_tasks_with_architect(provider, run_id="repair", blueprint=blueprint)
+    assert result["content_task_planning_metadata"]["status"] == "succeeded"
+    assert len(provider.calls) == 2
+    assert "missing_objectives" in provider.calls[1].prompt
+    assert len(result["content_task_planning_metadata"]["scopes"][0]["attempts"]) == 2
+    assert result["content_tasks"][0].covered_objectives == {"ku-sup": ["ku-sup-o1"]}
+
+
+def test_course_architect_stops_after_three_invalid_candidates():
+    provider = ArchitectProvider({"tasks": []})
+    result = plan_content_tasks_with_architect(provider, run_id="invalid", blueprint=_blueprint())
+    assert len(provider.calls) == 3
+    assert result["content_tasks"] == []
+    assert result["content_task_planning_metadata"]["status"] == "needs_revision"
+
+
+def test_course_architect_repairs_schema_errors():
+    from annotation.providers import ProviderError
+    class SchemaRepairProvider(ArchitectProvider):
+        failed = False
+        def generate_structured(self, request):
+            if not self.failed:
+                self.failed = True
+                raise ProviderError("unknown field: type", category="schema", raw_output='{"tasks": [{"type": "section"}]}')
+            assert "unknown field: type" in request.prompt
+            assert 'section' in request.prompt
+            unit = request.context["blueprint"].knowledge_units[0]
+            self.payload = {"tasks": [{"title":unit.title,
+                "covered_objectives":{unit.artifact_id:unit.objective_ids}, "depth_guidance":"standard"}]}
+            return super().generate_structured(request)
+    blueprint = _blueprint()
+    blueprint.knowledge_units = blueprint.knowledge_units[:1]
+    result = plan_content_tasks_with_architect(SchemaRepairProvider({}), run_id="schema-repair", blueprint=blueprint)
+    assert result["content_task_planning_metadata"]["status"] == "succeeded"
+    assert result["content_task_planning_metadata"]["scopes"][0]["attempts"][0]["status"] == "schema_error"
+
+
 def test_course_architect_generates_structured_content_tasks() -> None:
     provider = ArchitectProvider({
         "tasks": [
@@ -104,7 +153,7 @@ def test_course_architect_generates_structured_content_tasks() -> None:
     result = plan_content_tasks_with_architect(provider, run_id="run-architect", blueprint=_blueprint())
 
     tasks = result["content_tasks"]
-    assert [call.schema.__name__ for call in provider.calls] == ["ContentTaskPlanDraft", "ContentTaskPlanDraft"]
+    assert [call.schema.__name__ for call in provider.calls] == ["ContentTaskPlanDraft"]
     assert [task.knowledge_unit_id for task in tasks] == ["ku-sup", "ku-basic"]
     assert tasks[0].quiz_count == 2
     assert tasks[0].interactive_component_policy == "required"
@@ -131,7 +180,7 @@ def test_large_blueprint_task_planning_batches_without_losing_global_order(monke
     provider = BatchProvider({})
     result = plan_content_tasks_with_architect(provider, run_id="batch-run", blueprint=blueprint)
     assert result["content_task_planning_metadata"]["status"] == "succeeded"
-    assert len(provider.calls) == 23
+    assert len(provider.calls) < 23
     assert [t.knowledge_unit_id for t in result["content_tasks"]] == [u.artifact_id for u in blueprint.knowledge_units]
     assert len({t.task_id for t in result["content_tasks"]}) == 23
     assert all(t.depth_guidance == "detailed" and t.quiz_count == 0 for t in result["content_tasks"])
@@ -155,8 +204,9 @@ def test_duplicate_architect_tasks_require_revision() -> None:
         {"title": "Basic", "covered_objectives": {"ku-basic": ["ku-basic-o1"]}, "depth_guidance": "standard"},
     ]})
     result = plan_content_tasks_with_architect(provider, run_id="duplicate-plan", blueprint=_blueprint())
-    assert result["content_task_planning_metadata"]["status"] == "succeeded"
-    assert len(result["content_tasks"]) == 3
+    assert result["content_task_planning_metadata"]["status"] == "needs_revision"
+    assert result["content_tasks"] == []
+    assert any('split_reason_required' in w for w in result['warnings'])
 
 
 def test_quiz_prompt_uses_architect_question_count() -> None:
@@ -260,8 +310,8 @@ def test_split_execution_dependencies_point_to_real_tasks_and_keep_global_order(
     bp = _blueprint()
     bp.knowledge_units[1].prerequisites = ["ku-sup"]
     draft = ContentTaskPlanDraft(tasks=[
-        {"title": "First half", "covered_objectives": {"ku-sup": ["ku-sup-o1"]}, "depth_guidance": "concise"},
-        {"title": "Second half", "covered_objectives": {"ku-sup": ["ku-sup-o1"]}, "depth_guidance": "detailed"},
+        {"title": "First half", "covered_objectives": {"ku-sup": ["ku-sup-o1"]}, "depth_guidance": "concise", "split_reason":"output_budget"},
+        {"title": "Second half", "covered_objectives": {"ku-sup": ["ku-sup-o1"]}, "depth_guidance": "detailed", "split_reason":"output_budget"},
         {"title": "Next unit", "covered_objectives": {"ku-basic": ["ku-basic-o1"]}, "depth_guidance": "standard"}])
     tasks, warnings = _tasks_from_draft(run_id="split", blueprint=bp, draft=draft)
     assert not warnings

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterator, Mapping
 from typing import Any
 
@@ -44,6 +45,10 @@ class OfflineWorkflowCapabilities(WorkflowProviderCapabilities):
     def quiz_draft(self, unit: Any, pack: Any, requested_count: int | None) -> BaseModel:
         return quiz_draft(unit, pack, requested_count)
 
+    def quiz_agent_step(self, unit: Any, pack: Any, requested_count: int | None) -> BaseModel:
+        from annotation.workflow.models import QuizAgentStep
+        return QuizAgentStep(action="write", draft=self.quiz_draft(unit, pack, requested_count))
+
     def component_draft(self, task: Any) -> BaseModel:
         return component_draft(task)
 
@@ -55,10 +60,6 @@ class OfflineWorkflowCapabilities(WorkflowProviderCapabilities):
         from annotation.workflow.models import RetrievalDecision
         return RetrievalDecision(action="write") if pack.excerpts else RetrievalDecision(
             action="search", textbook_queries=[unit.title])
-
-    def quiz_retrieval_decision(self) -> BaseModel:
-        from annotation.workflow.models import QuizRetrievalDecision
-        return QuizRetrievalDecision(action="use_context")
 
     def fact_check_retrieval_decision(self) -> BaseModel:
         from annotation.workflow.models import FactCheckRetrievalDecision
@@ -120,6 +121,12 @@ class OfflineFixtureProvider:
             groups = request.context["groups"]
             payload = {"action": "finalize", "group_order": [g["group_id"] for g in groups],
                 "summary": "离线协调替身，保持教材顺序"}
+        elif not payload and schema_name == "ContentAgentStep" and unit is not None and pack is not None:
+            if pack.excerpts:
+                payload = {"action":"write", "draft":self.workflow.content_draft(unit,pack).model_dump(mode="python")}
+            else:
+                payload = {"action":"search", "textbook_queries":[request.context['source_blocks'][0].text[:80]
+                    if request.context.get('source_blocks') else unit.title]}
         elif not payload and schema_name == "ContentDraft" and unit is not None and pack is not None:
             payload = self.workflow.content_draft(unit, pack).model_dump(mode="python")
         elif not payload and schema_name == "ContentCritiqueDraft":
@@ -130,12 +137,16 @@ class OfflineFixtureProvider:
                 payload["textbook_queries"] = [request.context["source_blocks"][0].text[:80]]
         elif not payload and schema_name == "FactCheckClaimsDraft":
             payload = {"claims": []}
+        elif not payload and schema_name == "FactCheckRetrievalPlan":
+            claim_ids = list(dict.fromkeys(re.findall(r'"claim_id"\s*:\s*"([^"]+)"', request.prompt)))
+            decision = self.workflow.fact_check_retrieval_decision().model_dump(mode="python")
+            payload = {"decisions": [{"claim_id": claim_id, **decision} for claim_id in claim_ids]}
         elif not payload and schema_name == "FactCheckRetrievalDecision":
             payload = self.workflow.fact_check_retrieval_decision().model_dump(mode="python")
-        elif not payload and schema_name == "QuizRetrievalDecision":
-            payload = self.workflow.quiz_retrieval_decision().model_dump(mode="python")
-        elif not payload and schema_name == "QuizDraft" and unit is not None and pack is not None:
-            payload = self.workflow.quiz_draft(unit, pack, request.context["task"].quiz_count).model_dump(mode="python")
+        elif not payload and schema_name == "QuizAgentStep" and unit is not None and pack is not None:
+            payload = self.workflow.quiz_agent_step(
+                unit, pack, request.context["task"].quiz_count
+            ).model_dump(mode="python")
         elif not payload and schema_name == "ContentTaskPlanDraft" and request.context.get("blueprint") is not None:
             payload = self.workflow.plan_content_tasks(request.context["blueprint"]).model_dump(mode="python")
         elif not payload and schema_name == "InteractiveComponentDraft" and request.context.get("task") is not None:

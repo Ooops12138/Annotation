@@ -20,9 +20,9 @@ from annotation.retrieval import (
     UnifiedRetrievalService,
     index_source_blocks,
 )
-from annotation.retrieval.llamaindex_chroma import UnavailableVectorTextbookSearchTool
 from annotation.workflow.concurrency import LockedSearch
 from annotation.workflow.control import ControlledPort, RunControl
+from annotation.providers import ProviderError
 
 logger = logging.getLogger(__name__)
 
@@ -83,15 +83,23 @@ class RunResources:
                     )
                 except Exception as exc:
                     logger.exception("Vector index initialization failed")
-                    vector = UnavailableVectorTextbookSearchTool(type(exc).__name__)
                     self.warnings.append(
                         f"vector_index_initialization_failed:{type(exc).__name__}"
                     )
+                    raise ProviderError(f"Required vector retrieval initialization failed: {type(exc).__name__}",
+                                        category="retrieval_health") from exc
                 # Client locks are independent: web requests never acquire them.
                 textbook = HybridTextbookSearchTool(textbook, LockedSearch(vector))
             else:
                 textbook = HybridTextbookSearchTool(textbook)
             service = UnifiedRetrievalService(textbook, self.web(), blocks=semantic_blocks)
+            if semantic_blocks:
+                probe = semantic_blocks[0].text.strip()[:80]
+                for mode in (["keyword", "vector"] if rag_enabled() else ["keyword"]):
+                    result = service.search(probe,mode=mode,limit=1)
+                    status = getattr(result.status,"value",result.status)
+                    if status in {"error", "disabled", "invalid_request"}:
+                        raise ProviderError(f"Required {mode} retrieval probe failed: {status}",category="retrieval_health")
             self.retrieval_service = (
                 ControlledPort(service, control) if control else service
             )
